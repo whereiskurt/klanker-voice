@@ -1,0 +1,1 @@
+{"content":"pipecat-ai 1.5.0 requires Python >=3.11 (requires_python from PyPI). Supports 3.13 via audioop-lts shim. Official dailyco/pipecat-base image ships Python 3.12 (default tag); 3.10 tag deprecated. Recommend Python 3.12 for production parity.","source":"web","provider":"pypi","confidence":"MEDIUM","fetched_at":"2026-07-04T17:37:39.491Z","ttl":86400000,"kind":"docs"}

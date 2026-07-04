@@ -1,0 +1,1 @@
+{"content":"Next.js latest stable 16.2.10 (2026-07-01, engines node>=20.9). next-auth v5 remains BETA: 5.0.0-beta.31 (2026-04-14); latest v4 stable 4.24.14. Auth.js @auth/core 0.34.3. v5 beta is the de facto App Router standard; pin exact beta version.","source":"web","provider":"npm","confidence":"MEDIUM","fetched_at":"2026-07-04T17:37:39.764Z","ttl":86400000,"kind":"web"}
