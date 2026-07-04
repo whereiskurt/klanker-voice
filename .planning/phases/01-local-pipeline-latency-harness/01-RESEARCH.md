@@ -546,16 +546,17 @@ turns:
 | A5 | pytest/pytest-asyncio latest stable are appropriate pins | Supporting stack | Trivial; pin at install |
 | A6 | Eval harness `user.modality: audio` + virtual mic satisfies "from recorded audio" in PIPE-05 | Pattern 3 | If UAT insists on human-recorded WAVs, add a small custom send path or record once through `--record-dir` and reuse; scope bump is small |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does VAD-anchored latency measurement work in the Flux arm?**
    - What we know: `UserBotLatencyObserver` watches both VAD frames and `UserStoppedSpeakingFrame`; Flux emits the latter (no local VAD running by default).
    - What's unclear: whether the "VAD-stop" stage in the D-11 table is meaningful/populated under Flux, or collapses into user-stop.
-   - Recommendation: harness JSON schema should mark stage anchors per arm; verify observer output in the first Flux run and document in TUNING.md.
+   - **RESOLVED:** dispositioned into the plans — plan 01-03 Task 1 designs the harness JSON schema with per-arm `anchors` documentation and explicit null-stage handling (vad_stop under Flux serializes as null with the anchors entry explaining why, never silently omitted); plan 01-04 Task 1 verifies observer output in the first Flux run and records the anchor finding in the committed artifact and TUNING.md.
 2. **Exact wire format for the greeting trigger in 1.5.0** (`LLMRunFrame` vs context-frame push on `on_client_connected`).
    - What we know: templates register standard handlers; greet-first is the documented pattern; eval transport pre-suppresses greetings in text mode.
-   - Recommendation: copy the generated template's handler body (`pipecat init` output or `_macros/event_handlers.jinja2`) during implementation — 15-minute verification, not a design risk.
-3. **3-voice audition shortlist** (Claude's discretion, D-02): pick three fast-punchy, high-intelligibility ElevenLabs voices at build time from the current voice library — voice IDs change too often to lock in research.
+   - **RESOLVED:** dispositioned into plan 01-02 Task 2 — `register_greet_first` is wired only after confirming the exact greeting-trigger shape against the installed 1.5.0 runner/template source (the 15-minute source-verification step is written into the task action); not a design risk.
+3. **3-voice audition shortlist** (Claude's discretion, D-02).
+   - **RESOLVED:** by design — plan 01-05 Task 1 selects the three fast-punchy, high-intelligibility ElevenLabs candidates at build time from the live voice library (voice IDs churn too fast to pre-pin in research) and records name, id, and rationale per candidate in the audition manifest.
 
 ## Environment Availability
 
