@@ -13,7 +13,7 @@ klanker-voice ships in five phases that follow the dependency chain of the work 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Local Pipeline & Latency Harness** - Tuned cascaded pipeline runs locally with three API keys; harness proves ≤1.2s and real barge-in
-- [ ] **Phase 2: Infra Skeleton** - Terragrunt site "kmk" provisions the AWS foundation; SES production-access request goes out week one
+- [ ] **Phase 2: Infra Skeleton** - Terragrunt site "kmv" provisions the AWS foundation; SES production-access request goes out week one
 - [ ] **Phase 3: Auth Service & Access Codes** - run.auth port issues JWT access tokens with tier claims; access-code→tier flow and first `kv` commands
 - [ ] **Phase 4: Voice Service Deployed & Quota Enforcement** - Quota-gated sessions run on public-IP Fargate with verified ICE/UDP media and the full operator loop
 - [ ] **Phase 5: Browser Client & Conference Readiness** - Public sign-in → mic → conversation experience with captions, orb, timer, and HUD, verified on real devices and networks
@@ -39,7 +39,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Depends on**: Nothing (runs parallel with Phase 1)
 **Requirements**: INFR-01, INFR-02, INFR-04, INFR-05, INFR-07
 **Success Criteria** (what must be TRUE):
-  1. Terragrunt site "kmk" provisions network, certs, ecs-cluster, ecr, dynamodb, secrets, email, github-oidc, ecs-task, and ecs-service modules from the defcon.run.34 layout
+  1. Terragrunt site "kmv" provisions network, certs, ecs-cluster, ecr, dynamodb, secrets, email, github-oidc, ecs-task, and ecs-service modules from the defcon.run.34 layout
   2. voice.klankermaker.ai and auth.klankermaker.ai resolve with valid TLS via cross-account DNS
   3. SES production-access request is submitted with SPF/DKIM/DMARC configured for klankermaker.ai
   4. Provider API keys flow SOPS → SSM SecureString → container secrets with no plaintext secrets in the repo

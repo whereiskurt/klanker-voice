@@ -42,7 +42,7 @@
 |--------|-------------|----------|
 | Both run modes | Localhost web page (prod-parity WebRTC) + terminal mic mode | ✓ |
 | TOML + env for secrets | pipeline.toml for knobs, .env for keys | ✓ |
-| SSM→.env script | Reads /kmk/bootstrap/* via klanker-application profile | ✓ |
+| SSM→.env script | Reads /kmv/bootstrap/* via klanker-application profile | ✓ |
 
 **User's choice:** All recommended options.
 

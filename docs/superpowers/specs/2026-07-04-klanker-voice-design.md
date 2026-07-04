@@ -32,7 +32,7 @@ Three subprojects, each its own GSD phase cycle:
 
 | # | Subproject | What it is | Basis |
 |---|-----------|------------|-------|
-| 1 | **Infra skeleton** | `infra/terraform` terragrunt tree for the `kmk` site | Cloned defcon.run.34 layout + modules |
+| 1 | **Infra skeleton** | `infra/terraform` terragrunt tree for the `kmv` site | Cloned defcon.run.34 layout + modules |
 | 2 | **auth.klankermaker.ai** | Magic-link + OIDC identity service with access codes & quotas | Port of `apps/run.auth` |
 | 3 | **voice.klankermaker.ai** | Pipecat voice pipeline service + browser client | New (the only genuinely new component) |
 
@@ -47,11 +47,11 @@ and auth land. The deployed container runs the same code.
   `481723467561` via profile `klanker-management` (HostedZoneAdmin) — same
   cross-account DNS pattern as defcon.run.
 - **State:** profile `klanker-terraform`; S3 backend + lock table named via
-  `TG_BUCKET_<REGION_LABEL>` / `TG_TABLE_<REGION_LABEL>` env vars, prefix `tf-kmk`.
+  `TG_BUCKET_<REGION_LABEL>` / `TG_TABLE_<REGION_LABEL>` env vars, prefix `tf-kmv`.
 - **Profile wiring:** `TF_VAR_profile_prefix=klanker-` (the providers layer appends
   `application` / `management` / `terraform`). CI drops profiles and uses GitHub OIDC
   assume-role, as in defcon.run.34.
-- **Site config:** `site.label = "kmk"`, `dns.zonename = "klankermaker.ai"`,
+- **Site config:** `site.label = "kmv"`, `dns.zonename = "klankermaker.ai"`,
   `subdomains = ["auth", "voice"]`. Primary region `us-east-1`.
 
 ## 4. Infra skeleton (subproject 1)
@@ -67,7 +67,7 @@ Copied from `defcon.run.34/infra/terraform`, trimmed to what this project needs:
 - Services defined as `services/<name>/service.hcl` data files aggregated by
   `site.hcl`: `auth` and `voice`.
 - Secrets: `.secrets.sops.json` (SOPS) → SSM SecureString at
-  `/kmk/secrets/<region>/<name>/<key>`; containers consume via `valueFrom`.
+  `/kmv/secrets/<region>/<name>/<key>`; containers consume via `valueFrom`.
   Secret set: Deepgram API key, Anthropic API key, ElevenLabs API key, auth
   session/OIDC signing keys, SES config as needed.
 - Explicitly **not** copied: cloudtrail, waffaw, mqtt, ec2spot, s3-uploads*,

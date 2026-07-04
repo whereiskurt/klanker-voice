@@ -50,7 +50,7 @@
 | `apps/voice` (Python/FastAPI + Pipecat) | `POST /api/offer` signaling, JWT validation (offline via JWKS), quota gate, session lifecycle, 15s usage ticks, spoken wind-down, ECS task protection toggling | Browser (HTTP + UDP), auth (JWKS fetch only, cached), DynamoDB (`tiers`, `usage`), ECS agent endpoint, Deepgram/Anthropic/ElevenLabs |
 | DynamoDB | Source of truth for users, access codes, tiers, usage counters, concurrency markers, global kill-switch | auth (read/write), voice (read tiers, conditional-write usage), kv (read/write) |
 | `cli/kv` (Go) | Operator plane: access-code CRUD, quota/usage inspection, session visibility, deploy/smoke helpers | DynamoDB, ECS/CloudWatch APIs, service health endpoints |
-| `infra/terraform` | Terragrunt tree (site `kmk`): network, certs, ecs-cluster, ecr, dynamodb, secrets, email, github-oidc, ecs-task, ecs-service | AWS (3 accounts: application, management/DNS, terraform/state) |
+| `infra/terraform` | Terragrunt tree (site `kmv`): network, certs, ecs-cluster, ecr, dynamodb, secrets, email, github-oidc, ecs-task, ecs-service | AWS (3 accounts: application, management/DNS, terraform/state) |
 
 **Boundary rules worth enforcing:**
 - Voice never calls auth's application APIs at runtime — only the public JWKS/discovery endpoints, cached. Tier limits ride in token claims; quota *state* lives in DynamoDB.

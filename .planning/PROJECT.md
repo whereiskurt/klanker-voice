@@ -33,7 +33,7 @@ ElevenLabs-quality speech — a demo that makes people say "whoa" in the first t
 - [ ] auth.klankermaker.ai: magic-link email (SES) + OIDC provider, ported from defcon.run.34 run.auth
 - [ ] Access codes: any code accepted at login; known codes map to tiers (e.g. demo→2min, kphdemo123→30min); unknown → no-access tier
 - [ ] Quota system: DynamoDB tiers/usage tables, per-session and per-day caps, concurrency limits, site-wide daily budget kill-switch, spoken wind-down
-- [ ] Terragrunt infra skeleton (site "kmk"): cloned defcon.run.34 layout — network, certs, ecs-cluster, ecr, dynamodb, secrets, email, github-oidc, ecs-task, ecs-service
+- [ ] Terragrunt infra skeleton (site "kmv"): cloned defcon.run.34 layout — network, certs, ecs-cluster, ecr, dynamodb, secrets, email, github-oidc, ecs-task, ecs-service
 - [ ] `kv` Go CLI: operator tooling for klanker-voice (access-code CRUD, quota/usage inspection, session visibility, deploy/smoke-test helpers)
 - [ ] KlankerMaker concierge persona via versioned markdown system prompt
 - [ ] Local-first pipeline development: bot runs on a laptop with three API keys for fast conversational-feel tuning

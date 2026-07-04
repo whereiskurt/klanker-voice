@@ -31,7 +31,7 @@ prompt v1. No cloud deployment, no auth, no quotas — those are Phases 2–4.
 ### Local dev experience
 - **D-08:** Two run modes from day one: **localhost web page** (SmallWebRTC + Pipecat JS client — the same transport path as prod) and **terminal mic/speaker mode** for fast prompt-tuning iteration. Web mode is the verification surface; terminal mode is the iteration surface.
 - **D-09:** Pipeline configuration lives in a **checked-in TOML file** (`pipeline.toml` or similar): stage selection (STT/LLM/TTS providers + models), endpointing knobs, persona file path, voice id, speed. **Secrets never in TOML** — API keys come from `.env` (gitignored).
-- **D-10:** Key bootstrap: a small script (`make env` or equivalent) reads the three `/kmk/bootstrap/*` SSM parameters using the `klanker-application` profile and writes `.env`. SSM is the single source of truth from day one; nothing plaintext in the repo. (User stores keys at `/kmk/bootstrap/{deepgram_api_key,anthropic_api_key,elevenlabs_api_key}` in us-east-1.)
+- **D-10:** Key bootstrap: a small script (`make env` or equivalent) reads the three `/kmv/bootstrap/*` SSM parameters using the `klanker-application` profile and writes `.env`. SSM is the single source of truth from day one; nothing plaintext in the repo. (User stores keys at `/kmv/bootstrap/{deepgram_api_key,anthropic_api_key,elevenlabs_api_key}` in us-east-1.)
 
 ### Harness output & verdicts
 - **D-11:** Each harness run produces a **console table + JSON artifact**: per-stage breakdown (VAD-stop, STT-final, LLM TTFT, TTS first-audio, voice-to-voice) with p50/p95 across scripted turns. JSON is the diffable record for A/B comparisons.
