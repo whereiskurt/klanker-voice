@@ -1,4 +1,4 @@
-# VoiceAI (klankermaker.ai) — Design Spec
+# klanker-voice (voice.klankermaker.ai) — Design Spec
 
 **Date:** 2026-07-04
 **Status:** Approved (interview complete; ready for planning)
@@ -13,6 +13,10 @@ APIs, transported over direct WebRTC, and deployed on the proven defcon.run.34
 terragrunt/ECS infrastructure patterns. Access is gated by a new identity service at
 **auth.klankermaker.ai** (magic-link email + OIDC) with an access-code → tier → quota
 system.
+
+**Naming:** the project/repo is **klanker-voice** (the term "voiceai" is avoided
+entirely for copyright reasons). v1 serves from `voice.klankermaker.ai`; registering
+`klankervoice.ai` is a possible future step, not in scope.
 
 Goals, in priority order:
 
@@ -225,3 +229,4 @@ the site-wide kill-switch bound worst-case burn.
 | TTS | ElevenLabs Flash v2.5 | Best voice quality at ~75–150ms first-audio |
 | Auth | Ported run.auth + access codes | Proven magic-link/OIDC base; tier gating |
 | Scale target | Conference-ready (~$120–165/mo) | 15–20 concurrent sessions, ElevenLabs Pro |
+| Naming | klanker-voice (not "voiceai") | Copyright concerns; klankervoice.ai domain possible later |
