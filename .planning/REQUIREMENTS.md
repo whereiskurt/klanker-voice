@@ -82,4 +82,44 @@
 
 ## Traceability
 
-(Filled by roadmap — maps REQ-IDs to phases)
+Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| PIPE-01 | Phase 1 | Pending |
+| PIPE-02 | Phase 1 | Pending |
+| PIPE-03 | Phase 1 | Pending |
+| PIPE-04 | Phase 1 | Pending |
+| PIPE-05 | Phase 1 | Pending |
+| PIPE-06 | Phase 1 | Pending |
+| PIPE-07 | Phase 1 | Pending |
+| CLNT-01 | Phase 5 | Pending |
+| CLNT-02 | Phase 5 | Pending |
+| CLNT-03 | Phase 5 | Pending |
+| CLNT-04 | Phase 5 | Pending |
+| CLNT-05 | Phase 5 | Pending |
+| CLNT-06 | Phase 5 | Pending |
+| CLNT-07 | Phase 5 | Pending |
+| CLNT-08 | Phase 5 | Pending |
+| AUTH-01 | Phase 3 | Pending |
+| AUTH-02 | Phase 3 | Pending |
+| AUTH-03 | Phase 3 | Pending |
+| AUTH-04 | Phase 3 | Pending |
+| AUTH-05 | Phase 3 | Pending |
+| QUOT-01 | Phase 4 | Pending |
+| QUOT-02 | Phase 4 | Pending |
+| QUOT-03 | Phase 4 | Pending |
+| QUOT-04 | Phase 4 | Pending |
+| QUOT-05 | Phase 4 | Pending |
+| INFR-01 | Phase 2 | Pending |
+| INFR-02 | Phase 2 | Pending |
+| INFR-03 | Phase 4 | Pending |
+| INFR-04 | Phase 2 | Pending |
+| INFR-05 | Phase 2 | Pending |
+| INFR-06 | Phase 4 | Pending |
+| INFR-07 | Phase 2 | Pending |
+| KV-01 | Phase 3 | Pending |
+| KV-02 | Phase 3 | Pending |
+| KV-03 | Phase 4 | Pending |
+| KV-04 | Phase 4 | Pending |
+| KV-05 | Phase 4 | Pending |
