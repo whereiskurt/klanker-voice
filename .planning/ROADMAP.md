@@ -85,6 +85,7 @@ Plans:
   2. Auth issues JWT access tokens with tier/group claims that a relying service validates offline via the JWKS endpoint
   3. User may enter any access code (or none) at login: known codes map to tiers, unknown/blank yields a no-access tier with guidance
      — NOTE 2026-07-05 (03-VERIFICATION): resolve-to-no-access logic complete + tested; the "with guidance" UI clause (D-07) DEFERRED to Phase 5 client UX by user decision (users are redirected to the voice client, which is where they hit the "need a code" moment — CLNT-01/08). Live-table seed (demo/kphdemo123 + tiers) applied to kmv-auth-electro this session.
+
   4. Operator-defined codes carry expiry and max-redemption limits, and the login form is protected by Altcha captcha
   5. Operator can create, list, and expire access codes and define/list tiers via `kv`
 
@@ -117,11 +118,21 @@ Plans:
 **Plans**: 6 plans
 
 Plans:
+**Wave 1**
 
 - [ ] 04-01-PLAN.md — Production /api/offer + /health FastAPI entrypoint, offline JWT validation, public-IP+STUN ICE candidates, Dockerfile (INFR-03 code)
 - [ ] 04-02-PLAN.md — Infra delta: narrow+attach UDP SG (20000-20100), enable public-IP task/service, usage table, task IAM, session-count autoscaling 1→4 (INFR-03, INFR-06)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 04-03-PLAN.md — `kv smoke` synthetic offer→ICE→RTP + deploy + deployed ICE smoke proof (KV-05, INFR-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 04-04-PLAN.md — Race-safe quota: usage model, start-gate (typed rejects+sub-floor+per-task cap), heartbeat lease, service timer, 15s tick+rollup+auto-trip, hard-stop, ActiveSessions metric+scale-in protection (QUOT-01, QUOT-02, QUOT-04, INFR-06)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 04-05-PLAN.md — Spoken wind-down (natural warning + deterministic goodbye) + three-layer idle teardown + reconnect grace (QUOT-03, QUOT-05)
 - [ ] 04-06-PLAN.md — Operator loop: `kv usage` + `kv killswitch` + autoscale verification (QUOT-04, KV-03, KV-04, INFR-06)
 
@@ -137,6 +148,7 @@ Plans:
 
   1. User signs in via OIDC redirect to auth.klankermaker.ai before the mic is available, then grants mic through a gesture-gated flow with distinct error states (denied / no device / unsupported browser)
      — includes the no-access-tier guidance surfaced in-client (moved from Phase 3 / D-07, 2026-07-05): a no-access user is told they cannot start a session and how to get a code
+
   2. User sees a connection state machine with clear ICE-failure/UDP-blocked messaging and auto-retry, verified on a real iPhone and a restricted conference-style network
   3. User sees live captions for both sides, a state-aware orb (listening / thinking / speaking), and a visible session countdown timer
   4. User can toggle a latency HUD showing per-stage pipeline latency
