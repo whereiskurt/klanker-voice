@@ -16,9 +16,35 @@ locals {
     }
   ]
 
-  # DynamoDB tables for the auth service (Phase 3 adds authjs/electro/quota tables)
+  # DynamoDB tables for the auth service (Plan 03-01): two physical tables —
+  # @auth/dynamodb-adapter needs its own "nextauth"-schema table (GSI1PK/
+  # GSI1SK key convention), separate from the "electro"-schema single table
+  # that all ElectroDB entities (oidc-adapter, auth-profile, and Plan 03-02's
+  # tiers/access_codes) share. The DEF CON quota table is NOT ported (D-11) —
+  # Phase 4 adds a usage table against the design-spec schema.
   dynamodb = {
-    tables = []
+    tables = [
+      {
+        table_name = "kmv-auth-authjs"
+        table_type = "nextauth"
+        replica_regions = [
+          {
+            label = "use1"
+            full  = "us-east-1"
+          }
+        ]
+      },
+      {
+        table_name = "kmv-auth-electro"
+        table_type = "electro"
+        replica_regions = [
+          {
+            label = "use1"
+            full  = "us-east-1"
+          }
+        ]
+      }
+    ]
   }
 
   # Placeholder task definition — unused while site.hcl ecs_tasks.enabled = false.

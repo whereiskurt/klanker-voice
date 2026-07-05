@@ -35,6 +35,14 @@ vi.mock("@auth", () => ({
   signIn: vi.fn(async () => undefined),
 }));
 
+// Avoid pulling in the real next-auth package (its ESM build imports the
+// extensionless "next/server" specifier, which only resolves under
+// bundler-style extension inference — not Vitest's Node-ESM loader). The
+// route only needs the AuthError *class* for its instanceof check.
+vi.mock("next-auth", () => ({
+  AuthError: class AuthError extends Error {},
+}));
+
 vi.mock("altcha-lib", () => ({
   verifySolution: vi.fn(),
 }));

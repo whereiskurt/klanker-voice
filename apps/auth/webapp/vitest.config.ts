@@ -2,17 +2,20 @@ import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 /**
- * Vitest config for the klanker-voice auth webapp.
+ * Vitest config for run.auth webapp.
  *
  * Wires the `@/*` path alias defined in tsconfig.json (paths → src/*) so
  * unit tests can import the same way as Next.js runtime code without
  * pulling in vite-tsconfig-paths as an extra dep.
  *
- * Ported verbatim from run.auth/webapp/vitest.config.ts (D-08/D-09).
+ * Copied from run.bib/webapp/vitest.config.ts (node env; `@` → ./src). The
+ * include glob is extended to also match config-adjacent __tests__ dirs
+ * (e.g. src/config/__tests__/...) so pure server-side modules can be tested
+ * next to their source.
  *
  * We deliberately do NOT include a jsdom environment yet — the current suite
- * only tests pure server-side modules / route handlers. Add environment:
- * "jsdom" + a dom dep when a future test needs the DOM.
+ * only tests a pure server-side module. Add environment: "jsdom" + a dom dep
+ * when a future test needs the DOM.
  */
 export default defineConfig({
   test: {
@@ -25,6 +28,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // tsconfig.json path alias used by src/app/api/login/route.ts (signIn).
+      "@auth": fileURLToPath(new URL("./src/config/auth.ts", import.meta.url)),
     },
   },
 });

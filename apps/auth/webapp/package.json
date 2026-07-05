@@ -9,8 +9,49 @@
     "lint": "eslint",
     "test": "vitest run"
   },
+  "overrides": {
+    "@auth/core": {
+      "nodemailer": "^7"
+    },
+    "fast-xml-parser": "^5.3.4"
+  },
+  "dependencies": {
+    "@auth/dynamodb-adapter": "2.11.1",
+    "@aws-sdk/client-dynamodb": "^3.893.0",
+    "@aws-sdk/client-ses": "^3.893.0",
+    "@aws-sdk/client-sesv2": "^3.893.0",
+    "@aws-sdk/lib-dynamodb": "^3.893.0",
+    "@heroui/react": "^2.8.8",
+    "@react-aria/ssr": "3.9.10",
+    "@react-aria/visually-hidden": "3.8.29",
+    "@react-types/shared": "^3.32.1",
+    "altcha": "2.3.0",
+    "altcha-lib": "1.4.1",
+    "clsx": "2.1.1",
+    "electrodb": "3.5.3",
+    "framer-motion": "^12.29.2",
+    "intl-messageformat": "^11.1.2",
+    "koa": "^3.1.1",
+    "lucide-react": "^0.563.0",
+    "next": "16.1.6",
+    "next-auth": "5.0.0-beta.30",
+    "next-themes": "^0.4.6",
+    "nodemailer": "7.0.13",
+    "oidc-provider": "9.6.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-icons": "^5.5.0"
+  },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4",
     "@types/node": "^25",
+    "@types/nodemailer": "^7.0.9",
+    "@types/oidc-provider": "^9.5.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.9"
   }
