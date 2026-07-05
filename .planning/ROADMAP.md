@@ -114,7 +114,18 @@ Plans:
   4. Site-wide kill-switch gates new sessions, and abandoned sessions are torn down via layered idle detection with a server-side wall-clock outer bound
   5. Voice service autoscales 1→4 tasks with scale-in protection during active sessions, and operator can view today's usage and flip the kill-switch via `kv`
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+
+- [ ] 04-01-PLAN.md — Production /api/offer + /health FastAPI entrypoint, offline JWT validation, public-IP+STUN ICE candidates, Dockerfile (INFR-03 code)
+- [ ] 04-02-PLAN.md — Infra delta: narrow+attach UDP SG (20000-20100), enable public-IP task/service, usage table, task IAM, session-count autoscaling 1→4 (INFR-03, INFR-06)
+- [ ] 04-03-PLAN.md — `kv smoke` synthetic offer→ICE→RTP + deploy + deployed ICE smoke proof (KV-05, INFR-03)
+- [ ] 04-04-PLAN.md — Race-safe quota: usage model, start-gate (typed rejects+sub-floor+per-task cap), heartbeat lease, service timer, 15s tick+rollup+auto-trip, hard-stop, ActiveSessions metric+scale-in protection (QUOT-01, QUOT-02, QUOT-04, INFR-06)
+- [ ] 04-05-PLAN.md — Spoken wind-down (natural warning + deterministic goodbye) + three-layer idle teardown + reconnect grace (QUOT-03, QUOT-05)
+- [ ] 04-06-PLAN.md — Operator loop: `kv usage` + `kv killswitch` + autoscale verification (QUOT-04, KV-03, KV-04, INFR-06)
+
+**Waves:** 1 → {04-01, 04-02}; 2 → {04-03}; 3 → {04-04}; 4 → {04-05, 04-06 parallel}
 
 ### Phase 5: Browser Client & Conference Readiness
 
@@ -175,7 +186,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have 
 | 1. Local Pipeline & Latency Harness | 5/5 | ✅ Complete (verified 5/5, amended) | 2026-07-05 |
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 4/4 | ✅ Complete (verified 4/5; #3 guidance→Phase 5, seed done) | 2026-07-05 |
-| 4. Voice Service Deployed & Quota Enforcement | 0/TBD | Not started | - |
+| 4. Voice Service Deployed & Quota Enforcement | 0/6 | Not started | - |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
 | 7. KPH Knowledge Base | 0/TBD | Not started | - |
