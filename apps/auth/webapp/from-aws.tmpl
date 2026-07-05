@@ -2,6 +2,14 @@ HOSTNAME=0.0.0.0
 NEXTAUTH_URL=http://localhost:3002
 SITE_DOMAIN=klankermaker.ai
 
+# Pinned Phase-4 contract base (03-03-PLAN.md pinned_phase4_contract): issuer,
+# routePrefix, jwks, and the voice client's redirect URIs all resolve from
+# this single value so they can never disagree (Pitfall 6). Also what makes
+# this .env.local a valid staging check for a production-mode local run
+# (`next build && next start`, isDev=false so routePrefix already resolves
+# to /use1/api/oidc — this value must keep the same /use1 suffix).
+AUTH_PUBLIC_URL=https://auth.klankermaker.ai/use1
+
 # dynamodb-local (see plan 03-01 user_setup) — local magic-link login green
 # check without touching the live nextauth/electro tables.
 AUTH_DYNAMODB_ENDPOINT=http://localhost:8000
@@ -23,6 +31,14 @@ AUTH_SES_SMTP_FROM="no-reply@auth.klankermaker.ai"
 AUTH_JWT_SECRET=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/jwt/secret
 OIDC_COOKIE_KEYS=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/cookie_keys
 ALTCHA_HMAC_KEY=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/altcha/secret
+
+# Persistent, shared RS256 signing key set (Plan 03-03, T-03-13/T-03-14) for
+# oidc-provider's configuration.jwks — a JSON JWK Set (private keys), NOT
+# auto-generated per process, so offline JWKS validation (AUTH-02) is stable
+# across restarts and a 1->N Fargate fleet publishes ONE consistent JWKS.
+# SOPS-encrypted at rest; see plan 03-03 user_setup for how this SecureString
+# is created (net-new — Phase 2 provisioned only oidc/cookie_keys).
+OIDC_JWKS=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/jwks
 
 # OIDC voice client shell — not SSM-provisioned by Phase 2 (single first-party
 # client, D-09); local dev placeholder values only.

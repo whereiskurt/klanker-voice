@@ -54,6 +54,12 @@ beforeAll(async () => {
   });
   const privateJwk = await jose.exportJWK(privateKey);
   publicJwk = await jose.exportJWK(publicKey);
+  // Fix the kid explicitly (oidc-provider's initialize_keystore.js honors an
+  // already-present kid via `key.kid ??= calculateKid(key)`) so our
+  // independent local-JWKS verification below can match on it without
+  // reimplementing the provider's internal kid-derivation algorithm.
+  privateJwk.kid = "test-kid-1";
+  publicJwk.kid = "test-kid-1";
   process.env.OIDC_JWKS = JSON.stringify({ keys: [privateJwk] });
 
   configMod = await import("../index");
