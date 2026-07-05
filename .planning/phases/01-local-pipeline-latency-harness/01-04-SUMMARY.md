@@ -36,13 +36,21 @@ key-files:
     - docs/TUNING.md
   modified:
     - apps/voice/.gitignore
+    - apps/voice/src/klanker_voice/observers.py
+    - apps/voice/src/klanker_voice/harness/report.py
+    - apps/voice/prompts/concierge.md
+    - apps/voice/tests/test_observers.py
+    - docs/tuning/arm-b-trimmed.json
+    - docs/tuning/arm-c-eager.json
 
 key-decisions:
   - "Endpointing A/B winner is Nova-3 + SmartTurn v3 (v2v p50 1460.9ms vs 1799.8ms best VAD-timeout); the ~340ms edge is pure turn release (vad_stop 401 vs 801ms)"
   - "SmartTurn v3 verdict KEEP — it is the 1.5.0 default and an 8MB int8 ONNX model (~12ms CPU, no torch); the 2GB-torch caution applies to the OLD smart-turn, not v3"
   - "Flux could not be crowned on measured evidence: it removes the local VAD-stop frame the harness anchors on, so it recorded zero turns despite running correctly; deferred to a Flux-native observer"
-  - "Eager EOT stays disabled (unmeasurable on this harness; conservative default per Pitfall 4)"
-  - "Winner p95 (2210.7ms) exceeds the 1.2s ceiling -> escalated for an explicit human decision rather than closing silently (plan Task 2 rule); decision recorded as pending in TUNING.md"
+  - "Eager EOT stays disabled (round 0: unmeasurable; round 1: measured, helps Flux ~190ms but still loses and costs +50-70% LLM spend — Pitfall 4)"
+  - "Round 0: winner p95 (2210.7ms) over the 1.2s ceiling -> escalated; user chose TUNE FURTHER NOW"
+  - "Round 1 (2026-07-05): Flux made measurable via a Flux-native observer (EndOfTurn anchor) — Flux LOSES (post-endpointing v2v p50 1779ms > SmartTurn full 1402ms), root cause a built-in 0.5s ExternalUserTurnStopStrategy hold unreachable without the forbidden Pitfall-3 override"
+  - "Round 1: persona trim v1->v2 kept (v2v p50 1460.9->1401.7ms, llm_ttft p95 1433->818ms); stop_secs held at 0.2 (safe floor); winner still over ceiling -> re-escalated per user instruction"
 
 patterns-established:
   - "Pattern: per-arm TOML clones + committed docs/tuning/*.json as the diffable A/B record; artifacts/ stays gitignored"
@@ -85,24 +93,35 @@ coverage:
     requirement: "PIPE-01"
     verification: []
     human_judgment: true
-    rationale: "Winner voice_to_voice p95 2210.7ms exceeds the 1.2s ceiling; plan Task 2 requires an explicit human tuning/accept/scope decision (recorded in TUNING.md) before the phase closes over the ceiling. Decision pending."
+    rationale: "Round 0 winner p95 2210.7ms over the 1.2s ceiling -> user chose tune-further. Round 1 (Flux-native measurement, persona trim, eager test, stop_secs analysis) improved the winner to v2v p50 1401.7ms but it is STILL over the 1.2s ceiling; per the user's instruction a fresh checkpoint is returned. Decision pending (round 1) — recorded in TUNING.md."
+  - id: D5
+    description: "Flux made measurable (Open Question 1 fully resolved) via a Flux-native EndOfTurn observer anchor; Arm C measured and compared"
+    requirement: "PIPE-04"
+    verification:
+      - kind: unit
+        ref: "apps/voice/tests/test_observers.py (2 passed — synthetic Flux frame path, no live API)"
+        status: pass
+      - kind: integration
+        ref: "live arm-c run 5/5 scenarios pass; docs/tuning/arm-c.json has 10 populated voice_to_voice turns; compare CLI renders arm-c (exit 0)"
+        status: pass
+    human_judgment: false
 
 # Metrics
-duration: 35min
+duration: 90min
 completed: 2026-07-05
 status: complete
 ---
 
 # Phase 1 Plan 04: Endpointing A/B — Measured Verdicts Summary
 
-**Three-arm endpointing A/B measured on pipecat 1.5.0: Nova-3 + SmartTurn v3 wins (voice_to_voice p50 1460.9 ms vs 1799.8 ms for the best Nova-3 + VAD-timeout sweep, the ~340 ms edge coming entirely from turn release at vad_stop 401 ms vs 801 ms); Deepgram Flux ran correctly but is structurally unmeasurable by the plan-03 observer (it removes the local VAD-stop frame the observer anchors on — RESEARCH Open Question 1 resolved); winner landed in pipeline.toml, but its p95 (2210.7 ms) exceeds the 1.2 s ceiling and is ESCALATED for an explicit human decision**
+**Three-arm endpointing A/B on pipecat 1.5.0 with a follow-on tuning round: Nova-3 + SmartTurn v3 wins; a new Flux-native observer resolves Open Question 1 and shows Deepgram Flux LOSES (post-endpointing v2v p50 1779 ms > SmartTurn's full 1402 ms, held back by a built-in 0.5 s ExternalUserTurnStop hold); a 22 % persona trim cut the winner to v2v p50 1401.7 ms (llm_ttft p95 1433→818 ms) and eager EOT was rejected — winner still over the 1.2 s ceiling, re-escalated for a human decision**
 
 ## Performance
 
-- **Duration:** ~35 min (live A/B measurement runs completed in the prior, interrupted session ~20 min; this resumed session mined the surviving artifacts and produced the verdicts/docs ~15 min — no live runs re-executed)
+- **Duration:** ~90 min total (round 0: mined the surviving A/B artifacts + verdicts ~30 min; round 1 "tune further": Flux-native observer + 3 live tuning runs + docs ~60 min)
 - **Completed:** 2026-07-05
-- **Tasks:** 2/2 deliverable tasks complete; 1 escalation open (human decision)
-- **Files created:** 7, modified: 1
+- **Tasks:** round 0 (2/2 deliverables) + round 1 (3 levers) complete; latency/ceiling decision open (re-escalated)
+- **Files created:** 11, modified: 3
 
 ## Accomplishments
 
@@ -179,15 +198,27 @@ See key-decisions frontmatter. In short: SmartTurn v3 wins and is kept (cheap ON
 
 None - no external service configuration required. (The three provider API keys were already present for the measurement runs.)
 
+## Tuning Round 1 (2026-07-05) — user chose "tune further now"
+
+After the round-0 escalation the user chose option 1 (tune further). This round is fully recorded in `docs/TUNING.md`; the highlights:
+
+- **Lever 1 — Flux made measurable (Open Question 1 fully resolved).** Added a Flux-native anchor to `LatencyReportObserver`: it seeds the parent's user-stop anchor on Flux's EndOfTurn `UserStoppedSpeakingFrame` (after the parent processes it, so `vad_stop` stays null), and `on_latency_measured` then fires at bot start — yielding Flux's post-endpointing processing latency. Regression tests (`tests/test_observers.py`) drive synthetic frames, no live API. Live Arm C: **10 populated turns**, v2v p50 1779 ms (eager 1590 ms). **Flux LOSES** — its processing-only number is higher than the SmartTurn winner's *full* v2v (1402 ms), before even adding Flux's server-side EOT wait. Root cause, verified in the logs: a fixed **~503 ms** gap between EndOfTurn and LLM start = `ExternalUserTurnStopStrategy(timeout=0.5)`, hard-coded in Flux's auto-installed `ExternalUserTurnStrategies` and unreachable without the forbidden Pitfall-3 override.
+- **Lever 2 — persona trim kept.** `concierge.md` v1→v2, −22 % tokens, all facts/rules preserved. Winner v2v p50 1460.9→**1401.7 ms**; `llm_ttft` p95 tail 1433→**818 ms**. 5/5 scenarios still pass. Strictly good, so kept. (Caveat: the eval harness accumulates ~3000-token context across scenarios; a fresh-session production conversation is lighter, so measured TTFT is a conservative estimate.)
+- **Lever 3 — eager EOT rejected; stop_secs held at 0.2.** Eager measured (helps Flux ~190 ms but still loses; +50–70 % LLM spend, Pitfall 4). stop_secs held at its safe floor by analysis (lower risks premature cutoffs for ~100 ms that would not clear the ceiling).
+
+**Round-1 winner: Nova-3 + SmartTurn v3 + persona v2** — v2v p50 **1401.7 ms** / p95 ~2080 ms (ex a single all-stages-normal outlier turn; 3877 raw). `pipeline.toml` turn config unchanged; the win rides in `concierge.md`.
+
+**Still over the 1.2 s ceiling → re-escalated.** Per the user's instruction ("if p95 still >1200 ms after these levers, return a fresh checkpoint rather than iterating further"), execution pauses again. The three in-scope levers are exhausted; remaining headroom is in out-of-scope levers (PIPE-08 ack-masking, Anthropic prompt caching on the system prompt) or accepting the cascade floor. Options are recorded in the TUNING.md "RE-ESCALATION" section; decision pending.
+
 ## Next Phase Readiness
 
 - **Plan 01-05** (voice audition) is unblocked: `docs/TUNING.md` has a stubbed "Chosen voice" section for it to complete, and `pipeline.toml` `voice_id` remains empty (interim premade voice per 01-03).
-- **Phase 4** inherits `pipeline.toml` as the tuned prod default (Nova-3 + SmartTurn v3, stop_secs 0.2) unchanged.
-- **Blocker for phase close:** the open latency escalation above must get a recorded human decision in `docs/TUNING.md`. A future Flux-native observer (PIPE-08 neighborhood) is the path to actually score Flux and chase the ~800 ms target.
+- **Phase 4** inherits `pipeline.toml` as the tuned prod default (Nova-3 + SmartTurn v3, stop_secs 0.2, persona v2) unchanged.
+- **Blocker for phase close:** the round-1 latency escalation above needs a recorded human decision in `docs/TUNING.md`. Prompt caching on the system prompt is the untried TTFT lever with the most remaining headroom; PIPE-08 ack-masking is the design's named perceived-latency lever.
 
 ## Self-Check: PASSED
 
-All 7 created files exist on disk and are tracked in git (arm-{a,b,c}.toml, docs/tuning/arm-{a,b,c}.json, docs/TUNING.md); both task commits (e84555f, b920330) present in git log; compare CLI exits 0 and renders the three-arm table; 21 config tests pass; all five confirmatory eval scenarios PASS under the final pipeline.toml; committed artifacts carry config metadata only (no key-like strings, T-1-09); no "voiceai"/"kmk" string in any produced file. One deliverable (D4, the latency/ceiling decision) is intentionally human_judgment: true and open — the escalation above.
+All created files exist on disk and are tracked in git (arm-{a,b,c}.toml; docs/tuning/arm-a.json, arm-b.json, arm-b-trimmed.json, arm-c.json, arm-c-eager.json; docs/TUNING.md; observers.py, report.py, concierge.md, tests/test_observers.py); all five task commits (e84555f, b920330, e2f02a9, 7ae801b, e4241ff) present in git log; compare CLI exits 0 and renders arm-c with 10 turns; 60 unit tests pass; all five eval scenarios PASS under the trimmed-persona winner; committed artifacts carry config metadata only (no key-like strings, T-1-09); no "voiceai"/"kmk" string in any produced file. Two deliverables (D4 latency/ceiling decision) remain human_judgment: true and open — the round-1 re-escalation above.
 
 ---
 *Phase: 01-local-pipeline-latency-harness*
