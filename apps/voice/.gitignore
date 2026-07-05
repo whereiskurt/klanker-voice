@@ -1,0 +1,10 @@
+# Secrets — never commit (D-09/D-10: SSM is the source of truth)
+.env
+
+# Run artifacts (rendered audio, per-run JSON)
+artifacts/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

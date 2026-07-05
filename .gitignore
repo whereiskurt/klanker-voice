@@ -1,0 +1,10 @@
+# Secrets — never commit (D-09/D-10: SSM is the source of truth)
+apps/voice/.env
+
+# Run artifacts (rendered audio, per-run JSON) — committed A/B verdicts live in docs/tuning/
+apps/voice/artifacts/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
