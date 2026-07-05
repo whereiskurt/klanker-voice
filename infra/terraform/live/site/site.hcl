@@ -191,8 +191,8 @@ locals {
         keys        = ["secret", "internal_secret"]
       }
       oidc = {
-        description = "OIDC cookie encryption keys"
-        keys        = ["cookie_keys"]
+        description = "OIDC cookie encryption keys + RS256 JWKS signing key set (persistent, shared across the Fargate fleet)"
+        keys        = ["cookie_keys", "jwks"]
       }
       altcha = {
         description = "ALTCHA proof-of-work secret"
