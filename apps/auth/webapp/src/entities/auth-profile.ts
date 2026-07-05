@@ -22,6 +22,13 @@ function generateDisplayName(): string {
  * profile caches and the DEF CON quota tier field are dropped (D-11). Phase
  * 3 Plan 02 adds `activeTierId`/`activeGroup` here as the login->token
  * bridge (access-code resolution); Phase 4 owns usage/quota state.
+ *
+ * `activeTierId`/`activeGroup` are stamped by the LoginIntent bridge
+ * (Task 3, auth.ts's nodemailer jwt callback) on EVERY login — latest-wins
+ * (D-05). This is deliberately NOT a permanent per-user tier: re-entering a
+ * different code at a later login overwrites both fields. Do NOT reuse
+ * run.auth's DEF CON `quotaTier` pattern (a sticky per-user stamp) as the
+ * tier source — that would violate D-05 (T-03-09).
  */
 export const AuthProfile = new Entity(
   {
@@ -84,6 +91,17 @@ export const AuthProfile = new Entity(
       // Optional: when the lockout was applied
       lockedAt: {
         type: "number",
+      },
+      // Access-code -> tier bridge (Phase 3 Plan 02, D-04/D-05/D-07).
+      // Stamped by the LoginIntent bridge on every login; NOT permanent —
+      // latest-wins, see class doc above. Defaults to "no-access" for
+      // brand-new profiles until their first login_intent is applied.
+      activeTierId: {
+        type: "string",
+        default: "no-access",
+      },
+      activeGroup: {
+        type: "string",
       },
       // Timestamps
       createdAt: {
@@ -159,4 +177,19 @@ export async function getAuthProfile(userId: string) {
 export async function getAuthProfileByEmail(email: string) {
   const result = await AuthProfile.query.byEmail({ email }).go();
   return result.data?.[0];
+}
+
+/**
+ * Stamp the resolved tier/group from a consumed LoginIntent onto a user's
+ * AuthProfile (the login->token bridge, Phase 3 Plan 02 Task 3). Latest-wins
+ * by design (D-05) — this OVERWRITES any prior activeTierId/activeGroup.
+ */
+export async function setActiveTier(
+  userId: string,
+  tierId: string,
+  group: string | null | undefined
+): Promise<void> {
+  await AuthProfile.patch({ userId })
+    .set({ activeTierId: tierId, activeGroup: group ?? undefined })
+    .go();
 }

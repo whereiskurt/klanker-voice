@@ -2,9 +2,14 @@ import { signIn } from "@auth";
 import { AuthError } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { verifySolution } from "altcha-lib";
+import { resolveAccessCode, normalizeCode } from "@/entities/access-code";
+import { LoginIntent, normalizeEmail } from "@/entities/login-intent";
 
-const inviteCodes = process.env.AUTH_INVITE_CODES?.split(",");
 const ALTCHA_HMAC_KEY = process.env.ALTCHA_HMAC_KEY;
+// Login-time login_intent TTL (D-05/Pitfall 3): long enough to cover a slow
+// human clicking the magic link, short enough that an abandoned code
+// resolution doesn't leak stale tier state indefinitely.
+const LOGIN_INTENT_TTL_MS = 15 * 60 * 1000;
 
 import { cookies } from "next/headers";
 import crypto from "crypto";
@@ -124,11 +129,30 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (inviteCodes?.length! > 0 && !inviteCodes?.includes(inviteCode)) {
-    return NextResponse.json(
-      { error: `Invalid invite code: '${inviteCode}'` },
-      { status: 403 }
-    );
+  // AUTH-03/D-07: any code (or none) is accepted here — login ALWAYS
+  // proceeds to signIn() below regardless of whether the code resolves.
+  // Unknown/blank/expired/over-cap codes all resolve to the no-access tier
+  // uniformly (T-03-07: no enumeration oracle); resolveAccessCode() never
+  // throws or rejects the request.
+  const resolved = await resolveAccessCode(inviteCode);
+
+  // Bridge the resolved tier across to the (not-yet-existing, for a
+  // first-time user) post-auth token via a short-lived, email-keyed
+  // login_intent (Pitfall 3). Latest-wins: upsert overwrites any prior
+  // intent for this email (D-05).
+  try {
+    await LoginIntent.upsert({
+      email: normalizeEmail(email),
+      code: normalizeCode(inviteCode),
+      tierId: resolved.tierId,
+      group: resolved.group ?? undefined,
+      expiresAt: Date.now() + LOGIN_INTENT_TTL_MS,
+    }).go();
+  } catch (err) {
+    // Non-fatal: login must still proceed even if the intent write fails
+    // (e.g. transient DynamoDB error) — the user simply lands on no-access
+    // until they try again with the code.
+    console.error("Failed to write login_intent:", err);
   }
 
   try {
