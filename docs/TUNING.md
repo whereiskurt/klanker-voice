@@ -395,7 +395,7 @@ user_speech_timeout = 0.6
 
 [llm]
 provider = "anthropic"
-model    = "claude-haiku-4-5"      # persona v2 (prompts/concierge.md, trimmed for hygiene)
+model    = "claude-haiku-4-5"      # persona v3 (prompts/concierge.md: v2 hygiene trim + KPH self-reference + DEFCON spelling rule)
 
 [tts]
 provider = "elevenlabs"
