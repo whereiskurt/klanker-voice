@@ -1,0 +1,124 @@
+name: "Deploy: ECS Update"
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service being deployed (context only)'
+        type: choice
+        options:
+          - voice
+          - auth
+          - all
+        default: all
+
+  # Called by build-voice.yml / build-auth.yml after an image push
+  workflow_call:
+    inputs:
+      service:
+        description: 'Service being deployed (context only)'
+        type: string
+        default: 'all'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ECS (${{ inputs.service }})
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_REGION: us-east-1
+      TG_BUCKET_USE1: tf-${{ vars.SITE_LABEL }}-use1-${{ vars.SGUID }}
+      TG_TABLE_USE1: tf-${{ vars.SITE_LABEL }}-use1-${{ vars.SGUID }}
+      SGUID: ${{ vars.SGUID }}
+      TF_VAR_MANAGEMENT_ACCOUNT_ID: ${{ vars.TF_VAR_MANAGEMENT_ACCOUNT_ID }}
+      TF_VAR_APPLICATION_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      TF_VAR_GITHUB_ORG: ${{ github.repository_owner }}
+      TF_VAR_SOPS_KMS_KEY_ID: ${{ vars.TF_VAR_SOPS_KMS_KEY_ID }}
+      TF_VAR_SSM_KMS_KEY_ARNS: ${{ vars.TF_VAR_SSM_KMS_KEY_ARNS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Terragrunt and SOPS
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/terragrunt
+            /usr/local/bin/sops
+          key: tools-${{ runner.os }}-terragrunt-v0.97.1-sops-v3.11.0
+
+      - name: Cache Terragrunt Provider Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.terragrunt-cache
+          key: terragrunt-providers-${{ runner.os }}-${{ hashFiles('infra/terraform/**/*.tf') }}
+          restore-keys: |
+            terragrunt-providers-${{ runner.os }}-
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/kmv-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.3
+          terraform_wrapper: false
+
+      - name: Setup Terragrunt
+        run: |
+          if [ ! -f /usr/local/bin/terragrunt ]; then
+            curl -Lo /usr/local/bin/terragrunt \
+              "https://github.com/gruntwork-io/terragrunt/releases/download/v0.97.1/terragrunt_linux_amd64"
+            chmod +x /usr/local/bin/terragrunt
+          fi
+          terragrunt --version
+
+      - name: Setup SOPS
+        run: |
+          if [ ! -f /usr/local/bin/sops ]; then
+            curl -Lo /usr/local/bin/sops \
+              "https://github.com/getsops/sops/releases/download/v3.11.0/sops-v3.11.0.linux.amd64"
+            chmod +x /usr/local/bin/sops
+          fi
+          sops --version
+
+      # Deploy = terragrunt apply limited to the ecs-task / ecs-service units.
+      # While site.hcl keeps ecs_tasks.enabled / ecs_services.enabled = false
+      # (Phase 2 state), the exclude blocks make this a clean no-op — Phase 3
+      # flips the flags and this workflow starts deploying with no edits.
+      - name: Terragrunt Apply (ecs-task, ecs-service)
+        id: apply
+        working-directory: infra/terraform/live/site
+        env:
+          TG_PROVIDER_CACHE: "1"
+        run: |
+          for MODULE in ecs-task ecs-service; do
+            echo "=== Applying $MODULE ==="
+            (cd "region/us-east-1/$MODULE" && terragrunt apply --no-color --non-interactive -auto-approve) 2>&1 | tee -a deploy_output.txt
+            exit_code=${PIPESTATUS[0]}
+            if [ "$exit_code" -ne 0 ]; then
+              exit "$exit_code"
+            fi
+          done
+
+      - name: Write Job Summary
+        if: always()
+        run: |
+          STATUS=$([[ "${{ steps.apply.outcome }}" == "success" ]] && echo "PASS" || echo "FAIL")
+          echo "## ECS Deploy: ${STATUS}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
