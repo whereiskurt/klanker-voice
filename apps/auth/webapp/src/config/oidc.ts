@@ -359,10 +359,25 @@ const configuration: Configuration = {
 
   rotateRefreshToken: true,
 
-  // Extra access token claims — Plan 03-03 Task 3 wires tier_id/group here
-  // now that resourceIndicators is enabled (D-01/D-02).
+  /**
+   * Extra ACCESS-token claims (AUTH-02, D-01/D-02, Plan 03-03 Task 3).
+   *
+   * Only applies to `AccessToken` kind tokens with a known accountId (the
+   * default is also invoked for ClientCredentials tokens, which have no
+   * accountId — those get {}). Deliberately emits ONLY the two namespaced
+   * tier_id/group claims (D-01 thin token, T-03-15) — the voice service
+   * reads the `tiers` table for actual limits at session start; this is NOT
+   * where the ID token / userinfo claims come from (see findAccount.claims
+   * above, untouched).
+   */
   extraTokenClaims: async (ctx, token) => {
-    return {};
+    if (token.kind !== "AccessToken" || !token.accountId) return {};
+
+    const profile = await getAuthProfile(token.accountId);
+    return {
+      [config.oidc.claimNames.tierId]: profile?.activeTierId ?? "no-access",
+      [config.oidc.claimNames.group]: profile?.activeGroup ?? null,
+    };
   },
 };
 
