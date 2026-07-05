@@ -87,12 +87,12 @@ Plans:
   4. Operator-defined codes carry expiry and max-redemption limits, and the login form is protected by Altcha captcha
   5. Operator can create, list, and expire access codes and define/list tiers via `kv`
 
-**Plans**: 1/4 plans executed
+**Plans**: 2/4 plans executed
 
 Plans:
 
 - [x] 03-01-PLAN.md — Port run.auth app; trim to single-region Email-only voice-client; magic-link login green with interstitial confirm page + Altcha; two DynamoDB tables live (AUTH-01, AUTH-05)
-- [ ] 03-02-PLAN.md — access_codes/tier/login_intent/code_redemption entities; login-time code→tier resolution + email→token bridge; unique-user redemption counting (AUTH-03, AUTH-04)
+- [x] 03-02-PLAN.md — access_codes/tier/login_intent/code_redemption entities; login-time code→tier resolution + email→token bridge; unique-user redemption counting (AUTH-03, AUTH-04)
 - [ ] 03-03-PLAN.md — Enable Resource Indicators; RS256 JWT access token + tier_id/group claims; persistent JWKS in SSM; pin Phase-4 contract (AUTH-02)
 - [ ] 03-04-PLAN.md — `kv` CLI code + tier CRUD; ElectroDB key-compat round-trip; seed demo/kphdemo123 tiers and codes (KV-01, KV-02)
 
@@ -172,7 +172,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have 
 |-------|----------------|--------|-----------|
 | 1. Local Pipeline & Latency Harness | 5/5 | ✅ Complete (verified 5/5, amended) | 2026-07-05 |
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
-| 3. Auth Service & Access Codes | 1/4 | In Progress|  |
+| 3. Auth Service & Access Codes | 2/4 | In Progress|  |
 | 4. Voice Service Deployed & Quota Enforcement | 0/TBD | Not started | - |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
