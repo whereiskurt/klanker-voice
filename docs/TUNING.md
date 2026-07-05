@@ -7,10 +7,15 @@
 comparable with the eval-harness `within_ms` budgets (a different anchor — Pitfall 7). Verdicts are
 **informational only (D-13)**: no run, report, or CLI ever exits nonzero on a threshold.
 
-> **STATUS: ESCALATED — see [Latency vs the 1.2 s ceiling](#latency-vs-the-12s-ceiling-d-13-pipe-01).**
-> The winning configuration's measured voice-to-voice p95 (2210.7 ms) exceeds the 1.2 s roadmap
-> ceiling. Per the plan-04 escalation rule this is surfaced for an explicit tuning/scope decision;
-> it is **not** a tooling gate and does **not** fail the phase. The decision is **pending**.
+> **STATUS: tuned (round 1, 2026-07-05) — still over the 1.2 s ceiling; re-escalated.**
+> The user chose **"tune further now"** on the round-0 escalation. A tuning round followed
+> (Flux-native observer + measurement, persona trim, eager-EOT test, stop_secs analysis).
+> The winner improved but its measured voice-to-voice still exceeds the 1.2 s ceiling
+> (p50 1401.7 ms). Full round-1 results and the fresh decision point are in
+> **[Tuning round 1](#tuning-round-1--2026-07-05)** at the end of this document. Verdicts remain
+> informational (D-13) — no tool exits nonzero; this is an execution decision, not a gate.
+>
+> **The sections between here and the tuning round are the round-0 record, preserved as written.**
 
 ---
 
@@ -178,7 +183,120 @@ execution decision, not a tooling failure. Options:
    feels slick subjectively; conference-demo tolerance — and treat ~800 ms as a v2 goal.
 3. **Scope a later phase** for the PIPE-08 ack-masking lever and/or the Flux-native measurement.
 
-**Decision: _pending_.** Record the chosen option and its reasoning here once made.
+**Decision (2026-07-05): option 1 — _tune further now._** See the tuning round below.
+
+---
+
+## Tuning round 1 — 2026-07-05
+
+**Decision recorded:** the user chose **"tune further now"** on the round-0 escalation. Scope: (1) build a
+Flux-native observer so Arm C is actually measurable and measure it; (2) trim persona/context to attack
+Haiku TTFT; (3) test lower `stop_secs` / eager EOT. Ground rules unchanged (minimal live runs, D-13
+preserved). Persona is now **v2** (trimmed) for every run in this round.
+
+### Lever 1 — Flux is now measurable (Open Question 1 fully resolved)
+
+Round 0 recorded Arm C as *unmeasurable*: pipecat's `UserBotLatencyObserver` anchors every turn on the
+local `VADUserStoppedSpeakingFrame`, which Flux never emits. The observer now seeds that anchor on Flux's
+**EndOfTurn** (`UserStoppedSpeakingFrame`), after the parent processes it — so `vad_stop` stays null (no
+locally observable turn wait) while `voice_to_voice` is measured as the **post-endpointing processing
+latency** (LLM + aggregation + TTS). This EXCLUDES Flux's server-side EOT detection wait, so it compares
+to the local arms' *(voice_to_voice − vad_stop)*, not to their full voice-to-voice. (Code:
+`observers.py`; regression tests: `tests/test_observers.py`, no live API.)
+
+Measured Arm C (`docs/tuning/arm-c.json`, persona v2, eager off), post-endpointing:
+
+| stage | Flux (eager off) | Flux (eager 0.5) |
+|-------|------------------|------------------|
+| vad_stop        | null (server-side)      | null (server-side)      |
+| llm_ttft        | 735.9 / 1444.7 (10)     | 548.4 / 836.3 (9)       |
+| tts_first_audio | 158.6 / 173.1 (10)      | 167.0 / 286.1 (9)       |
+| **voice_to_voice** | **1779.4 / 2389.3 (10)** | **1589.7 / 4073.2 (9)** |
+
+*(p50 / p95 (n), ms. Both EXCLUDE the Flux server EOT wait; add Deepgram's documented median EOT ~260–300 ms
+for a full-pipeline estimate.)*
+
+**Flux verdict: measurable, and it LOSES — deferred with measured evidence.** Flux's post-endpointing
+processing (p50 1779 ms, or 1590 ms with eager) is *higher than the SmartTurn winner's full voice-to-voice*
+(1401.7 ms), and Flux's number does not even include its server-side EOT wait. Root cause, verified in the
+run logs: a **consistent ~503 ms gap** between Flux's EndOfTurn and the LLM start. That gap is
+`ExternalUserTurnStopStrategy(timeout=0.5)` — a fallback hold hard-coded into
+`ExternalUserTurnStrategies.__post_init__`, which Flux's `service_metadata_frame()` auto-installs with
+defaults. There is **no supported path** to lower it without passing our own `user_turn_strategies` to the
+aggregator — the exact double-endpointing override the factory forbids (Pitfall 3). So on pipecat 1.5.0,
+Flux carries a built-in ~0.5 s endpointing tax that keeps it behind SmartTurn. Revisit if a future pipecat
+exposes that timeout through Flux's metadata, or if a later phase deliberately accepts the double-endpointing
+wiring to reclaim it.
+
+### Lever 2 — persona trim (kept: modest, real, strictly good)
+
+`concierge.md` v1 → v2, compressed ~22 % (802 → 618 tokens) with every scenario-exercised fact and rule
+preserved. Measured on the SmartTurn winner (`docs/tuning/arm-b-trimmed.json`) vs the round-0 baseline
+(`docs/tuning/arm-b.json`):
+
+| stage | Arm B baseline (persona v1) | Arm B trimmed (persona v2) |
+|-------|------------------------------|-----------------------------|
+| vad_stop        | 401.2 / 413.9 (10)   | 397.5 / 403.6 (10)   |
+| llm_ttft        | 586.8 / 1433.0 (10)  | 542.7 / **818.0** (10) |
+| tts_first_audio | 163.7 / 212.4 (10)   | 155.8 / 172.0 (10)   |
+| **voice_to_voice** | 1460.9 / 2210.7 (10) | **1401.7** / 3877.5 (10) |
+
+Robust wins: `voice_to_voice` p50 **−59 ms** (1460.9 → 1401.7) and `llm_ttft` p50 −44 ms with its **p95 tail
+roughly halved** (1433 → 818 ms). The trimmed run's `voice_to_voice` **p95 of 3877 ms is a single-turn
+anomaly** — turn 8 measured 5348 ms while its own `vad_stop`/`llm_ttft`/`tts` were all normal (a
+transport/interrupt stall, not a persona effect); excluding it the p95 is ~2080 ms, itself below the baseline.
+The trim is smaller-prompt-same-behavior with 5/5 scenarios passing, so it is kept as the default persona.
+
+**Context caveat:** the eval harness runs all five scenarios in one pipeline session, so the LLM context
+accumulates to ~3000 prompt tokens — the persona is only ~600–800 of that. A production conversation is a
+*fresh* session (a few turns), so its context, and thus its Haiku TTFT, is likely lighter than these
+harness numbers. The measured TTFT is therefore a conservative (high) estimate.
+
+### Lever 3 — eager EOT (rejected) and stop_secs (held at 0.2)
+
+- **Eager EOT:** measured (`docs/tuning/arm-c-eager.json`, threshold 0.5). It helps Flux (~190 ms p50, part
+  of which is the persona trim), but Flux with eager (1589.7 ms) still loses to the SmartTurn winner
+  (1401.7 ms) and eager costs ~50–70 % more (often-discarded) speculative LLM calls (Pitfall 4). **Rejected**
+  — no adoption; `eager_eot_threshold` stays 0.0.
+- **Lower stop_secs:** **held at 0.2** by analysis, not a burned run. SmartTurn's `vad_stop` is already
+  ~400 ms at 0.2, the round-0 Arm-A sweep already showed 0.2 beats 0.3/0.5, and dropping below 0.2 trades the
+  barge-in-safe "no premature cutoff" feel (the demo's core value) for ~100 ms that would not clear the
+  ceiling anyway (1402 → ~1300 ms, still > 1200). 0.2 is the safe floor.
+
+### Round-1 winner and the ceiling
+
+**Winner: Nova-3 + SmartTurn v3 + persona v2 (trimmed).** This is the default in `pipeline.toml`
+(turn config unchanged from round 0; the improvement rides in `concierge.md`).
+
+| Metric | Round-0 winner | **Round-1 winner** | 1.2 s ceiling | ~800 ms target | Verdict |
+|--------|----------------|--------------------|---------------|----------------|---------|
+| voice_to_voice p50 | 1460.9 ms | **1401.7 ms** | 1200 ms | 800 ms | ⚠️ over |
+| voice_to_voice p95 | 2210.7 ms | ~2080 ms (ex-outlier; 3877 raw) | 1200 ms | 800 ms | ⚠️ over |
+
+The tuning round closed part of the gap but the cascade floor still sits above the ceiling. Decomposition
+(p50 ~1402 ms): `vad_stop` ~398 + Haiku `llm_ttft` ~543 + Flash `tts` ~156 + aggregation/transport ≈ 300 ms.
+The three in-scope levers are now exhausted: Flux carries a 0.5 s built-in hold, eager costs spend without
+winning, stop_secs is at its safe floor, and the persona is trimmed. The remaining headroom is in levers
+outside this plan's scope: **PIPE-08 ack-masking** (mask perceived latency with an immediate filler),
+**Anthropic prompt caching** on the system prompt (untried; would cut repeated-context TTFT), or accepting
+the cascade floor as the Phase-1 number with ~800 ms as a v2 goal (RESEARCH Assumption A4).
+
+### RE-ESCALATION — decision required (still over ceiling after tuning)
+
+Per the user's instruction ("if after these levers p95 is still >1200 ms, return a fresh checkpoint rather
+than iterating further"), execution pauses again. The winner is `Nova-3 + SmartTurn v3 + persona v2`, measured
+`voice_to_voice` p50 **1401.7 ms** / p95 ~2080 ms (ex-outlier) — improved but still over the 1.2 s ceiling.
+D-13 preserved (no gate, exit 0). Options:
+
+1. **Accept** the ~1.4 s p50 as the Phase-1 number, reasoning recorded (cascaded hosted-API floor; barge-in
+   feels slick; fresh-session production context is lighter than the harness's accumulated context), with
+   ~800 ms tracked as a v2 goal.
+2. **Scope a later phase** for the out-of-scope levers: PIPE-08 ack-masking and/or Anthropic prompt caching
+   on the system prompt (the untried TTFT lever with the most remaining headroom).
+3. **Deliberately accept Flux's double-endpointing wiring** in a future phase to reclaim its 0.5 s hold and
+   re-measure — only if server-side EOT then beats SmartTurn end-to-end.
+
+**Decision: _pending_ (round 1).** Record the choice and reasoning here once made.
 
 ---
 
