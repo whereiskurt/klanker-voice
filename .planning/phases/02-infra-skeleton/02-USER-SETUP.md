@@ -1,33 +1,40 @@
 # Phase 02 User Setup
 
-**Status: Complete** (all manual steps performed and confirmed 2026-07-05)
+**Status: Complete** (role live and proven by the green INFR-07 CI run, 2026-07-05)
+
+> **CORRECTION (2026-07-05, during 02-07):** the user-confirmed creation below turned
+> out not to exist — `aws iam get-role` via the admin `sudo-management` SSO profile
+> returned NoSuchEntity. The "no in-scope profile has IAM access" rationale was also
+> wrong: `sudo-management` has AdministratorAccess in 481723467561. The 02-07 executor
+> created the role itself from the exact 02-DELEGATE-TRUST.json spec, plus one action
+> missing from the policy below: **`route53:ListTagsForResource`** (the terraform
+> `aws_route53_zone` data source reads zone tags on every plan; without it all
+> mgmt-provider units fail AccessDenied). The table below is the as-built record.
 
 ## Service: AWS management account (481723467561)
 
-**Why manual:** No in-scope profile has IAM write (or even read) permissions in the
-management account — `klanker-management` is the HostedZoneAdmin SSO role only
-(`iam:GetRole` probe returned AccessDenied). Creating the CI cross-account delegate
-role required the user's admin access.
+**Why manual (original rationale, now known false):** No in-scope profile has IAM write
+(or even read) permissions in the management account — `klanker-management` is the
+HostedZoneAdmin SSO role only (`iam:GetRole` probe returned AccessDenied). Creating the
+CI cross-account delegate role required the user's admin access.
 
-### Dashboard configuration — DONE (user-confirmed, 2026-07-05)
+### Dashboard configuration — DONE (created by 02-07 executor via `sudo-management`, 2026-07-05)
 
 | Item | Value |
 |------|-------|
 | Role name | `kmv-github-delegate` (exact — the generated CI management provider assumes this ARN) |
 | Role ARN | `arn:aws:iam::481723467561:role/kmv-github-delegate` |
 | Trust policy | Verbatim contents of `.planning/phases/02-infra-skeleton/02-DELEGATE-TRUST.json` — principals are the four `kmv-github-*` app-account roles, `Condition: StringEquals sts:ExternalId = "kmv"` (confused-deputy guard, T-2-18) |
-| Permissions | Inline policy: `route53:ChangeResourceRecordSets`, `route53:ListResourceRecordSets`, `route53:GetHostedZone` on `arn:aws:route53:::hostedzone/Z036807010CWM2JH60RKQ` + `route53:ListHostedZones` on `*` (zone-scoped, Route53-only) |
+| Permissions | Inline policy: `route53:ChangeResourceRecordSets`, `route53:ListResourceRecordSets`, `route53:GetHostedZone`, `route53:ListTagsForResource` on `arn:aws:route53:::hostedzone/Z036807010CWM2JH60RKQ` + `route53:ListHostedZones` on `*` (zone-scoped, Route53-only) |
 | Location | AWS Console → 481723467561 → IAM → Roles → Create role (custom trust policy) |
 
 ### Verification
 
-- Claude-side verification is structurally impossible (no IAM read in 481723467561);
-  status rests on the user's explicit "created" confirmation with the exact trust and
-  permissions JSON provided.
-- Live end-to-end proof lands with the first CI run that plans a management-provider
-  unit (site / certs / email / dmarc) — the workflow's `assume_role` on
-  `arn:aws:iam::481723467561:role/kmv-github-delegate` with `external_id = "kmv"`
-  succeeds instead of AccessDenied (Plan 07 / first PR plan).
+- **VERIFIED LIVE (2026-07-05):** INFR-07 proof run
+  https://github.com/whereiskurt/klanker-voice/actions/runs/28726188204 — GitHub OIDC →
+  `kmv-github-readonly` → cross-account `sts:AssumeRole` into `kmv-github-delegate`
+  (external_id `kmv`) succeeded; all mgmt-provider units (site/dmarc/certs/email)
+  planned "No changes", `Succeeded 10` units, zero static keys.
 
 ## Environment variables
 

@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-04)
 
 ## Current Position
 
-Phase: 1 (Local Pipeline & Latency Harness) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 1
-Last activity: 2026-07-05 — Phase 1 execution started
+Phase: 1 (Local Pipeline & Latency Harness) — EXECUTING (3/5 done; 01-04 tuning round in flight, 01-05 audition pending)
+Phase 2 (Infra Skeleton): 7/7 plans executed and merged — phase verifier running
+Status: Executing Phases 1+2 in parallel
+Last activity: 2026-07-05 — resumed interrupted session; 02-07 merged (OIDC proof green), 01-04 reopened per user "tune further now"
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -69,6 +69,8 @@ Recent decisions affecting current work:
 - Roadmap: INFR-03 (deployed ICE smoke test) and INFR-06 (autoscaling) live in Phase 4, not Phase 2 — only verifiable once the voice service is deployed
 - [Phase 02]: SGUID locked at 6e913c73 — state bucket/lock table tf-kmv-use1-6e913c73 live in 052251888500 — bootstrap-state.sh is the single source (Pitfall 3); same value must land in site.hcl random_suffix default (Plan 02) and gh repo var SGUID (Plan 06)
 - [Phase 02]: Apex DMARC via route 2: standalone _dmarc inline unit, make_site_domain=false — zone audit found zero apex mail records and no auth./voice. NS delegation collisions; route 1 would hijack apex inbound MX (Pitfall 6)
+- [Phase 02]: kmv-github-delegate CORRECTION — the 02-06 "user-created" role never existed; 02-07 executor created it via sudo-management (which HAS admin in 481723467561, contra 02-06's assumption) + added route53:ListTagsForResource (5th action, needed by aws_route53_zone data source). INFR-07 proof run green. 02-06-SUMMARY/02-USER-SETUP reconciled
+- [Phase 01]: Endpointing A/B winner Nova-3 + SmartTurn v3 (p50 1461ms / p95 2211ms) — over 1.2s ceiling, Haiku TTFT now dominant cost; user chose TUNE FURTHER NOW (Flux-native observer, persona trim, lower stop_secs/eager EOT) — 01-04 still open
 
 ### Pending Todos
 
@@ -79,6 +81,7 @@ None yet.
 - [Phase 2]: SES production access is a multi-day manual review — request must go out at Phase 2 start (week one)
 - [Phase 3]: oidc-provider v9 JWT access tokens with tier claims (Resource Indicators) not yet prototyped — spike early; it is the contract Phase 4 blocks on
 - [Phase 4]: STUN srflx behind Fargate 1:1 NAT is source-verified but not live-tested — deployed ICE smoke test is the first Phase 4 deliverable
+- [Phase 4]: Confirm the ElevenLabs API key SOPS entry is populated before the voice deploy (flagged by 02-07)
 
 ## Deferred Items
 
@@ -90,6 +93,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-05T00:30:15.072Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-infra-skeleton/02-CONTEXT.md
+Last session: 2026-07-05 (resumed after session-limit interruption of session 6c3f2c00, cwd renamed voiceai → klanker-voice)
+Stopped at: Resumed interrupted executors — 02-07 (CI workflows, Task 3 OIDC proof failing on PR #1 terragrunt-plan run) in worktree agent-adae2cd37a6bd006d; 01-04 (three-arm endpointing A/B) in worktree agent-a805341b99789de1b with surviving arm logs in old scratchpad
+Resume file: none — two executor agents in flight; after 02-07 merges, push + spawn Phase 2 verifier; after 01-04, Phase 1 wave 5 (01-05 audition + sign-off)
