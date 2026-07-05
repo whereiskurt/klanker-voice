@@ -220,7 +220,7 @@ After the round-0 escalation the user chose option 1 (tune further). This round 
 
 ## Self-Check: PASSED
 
-All created files exist on disk and are tracked in git (arm-{a,b,c}.toml; docs/tuning/arm-a.json, arm-b.json, arm-b-trimmed.json, arm-c.json, arm-c-eager.json; docs/TUNING.md; observers.py, report.py, concierge.md, tests/test_observers.py); all five task commits (e84555f, b920330, e2f02a9, 7ae801b, e4241ff) present in git log; compare CLI exits 0 and renders arm-c with 10 turns; 60 unit tests pass; all five eval scenarios PASS under the trimmed-persona winner; committed artifacts carry config metadata only (no key-like strings, T-1-09); no "voiceai"/"kmk" string in any produced file. Two deliverables (D4 latency/ceiling decision) remain human_judgment: true and open — the round-1 re-escalation above.
+All created files exist on disk and are tracked in git (arm-{a,b,c}.toml; docs/tuning/arm-a.json, arm-b.json, arm-b-trimmed.json, arm-c.json, arm-c-eager.json; docs/TUNING.md; observers.py, report.py, concierge.md, tests/test_observers.py); all five task commits (e84555f, b920330, e2f02a9, 7ae801b, e4241ff) present in git log; compare CLI exits 0 and renders arm-c with 10 turns; 60 unit tests pass; all five eval scenarios PASS under the trimmed-persona winner; committed artifacts carry config metadata only (no key-like strings, T-1-09); no forbidden legacy project-name strings in any produced file. Two deliverables (D4 latency/ceiling decision) remain human_judgment: true and open — the round-1 re-escalation above.
 
 ---
 *Phase: 01-local-pipeline-latency-harness*
