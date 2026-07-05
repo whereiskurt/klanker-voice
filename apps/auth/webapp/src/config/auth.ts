@@ -8,6 +8,7 @@ import { createTransport } from "nodemailer";
 
 import NextAuth, { type DefaultSession } from "next-auth";
 import { upsertAuthProfile, getAuthProfile } from "@/entities/auth-profile";
+import { applyLoginIntentBridge } from "@/config/login-intent-bridge";
 import { config } from "@/config";
 
 declare module "next-auth" {
@@ -166,9 +167,27 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           || (typeof token.sub === "string" && token.sub)
           || (typeof token.userId === "string" && token.userId);
         if (userId && token.email) {
-          upsertAuthProfile(userId, "email", {
-            email: token.email as string,
-          }).catch((err) => console.error("Failed to upsert email profile:", err));
+          // Awaited (not fire-and-forget) so the AuthProfile row exists
+          // before the login_intent bridge below patches it — this is the
+          // first login for a brand-new user, so the row may not exist yet.
+          try {
+            await upsertAuthProfile(userId, "email", {
+              email: token.email as string,
+            });
+          } catch (err) {
+            console.error("Failed to upsert email profile:", err);
+          }
+
+          // THE bridge (Pitfall 3): apply the code->tier resolution that was
+          // written at /api/login (pre-user) now that userId is known. This
+          // stamps AuthProfile.activeTierId/activeGroup (extracted to
+          // config/login-intent-bridge.ts for direct unit-testability —
+          // see its own tests for the first-time-user proof).
+          try {
+            await applyLoginIntentBridge(userId, token.email as string);
+          } catch (err) {
+            console.error("Failed to apply login_intent bridge:", err);
+          }
         }
       }
 

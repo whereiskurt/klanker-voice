@@ -85,7 +85,7 @@ export interface ResolvedAccessCode {
   group: string | null;
 }
 
-function normalizeCode(code: string | null | undefined): string {
+export function normalizeCode(code: string | null | undefined): string {
   return String(code ?? "")
     .trim()
     .toLowerCase();

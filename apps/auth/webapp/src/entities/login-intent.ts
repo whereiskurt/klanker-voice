@@ -34,6 +34,19 @@ import { electroClient, ELECTRO_TABLE } from "./client";
  *
  * Key template: pk "loginintent#${email}"  sk "loginintent#"
  */
+/**
+ * Exported so callers (POST /api/login, auth.ts's jwt callback) normalize
+ * the email BEFORE it's used to build the primary-index composite key —
+ * do not rely solely on the attribute's `set` transform below for this,
+ * since ElectroDB key composition for read operations (get/query) uses the
+ * raw composite input, not the write-path `set` hook.
+ */
+export function normalizeEmail(email: string | null | undefined): string {
+  return String(email ?? "")
+    .trim()
+    .toLowerCase();
+}
+
 export const LoginIntent = new Entity(
   {
     model: {
@@ -45,7 +58,7 @@ export const LoginIntent = new Entity(
       email: {
         type: "string",
         required: true,
-        set: (val?: string) => String(val ?? "").trim().toLowerCase(),
+        set: (val?: string) => normalizeEmail(val),
       },
       // The resolved, normalized access code (may be "" if none entered).
       code: {
