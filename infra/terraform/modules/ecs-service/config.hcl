@@ -8,8 +8,8 @@ locals {
   # Placeholders:
   #   {{REGION_LABEL}} -> region label (use1, cac1)
   #   {{REGION}}       -> full region name (us-east-1, ca-central-1)
-  #   {{SITE_LABEL}}   -> site label (e.g. dc34)
-  #   {{SITE_DOMAIN}}  -> site domain (e.g. defcon.run)
+  #   {{SITE_LABEL}}   -> site label (e.g. kmv)
+  #   {{SITE_DOMAIN}}  -> site domain (e.g. klankermaker.ai)
   services_with_placeholders = [
     for service in local.site_config.locals.ecs_services.services :
     merge(service, {

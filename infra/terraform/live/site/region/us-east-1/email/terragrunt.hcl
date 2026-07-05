@@ -24,7 +24,7 @@ dependency "github_oidc" {
   skip_outputs = true
 
   mock_outputs_allowed_terraform_commands = ["validate", "plan"]
-  mock_outputs = {}
+  mock_outputs                            = {}
 }
 
 dependency "site" {

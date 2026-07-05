@@ -13,9 +13,9 @@ locals {
   # Transform tasks to replace placeholders:
   #   {{REGION_LABEL}}     -> region label (use1, cac1)
   #   {{REGION}}           -> full region name (us-east-1, ca-central-1)
-  #   {{SITE_LABEL}}       -> site label (e.g. dc34)
-  #   {{SITE_DOMAIN}}      -> site domain (e.g. defcon.run)
-  #   {{SITE_DOMAIN_SLUG}} -> site domain slugified (e.g. defcon-run)
+  #   {{SITE_LABEL}}       -> site label (e.g. kmv)
+  #   {{SITE_DOMAIN}}      -> site domain (e.g. klankermaker.ai)
+  #   {{SITE_DOMAIN_SLUG}} -> site domain slugified (e.g. klankermaker-ai)
   tasks_with_region_placeholders = [
     for task in local.site_vars.locals.ecs_tasks.tasks :
     merge(task, {
