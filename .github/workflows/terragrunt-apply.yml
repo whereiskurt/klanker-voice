@@ -1,0 +1,245 @@
+name: "Infra: Terragrunt Apply"
+
+on:
+  # Manual trigger — the terraform-apply environment below carries a
+  # required-reviewer rule, so every run of this workflow is human-approved
+  # (D-08: infra applies are always human-gated).
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: 'Modules to apply (comma-separated, empty = all)'
+        type: string
+        default: ''
+
+  # Called by other workflows (e.g., deploy.yml)
+  workflow_call:
+    inputs:
+      modules:
+        description: 'Modules to apply (comma-separated, e.g., ecs-task,ecs-service)'
+        type: string
+        default: ''
+      ref:
+        description: 'Git ref to checkout (default: workflow trigger ref)'
+        type: string
+        default: ''
+
+# Cancel in-progress runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    name: Terragrunt Apply
+    runs-on: ubuntu-latest
+    environment: terraform-apply
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_REGION: us-east-1
+      TG_BUCKET_USE1: tf-${{ vars.SITE_LABEL }}-use1-${{ vars.SGUID }}
+      TG_TABLE_USE1: tf-${{ vars.SITE_LABEL }}-use1-${{ vars.SGUID }}
+      SGUID: ${{ vars.SGUID }}
+      TF_VAR_MANAGEMENT_ACCOUNT_ID: ${{ vars.TF_VAR_MANAGEMENT_ACCOUNT_ID }}
+      TF_VAR_APPLICATION_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      TF_VAR_GITHUB_ORG: ${{ github.repository_owner }}
+      # SOPS + SSM CMK IDs consumed by the kms-sops-decrypt inline policies
+      # on the readonly / terragrunt / deploy / release roles in site.hcl.
+      TF_VAR_SOPS_KMS_KEY_ID: ${{ vars.TF_VAR_SOPS_KMS_KEY_ID }}
+      TF_VAR_SSM_KMS_KEY_ARNS: ${{ vars.TF_VAR_SSM_KMS_KEY_ARNS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Cache Terragrunt and SOPS
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/terragrunt
+            /usr/local/bin/sops
+          key: tools-${{ runner.os }}-terragrunt-v0.97.1-sops-v3.11.0
+
+      - name: Cache Terragrunt Provider Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.terragrunt-cache
+          key: terragrunt-providers-${{ runner.os }}-${{ hashFiles('infra/terraform/**/*.tf') }}
+          restore-keys: |
+            terragrunt-providers-${{ runner.os }}-
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/kmv-github-terragrunt
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.3
+          terraform_wrapper: false
+
+      - name: Setup Terragrunt
+        run: |
+          if [ ! -f /usr/local/bin/terragrunt ]; then
+            curl -Lo /usr/local/bin/terragrunt \
+              "https://github.com/gruntwork-io/terragrunt/releases/download/v0.97.1/terragrunt_linux_amd64"
+            chmod +x /usr/local/bin/terragrunt
+          fi
+          terragrunt --version
+
+      - name: Setup SOPS
+        run: |
+          if [ ! -f /usr/local/bin/sops ]; then
+            curl -Lo /usr/local/bin/sops \
+              "https://github.com/getsops/sops/releases/download/v3.11.0/sops-v3.11.0.linux.amd64"
+            chmod +x /usr/local/bin/sops
+          fi
+          sops --version
+
+      - name: Terragrunt Apply
+        id: apply
+        working-directory: infra/terraform/live/site
+        env:
+          TG_PROVIDER_CACHE: "1"
+        run: |
+          MODULES="${{ inputs.modules }}"
+
+          # If specific modules requested, apply each module directory (single region: us-east-1)
+          if [[ -n "$MODULES" ]]; then
+            echo "Applying modules [$MODULES] in us-east-1..."
+            IFS=',' read -ra MODULE_LIST <<< "$MODULES"
+            for MODULE in "${MODULE_LIST[@]}"; do
+              MODULE=$(echo "$MODULE" | xargs)  # trim whitespace
+              echo "=== Applying $MODULE ==="
+              (cd "region/us-east-1/$MODULE" && terragrunt apply --no-color --non-interactive -auto-approve) 2>&1 | tee -a apply_output.txt
+            done
+          # Otherwise apply everything (global + us-east-1)
+          else
+            echo "Applying all modules..."
+            terragrunt run apply --all --no-color --non-interactive -- -auto-approve 2>&1 | tee apply_output.txt
+          fi
+          exit_code=${PIPESTATUS[0]}
+
+          # Truncate if too long for summary (max ~65k chars)
+          if [ $(wc -c < apply_output.txt) -gt 60000 ]; then
+            echo "Apply output truncated (too large for summary)" > apply_summary.txt
+            head -c 30000 apply_output.txt >> apply_summary.txt
+            echo -e "\n\n... (truncated) ...\n\n" >> apply_summary.txt
+            tail -c 30000 apply_output.txt >> apply_summary.txt
+          else
+            cp apply_output.txt apply_summary.txt
+          fi
+
+          exit $exit_code
+        continue-on-error: true
+
+      - name: Upload Apply Output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terragrunt-apply
+          path: infra/terraform/live/site/apply_output.txt
+          retention-days: 14
+
+      - name: Write Job Summary
+        if: always()
+        working-directory: infra/terraform/live/site
+        run: |
+          FINAL_OUTCOME="${{ steps.apply.outcome }}"
+          STATUS=$([[ "$FINAL_OUTCOME" == "success" ]] && echo "PASS" || echo "FAIL")
+
+          echo "## Terragrunt Apply: ${STATUS}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Modules:** ${{ inputs.modules || 'all' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Extract per-module summaries
+          echo "### Summary by Module" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Module | Added | Changed | Destroyed |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|---------|-----------|" >> $GITHUB_STEP_SUMMARY
+
+          TOTAL_ADD=0
+          TOTAL_CHANGE=0
+          TOTAL_DESTROY=0
+          HAS_CHANGES=false
+          CURRENT_MODULE=""
+
+          # Parse apply output for each module's summary line
+          # Format: "Apply complete! Resources: X added, Y changed, Z destroyed."
+          while IFS= read -r line; do
+            # Track current module from STDOUT prefix
+            if [[ "$line" =~ STDOUT\ \[([^\]]+)\] ]]; then
+              CURRENT_MODULE="${BASH_REMATCH[1]}"
+            fi
+
+            # Match "Apply complete! Resources: X added, Y changed, Z destroyed."
+            if [[ "$line" =~ Apply\ complete!\ Resources:\ ([0-9]+)\ added,\ ([0-9]+)\ changed,\ ([0-9]+)\ destroyed ]]; then
+              ADD="${BASH_REMATCH[1]}"
+              CHANGE="${BASH_REMATCH[2]}"
+              DESTROY="${BASH_REMATCH[3]}"
+
+              MODULE_DISPLAY="${CURRENT_MODULE:-unknown}"
+              echo "| \`$MODULE_DISPLAY\` | $ADD | $CHANGE | $DESTROY |" >> $GITHUB_STEP_SUMMARY
+
+              TOTAL_ADD=$((TOTAL_ADD + ADD))
+              TOTAL_CHANGE=$((TOTAL_CHANGE + CHANGE))
+              TOTAL_DESTROY=$((TOTAL_DESTROY + DESTROY))
+
+              if [[ "$ADD" -gt 0 || "$CHANGE" -gt 0 || "$DESTROY" -gt 0 ]]; then
+                HAS_CHANGES=true
+              fi
+            fi
+          done < apply_output.txt
+
+          # Add totals row
+          echo "| **Total** | **$TOTAL_ADD** | **$TOTAL_CHANGE** | **$TOTAL_DESTROY** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Overall status message
+          if [[ "$HAS_CHANGES" == "true" ]]; then
+            echo "### Changes Applied" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **$TOTAL_ADD** resources added" >> $GITHUB_STEP_SUMMARY
+            echo "- **$TOTAL_CHANGE** resources changed" >> $GITHUB_STEP_SUMMARY
+            echo "- **$TOTAL_DESTROY** resources destroyed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### No Changes" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Infrastructure is up to date." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Extract any errors
+          if grep -q "Error:" apply_output.txt; then
+            echo "### Errors" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -A 5 "Error:" apply_output.txt | head -30 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Full output in collapsible section
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>Full Apply Output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```hcl' >> $GITHUB_STEP_SUMMARY
+          cat apply_summary.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if apply failed
+        run: |
+          if [[ "${{ steps.apply.outcome }}" == "failure" ]]; then
+            echo "::error::Terragrunt apply failed"
+            exit 1
+          fi
