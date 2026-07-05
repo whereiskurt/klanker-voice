@@ -1,0 +1,294 @@
+name: "Infra: Terragrunt Plan"
+
+on:
+  # Manual trigger (also used for the INFR-07 OIDC proof run)
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: 'Modules to plan (comma-separated, empty = all)'
+        type: string
+        default: ''
+
+  # Auto-trigger on PRs that change anything under infra/ (D-08)
+  pull_request:
+    paths:
+      - 'infra/**'
+
+  # Auto-trigger on push to main that changes anything under infra/ (D-08:
+  # infra changes plan only; applies go through the gated apply workflow)
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+
+# Cancel in-progress runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Terragrunt Plan
+    runs-on: ubuntu-latest
+    environment: terraform-plan
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    env:
+      AWS_REGION: us-east-1
+      TG_BUCKET_USE1: tf-${{ vars.SITE_LABEL }}-use1-${{ vars.SGUID }}
+      TG_TABLE_USE1: tf-${{ vars.SITE_LABEL }}-use1-${{ vars.SGUID }}
+      SGUID: ${{ vars.SGUID }}
+      TF_VAR_MANAGEMENT_ACCOUNT_ID: ${{ vars.TF_VAR_MANAGEMENT_ACCOUNT_ID }}
+      TF_VAR_APPLICATION_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      TF_VAR_GITHUB_ORG: ${{ github.repository_owner }}
+      # SOPS + SSM CMK IDs consumed by the kms-sops-decrypt inline policies
+      # on the readonly / terragrunt / deploy / release roles in site.hcl.
+      TF_VAR_SOPS_KMS_KEY_ID: ${{ vars.TF_VAR_SOPS_KMS_KEY_ID }}
+      TF_VAR_SSM_KMS_KEY_ARNS: ${{ vars.TF_VAR_SSM_KMS_KEY_ARNS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Terragrunt and SOPS
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/bin/terragrunt
+            /usr/local/bin/sops
+          key: tools-${{ runner.os }}-terragrunt-v0.97.1-sops-v3.11.0
+
+      - name: Cache Terragrunt Provider Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.terragrunt-cache
+          key: terragrunt-providers-${{ runner.os }}-${{ hashFiles('infra/terraform/**/*.tf') }}
+          restore-keys: |
+            terragrunt-providers-${{ runner.os }}-
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/kmv-github-readonly
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.3
+          terraform_wrapper: false
+
+      - name: Setup Terragrunt
+        run: |
+          if [ ! -f /usr/local/bin/terragrunt ]; then
+            curl -Lo /usr/local/bin/terragrunt \
+              "https://github.com/gruntwork-io/terragrunt/releases/download/v0.97.1/terragrunt_linux_amd64"
+            chmod +x /usr/local/bin/terragrunt
+          fi
+          terragrunt --version
+
+      - name: Setup SOPS
+        run: |
+          if [ ! -f /usr/local/bin/sops ]; then
+            curl -Lo /usr/local/bin/sops \
+              "https://github.com/getsops/sops/releases/download/v3.11.0/sops-v3.11.0.linux.amd64"
+            chmod +x /usr/local/bin/sops
+          fi
+          sops --version
+
+      - name: Terragrunt Plan
+        id: plan
+        working-directory: infra/terraform/live/site
+        env:
+          TG_PROVIDER_CACHE: "1"
+        run: |
+          MODULES="${{ inputs.modules }}"
+
+          # If specific modules requested, plan each module directory (single region: us-east-1)
+          if [[ -n "$MODULES" ]]; then
+            echo "Planning modules [$MODULES] in us-east-1..."
+            IFS=',' read -ra MODULE_LIST <<< "$MODULES"
+            for MODULE in "${MODULE_LIST[@]}"; do
+              MODULE=$(echo "$MODULE" | xargs)  # trim whitespace
+              echo "=== Planning $MODULE ==="
+              (cd "region/us-east-1/$MODULE" && terragrunt plan --no-color) 2>&1 | tee -a plan_output.txt
+            done
+          # Otherwise plan everything (global + us-east-1)
+          else
+            echo "Planning all modules..."
+            terragrunt run plan --all --no-color 2>&1 | tee plan_output.txt
+          fi
+          exit_code=${PIPESTATUS[0]}
+
+          # Truncate if too long for PR comment (max ~65k chars)
+          if [ $(wc -c < plan_output.txt) -gt 60000 ]; then
+            echo "Plan output truncated (too large for PR comment)" > plan_summary.txt
+            head -c 30000 plan_output.txt >> plan_summary.txt
+            echo -e "\n\n... (truncated) ...\n\n" >> plan_summary.txt
+            tail -c 30000 plan_output.txt >> plan_summary.txt
+          else
+            cp plan_output.txt plan_summary.txt
+          fi
+
+          exit $exit_code
+        continue-on-error: true
+
+      - name: Upload Plan Output
+        uses: actions/upload-artifact@v4
+        with:
+          name: terragrunt-plan
+          path: infra/terraform/live/site/plan_output.txt
+          retention-days: 14
+
+      - name: Write Job Summary
+        if: always()
+        working-directory: infra/terraform/live/site
+        run: |
+          STATUS=$([[ "${{ steps.plan.outcome }}" == "success" ]] && echo "PASS" || echo "FAIL")
+
+          echo "## Terragrunt Plan: ${STATUS}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Modules:** ${{ inputs.modules || 'all' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Extract per-module summaries
+          echo "### Summary by Module" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Module | Add | Change | Destroy |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----|--------|---------|" >> $GITHUB_STEP_SUMMARY
+
+          TOTAL_ADD=0
+          TOTAL_CHANGE=0
+          TOTAL_DESTROY=0
+          HAS_CHANGES=false
+
+          # Parse plan output for each module's summary line
+          # Format: "Plan: X to add, Y to change, Z to destroy."
+          while IFS= read -r line; do
+            # Extract module path from STDOUT lines like: "STDOUT [region/us-east-1/ecr] terraform: Plan:"
+            if [[ "$line" =~ STDOUT\ \[([^\]]+)\].*Plan:\ ([0-9]+)\ to\ add,\ ([0-9]+)\ to\ change,\ ([0-9]+)\ to\ destroy ]]; then
+              MODULE="${BASH_REMATCH[1]}"
+              ADD="${BASH_REMATCH[2]}"
+              CHANGE="${BASH_REMATCH[3]}"
+              DESTROY="${BASH_REMATCH[4]}"
+
+              echo "| \`$MODULE\` | $ADD | $CHANGE | $DESTROY |" >> $GITHUB_STEP_SUMMARY
+
+              TOTAL_ADD=$((TOTAL_ADD + ADD))
+              TOTAL_CHANGE=$((TOTAL_CHANGE + CHANGE))
+              TOTAL_DESTROY=$((TOTAL_DESTROY + DESTROY))
+
+              if [[ "$ADD" -gt 0 || "$CHANGE" -gt 0 || "$DESTROY" -gt 0 ]]; then
+                HAS_CHANGES=true
+              fi
+            # Also check for simpler format without the prefix
+            elif [[ "$line" =~ Plan:\ ([0-9]+)\ to\ add,\ ([0-9]+)\ to\ change,\ ([0-9]+)\ to\ destroy ]]; then
+              ADD="${BASH_REMATCH[1]}"
+              CHANGE="${BASH_REMATCH[2]}"
+              DESTROY="${BASH_REMATCH[3]}"
+
+              TOTAL_ADD=$((TOTAL_ADD + ADD))
+              TOTAL_CHANGE=$((TOTAL_CHANGE + CHANGE))
+              TOTAL_DESTROY=$((TOTAL_DESTROY + DESTROY))
+
+              if [[ "$ADD" -gt 0 || "$CHANGE" -gt 0 || "$DESTROY" -gt 0 ]]; then
+                HAS_CHANGES=true
+              fi
+            fi
+          done < plan_output.txt
+
+          # Add totals row
+          echo "| **Total** | **$TOTAL_ADD** | **$TOTAL_CHANGE** | **$TOTAL_DESTROY** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Overall status message
+          if [[ "$HAS_CHANGES" == "true" ]]; then
+            echo "### Changes Detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **$TOTAL_ADD** resources to add" >> $GITHUB_STEP_SUMMARY
+            echo "- **$TOTAL_CHANGE** resources to change" >> $GITHUB_STEP_SUMMARY
+            echo "- **$TOTAL_DESTROY** resources to destroy" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### No Changes" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Infrastructure is up to date." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Extract any errors
+          if grep -q "Error:" plan_output.txt; then
+            echo "### Errors" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -A 5 "Error:" plan_output.txt | head -30 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Full output in collapsible section
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>Full Plan Output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```hcl' >> $GITHUB_STEP_SUMMARY
+          cat plan_summary.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('infra/terraform/live/site/plan_summary.txt', 'utf8');
+            const planExitCode = '${{ steps.plan.outcome }}';
+
+            const status = planExitCode === 'success' ? 'PASS' : 'FAIL';
+            const body = `## Terragrunt Plan: ${status}
+
+            <details>
+            <summary>Click to expand plan output</summary>
+
+            \`\`\`hcl
+            ${planOutput}
+            \`\`\`
+
+            </details>
+
+            *Plan generated from commit ${{ github.sha }}*
+            `;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Terragrunt Plan')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
