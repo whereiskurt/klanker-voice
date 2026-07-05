@@ -1,0 +1,23 @@
+# Local dev environment — never ships in the image.
+.venv/
+.env
+.python-version
+
+# Python cache/build artifacts.
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Run artifacts (rendered audio, per-run JSON harness output) — never shipped.
+artifacts/
+
+# Tests and fixtures — not needed at runtime.
+tests/
+scripts/
+scenarios/
+
+# VCS / editor.
+.git/
+.gitignore
+.DS_Store
