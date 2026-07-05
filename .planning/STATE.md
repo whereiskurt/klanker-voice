@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-04)
 
 ## Current Position
 
-Phase: 1 (Local Pipeline & Latency Harness) — EXECUTING (4/5 done; 01-05 audition is the final wave — needs user's ears)
+Phase: 1 (Local Pipeline & Latency Harness) — 5/5 plans EXECUTED, user sign-off recorded; phase verifier running
 Phase 2 (Infra Skeleton): ✅ COMPLETE — 7/7 plans merged, verification PASSED 5/5 (02-VERIFICATION.md; TLS handshake deferred to Phase 4 by design)
 Phase 6 (Latency v2): scoped and added to ROADMAP per 01-04 re-escalation decision — deferred
-Status: Executing Phase 1 final wave
-Last activity: 2026-07-05 — 01-04 closed (winner Nova-3+SmartTurn v3, ~1402ms p50 accepted, ≤1.2s → Phase 6); merged to main
+Status: Phase 1 execution complete (verification in flight); Phase 7 (KPH Knowledge Base) in discussion
+Last activity: 2026-07-05 — 01-05 merged: voice=Will (bIHbv24MWmeRgasZH58o) speed 1.1, persona v3 (KPH self-ref, TTS-safe DEFCON), user APPROVED conversational feel
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -75,7 +75,8 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- [captured 2026-07-05] Post-conference: swap KPH to an ElevenLabs voice clone trained on Kurt (IVC now / PVC better; Pro plan covers both). Architecture-ready: one-line voice_id change in pipeline.toml [tts]; verify eleven_flash_v2_5 is supported by the clone; re-run the 01-05 audition renderer to A/B clone vs incumbent by ear before switching.
+- [captured 2026-07-05, user at Phase-1 sign-off] KPH knowledge base: "massive RAG or something really smart that can steer... all of the knowledge of my repos, and some scripts and stuff I'd train it on." Recommended shape for the voice-latency constraint (two-tier): (1) curated repo/project digests as a large cached system-prompt knowledge pack — once ≥4096 tokens, Haiku prompt caching ENGAGES (0.1× cost, fast cached prefill), turning the 01-04 caching dead-end into a win at knowledge-pack scale; pre-warm at session start; (2) a retrieval tool for depth questions, latency masked by Phase-6 ack-masking (natural synergy). Fine-tuning is the wrong tool; curated context + retrieval is. Candidate Phase 7 or fold into Phase 6 planning discussion.
 
 ### Blockers/Concerns
 

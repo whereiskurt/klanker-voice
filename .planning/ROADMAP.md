@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Agent remembers the full conversation within a session and speaks as the KlankerMaker concierge via a versioned markdown system prompt
   5. STT/LLM/TTS stages swap via config, and the endpointing A/B (Deepgram Flux vs Nova-3+VAD; SmartTurn) has measured verdicts recorded
 
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans executed
 
 Plans:
 
@@ -44,7 +44,7 @@ Plans:
 - [x] 01-02-PLAN.md — Walking skeleton: config/factories/pipeline, persona v1, both run modes, greet-first
 - [x] 01-03-PLAN.md — Latency harness (JSON + p50/p95 table) and named eval scenarios (barge-in, memory, greeting)
 - [x] 01-04-PLAN.md — Three-arm endpointing A/B matrix with measured verdicts in docs/TUNING.md
-- [ ] 01-05-PLAN.md — 3-voice audition (user picks by ear), final config, conversational-feel sign-off
+- [x] 01-05-PLAN.md — 3-voice audition (user picks by ear), final config, conversational-feel sign-off
 
 ### Phase 2: Infra Skeleton
 
@@ -137,6 +137,22 @@ Plans:
 
 **Plans**: TBD
 
+### Phase 7: KPH Knowledge Base
+
+**Scoped**: 2026-07-05
+**Goal**: KPH answers with deep, current knowledge of Kurt's world — klanker-maker, defcon.run, meshtk, and selected repos/scripts — without breaking the voice-latency budget
+**Mode:** mvp
+**Depends on**: Phase 1 (pipeline); complements Phase 6 (ack-masking masks retrieval latency)
+**Origin**: User at Phase-1 sign-off: "massive RAG or something really smart that can steer... all of the knowledge of my repos, and some scripts and stuff I'd train it on"
+**Success Criteria** (what must be TRUE):
+
+  1. A curated, versioned knowledge pack (repo/project digests) ships in the system prompt; once ≥4096 tokens, Anthropic prompt caching engages (verified via cache_read_input_tokens > 0) and TTFT stays within the accepted latency budget
+  2. A retrieval path answers depth questions ("the long version") from full repo content, with latency masked acceptably in conversation
+  3. Knowledge refresh is a script run, not a manual edit — regenerating digests from the live repos
+  4. KPH answers a benchmark set of Kurt/repo questions correctly, verified by eval scenarios
+
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
@@ -144,9 +160,10 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Local Pipeline & Latency Harness | 4/5 | In Progress|  |
+| 1. Local Pipeline & Latency Harness | 5/5 | Executed — verifier running |  |
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 0/TBD | Not started | - |
 | 4. Voice Service Deployed & Quota Enforcement | 0/TBD | Not started | - |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
+| 7. KPH Knowledge Base | 0/TBD | Not started | - |
