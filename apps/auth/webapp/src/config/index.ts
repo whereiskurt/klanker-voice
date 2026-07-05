@@ -73,7 +73,10 @@ export const config = {
     },
 
     ttl: {
-      accessToken: 60 * 60, // 1 hour (Plan 03-03 tunes this to the D-03 target)
+      // Plan 03-03 / D-03: comfortably exceeds the longest tier (30 min) plus
+      // a reconnect window. Also the pinned Phase-4 contract value (3600s) —
+      // Phase 4's PyJWKClient/session logic assumes this exact TTL.
+      accessToken: 60 * 60, // 1 hour (3600s, D-03 / pinned_phase4_contract)
       authorizationCode: 10 * 60, // 10 minutes
       idToken: 60 * 60, // 1 hour
       refreshToken: 14 * 24 * 60 * 60, // 14 days
@@ -81,6 +84,41 @@ export const config = {
       session: 15 * 24 * 60 * 60, // 15 days
       grant: 14 * 24 * 60 * 60, // 14 days
     },
+
+    /**
+     * AUTH-02 / Resource-Indicator JWT access tokens (Plan 03-03).
+     *
+     * `voiceResource` is the Resource Indicator URI the voice client
+     * authorizes against; `voiceAudience` is the `aud` claim value stamped
+     * on the minted JWT access token. They are deliberately the SAME pinned
+     * URI (see pinned_phase4_contract in 03-03-PLAN.md) — Phase 4's PyJWT
+     * `audience=` check matches this string byte-for-byte.
+     */
+    voiceResource: "https://voice.klankermaker.ai",
+    voiceAudience: "https://voice.klankermaker.ai",
+
+    /**
+     * Namespaced access-token claim names (D-01 thin token: tier_id + group
+     * ONLY). Pinned verbatim in the Phase-4 contract — Phase 4's PyJWT reads
+     * these two claim keys and no others.
+     */
+    claimNames: {
+      tierId: "https://klankermaker.ai/tier_id",
+      group: "https://klankermaker.ai/group",
+    },
+
+    /**
+     * Persistent, shared RS256 signing key set (Plan 03-03, T-03-13). Sourced
+     * from the OIDC_JWKS env var (SSM SecureString /kmv/secrets/use1/oidc/jwks
+     * in production — see from-aws.tmpl), NOT auto-generated per process, so
+     * every task in the Fargate fleet signs with — and serves — the identical
+     * JWKS across restarts. `undefined` when unset (local dev without the
+     * secret configured) so oidc-provider falls back to its own dev-only
+     * quick-start keys with a console warning, exactly as today.
+     */
+    jwks: process.env.OIDC_JWKS
+      ? (JSON.parse(process.env.OIDC_JWKS) as { keys: Record<string, unknown>[] })
+      : undefined,
   },
 
   dynamodb: {

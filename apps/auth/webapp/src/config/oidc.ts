@@ -62,6 +62,15 @@ const configuration: Configuration = {
   // Static client registration
   clients,
 
+  // Persistent, shared RS256 signing key set (Plan 03-03, T-03-13/T-03-14).
+  // Sourced from OIDC_JWKS (SSM SecureString /kmv/secrets/use1/oidc/jwks in
+  // production) so every task in the Fargate fleet signs with — and serves
+  // at routes.jwks — the identical JWKS across restarts. When undefined
+  // (OIDC_JWKS not set, e.g. local dev without the secret configured),
+  // oidc-provider falls back to its own dev-only quick-start keys with a
+  // console warning — same behavior as before this plan.
+  jwks: config.oidc.jwks,
+
   // Route paths - must be full paths from host root (oidc-provider uses host + route for URLs)
   // In production: /{region}/api/oidc/auth, /{region}/api/oidc/token, etc.
   // In dev: /api/oidc/auth, /api/oidc/token, etc.
@@ -136,9 +145,38 @@ const configuration: Configuration = {
       },
     },
 
-    // Disable features we don't need yet — Plan 03-03 enables resourceIndicators
-    // and wires extraTokenClaims for the tier_id/group JWT access-token claims.
-    resourceIndicators: { enabled: false },
+    /**
+     * Resource-Indicator JWT access tokens (AUTH-02, D-01/D-02, Plan 03-03).
+     * Turns the voice client's access token from an opaque string into a
+     * signed RS256 JWT audienced to the voice resource. tier_id/group are
+     * injected onto the ACCESS token via extraTokenClaims below — NOT here
+     * and NOT via findAccount.claims (that feeds the ID token/userinfo).
+     */
+    resourceIndicators: {
+      enabled: true,
+      // No explicit `resource` param on the authorize/token request resolves
+      // to the single voice resource, so the voice client always gets a
+      // voice-audienced token without having to send `resource=` itself.
+      // `oneOf` (present on code/refresh exchanges once a resource was
+      // granted at authorization time) is honored when provided.
+      defaultResource: async (ctx, client, oneOf) => {
+        if (oneOf) return oneOf;
+        return config.oidc.voiceResource;
+      },
+      // Reuse the resource granted at authorization time on token exchange,
+      // so the browser client need not re-send `resource` at /token.
+      useGrantedResource: async () => true,
+      getResourceServerInfo: async (ctx, resourceIndicator, client) => ({
+        scope: "voice",
+        audience: config.oidc.voiceAudience,
+        accessTokenTTL: config.oidc.ttl.accessToken,
+        accessTokenFormat: "jwt",
+        // Asymmetric only — never HS256. Offline PyJWT validation (Phase 4)
+        // requires the public key published at routes.jwks; a symmetric key
+        // can't be published (T-03-11).
+        jwt: { sign: { alg: "RS256" } },
+      }),
+    },
     userinfo: { enabled: true },
     jwtUserinfo: { enabled: false },
   },
@@ -321,10 +359,25 @@ const configuration: Configuration = {
 
   rotateRefreshToken: true,
 
-  // Extra access token claims — Plan 03-03 wires tier_id/group here once
-  // resourceIndicators is enabled (D-01/D-02).
+  /**
+   * Extra ACCESS-token claims (AUTH-02, D-01/D-02, Plan 03-03 Task 3).
+   *
+   * Only applies to `AccessToken` kind tokens with a known accountId (the
+   * default is also invoked for ClientCredentials tokens, which have no
+   * accountId — those get {}). Deliberately emits ONLY the two namespaced
+   * tier_id/group claims (D-01 thin token, T-03-15) — the voice service
+   * reads the `tiers` table for actual limits at session start; this is NOT
+   * where the ID token / userinfo claims come from (see findAccount.claims
+   * above, untouched).
+   */
   extraTokenClaims: async (ctx, token) => {
-    return {};
+    if (token.kind !== "AccessToken" || !token.accountId) return {};
+
+    const profile = await getAuthProfile(token.accountId);
+    return {
+      [config.oidc.claimNames.tierId]: profile?.activeTierId ?? "no-access",
+      [config.oidc.claimNames.group]: profile?.activeGroup ?? null,
+    };
   },
 };
 
