@@ -324,20 +324,20 @@ decision, not a tooling failure).
 **≤1.2 s (and the ~800 ms aspiration) is now a committed later-phase goal, not a v2 vibe.** The scoped
 follow-up levers for that phase, in expected-value order:
 
-1. **PIPE-08 ack-masking** — highest expected perceptual value. Mask the LLM+TTS wall with an immediate
-   short filler so the user hears a response begin before the real turn is ready. Hides the floor rather
-   than shrinking it; the design's named perceived-latency lever.
+1. **PIPE-08 ack-masking** — headline lever, highest expected perceptual value. Mask the LLM+TTS wall with
+   an immediate short filler so the user hears a response begin before the real turn is ready. Hides the
+   floor rather than shrinking it; the design's named perceived-latency lever.
 2. **A faster/lighter LLM turn** — attack the Haiku TTFT floor directly via a smaller/streamed system
-   context or a lower-latency model tier. A model/architecture decision, not a knob.
-3. **Prompt caching — with an honest cap.** claude-haiku-4-5's minimum cacheable prefix is **4096 tokens**;
-   the ~600-token system prompt is far below it, so caching **only engages once cumulative conversation
-   context exceeds 4096 tokens.** It is therefore a **long-conversation lever** (helps late turns of an
-   extended chat), **not** a fix for the demo-critical first turns that dominate this budget. Scope it with
-   that limitation stated, or it will be mis-sold as a TTFT fix (as this plan initially did before the
-   correction above).
-4. **Flux double-endpointing experiment (optional).** Deliberately accept the Pitfall-3 override to strip
+   context or a lower-latency model tier. Config-swappable by design, so cheap to A/B; a model/architecture
+   decision, not a knob.
+3. **Flux double-endpointing experiment (optional).** Deliberately accept the Pitfall-3 override to strip
    Flux's ~0.5 s `ExternalUserTurnStopStrategy` hold and re-measure — worth doing **only** if Flux's
    server-side EOT then beats SmartTurn end-to-end (this plan's measurement says it currently does not).
+
+**Prompt caching is deliberately NOT a scoped lever.** It is ruled out at this prompt size — see the note
+directly above (claude-haiku-4-5's 4096-token minimum cacheable prefix vs the ~600-token system prompt means
+it never engages on the demo-critical early turns; at best a long-conversation lever, so not worth scoping
+for the ≤1.2 s goal). Kept out of the list on purpose so it is not mis-sold as a TTFT fix.
 
 _(The phase-level roadmap item for this later work is owned by the orchestrator; this document records the
 decision and the scoped levers so it is self-contained.)_
