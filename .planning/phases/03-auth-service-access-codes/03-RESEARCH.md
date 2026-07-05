@@ -445,18 +445,16 @@ Mirror `km`'s structure: `cmd/kv/main.go` → `internal/app/cmd.Execute()`; `New
 
 ## Open Questions
 
-1. **Exact claim names + audience/issuer URIs (the Phase-4 contract).**
-   - What we know: tier_id + group only (D-01); aud ≈ `voice.klankermaker.ai` (D-02); issuer `https://auth.klankermaker.ai[/use1]/api/oidc`.
-   - What's unclear: namespaced vs bare claim keys; whether basePath keeps `use1`.
-   - Recommendation: Decide during planning and record verbatim in the phase output + STATE.md so Phase 4's PyJWT config matches byte-for-byte.
+_All three resolved during planning (2026-07-05); resolutions live in the executable plans and are pinned below._
 
-2. **Does `login_intent` need to store the `code`, or is `tierId` enough for redemption counting?**
-   - What we know: unique-user count is per-code (D-06).
-   - What's unclear: whether re-using tierId as the redemption key is safe if two codes map to the same tier (it isn't — two codes sharing a tier would share a count).
-   - Recommendation: store the resolved `code` on `login_intent` and key `code_redemptions`/the count on `code`, not `tierId`.
+1. **Exact claim names + audience/issuer URIs (the Phase-4 contract). (RESOLVED — 03-03 pinned_phase4_contract)**
+   - Resolution: issuer `https://auth.klankermaker.ai/use1/api/oidc`, jwks `.../use1/api/oidc/jwks`, aud `https://voice.klankermaker.ai`, alg RS256, scope `voice`, TTL 3600s; namespaced claims `https://klankermaker.ai/tier_id` (string, "no-access" default) + `https://klankermaker.ai/group` (string|null); basePath kept as `use1` (lowest-diff, A5). Recorded verbatim in 03-03-PLAN.md for Phase 4's PyJWT to match byte-for-byte.
 
-3. **Code case-sensitivity/format policy** (Claude's discretion).
-   - Recommendation: normalize to lowercase on both write (`kv`) and read (`/api/login`) to avoid `Demo` vs `demo` misses; document it as the policy.
+2. **Does `login_intent` store the `code`, or is `tierId` enough for redemption counting? (RESOLVED — 03-02 Task 2)**
+   - Resolution: store the resolved `code` on `login_intent`; key `code_redemptions`/the unique-user count on `code`, NOT `tierId` (two codes sharing a tier must not share a count).
+
+3. **Code case-sensitivity/format policy. (RESOLVED — 03-02 Task 2)**
+   - Resolution: normalize to lowercase on both write (`kv`) and read (`/api/login`); documented as the policy.
 
 ## Environment Availability
 
