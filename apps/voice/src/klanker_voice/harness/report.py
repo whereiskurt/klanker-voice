@@ -99,8 +99,19 @@ def build_anchors(stt_provider: str, turn_strategy: str | None) -> dict[str, str
         vad_stop = (
             "NULL under Flux: Deepgram Flux owns turn detection server-side "
             "(ExternalUserTurnStrategies); no local VAD runs, so "
-            "VADUserStoppedSpeakingFrame never fires and there is no local "
-            "VAD-stop anchor to measure from (RESEARCH Open Question 1)."
+            "VADUserStoppedSpeakingFrame never fires and there is no locally "
+            "observable turn wait to record (RESEARCH Open Question 1). The "
+            "server-side EOT detection latency is NOT captured here."
+        )
+        voice_to_voice = (
+            "Flux-native anchor: Flux EndOfTurn (the plain UserStoppedSpeakingFrame "
+            "Flux broadcasts) -> BotStartedSpeakingFrame. This is the "
+            "POST-ENDPOINTING processing latency (LLM TTFT + first-sentence "
+            "aggregation + TTS first audio); it EXCLUDES Flux's server-side EOT "
+            "detection wait (Deepgram median <300ms). It is therefore comparable "
+            "to the local arms' (voice_to_voice - vad_stop), NOT to their full "
+            "voice_to_voice. Add the Flux EOT term for a full-pipeline estimate. "
+            "Observer clock — never comparable with eval within_ms budgets (Pitfall 7)."
         )
     else:
         vad_stop = (
@@ -108,6 +119,12 @@ def build_anchors(stt_provider: str, turn_strategy: str | None) -> dict[str, str
             "vad stop_secs) -> turn release (UserStoppedSpeakingFrame). "
             "Includes the VAD silence window, STT finalization wait, and any "
             f"turn-analyzer wait (strategy: {turn_strategy})."
+        )
+        voice_to_voice = (
+            "UserBotLatencyObserver on_latency_measured: actual user silence "
+            "(VAD stop_secs-adjusted) -> BotStartedSpeakingFrame. Observer "
+            "clock — never comparable with eval-scenario within_ms budgets, "
+            "which anchor on the harness's send (Pitfall 7)."
         )
     return {
         "vad_stop": vad_stop,
@@ -127,12 +144,7 @@ def build_anchors(stt_provider: str, turn_strategy: str | None) -> dict[str, str
             "TTS service TTFB reported by pipecat metrics during the cycle "
             "(synthesis request -> first audio byte)."
         ),
-        "voice_to_voice": (
-            "UserBotLatencyObserver on_latency_measured: actual user silence "
-            "(VAD stop_secs-adjusted) -> BotStartedSpeakingFrame. Observer "
-            "clock — never comparable with eval-scenario within_ms budgets, "
-            "which anchor on the harness's send (Pitfall 7)."
-        ),
+        "voice_to_voice": voice_to_voice,
     }
 
 

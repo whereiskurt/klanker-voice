@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-05T07:09:40Z",
+  "config": {
+    "arm": "deepgram-flux",
+    "config_path": "configs/arm-c.toml",
+    "stt_provider": "deepgram-flux",
+    "stt_model": "flux-general-en",
+    "turn_strategy": null,
+    "llm_model": "claude-haiku-4-5",
+    "tts_model": "eleven_flash_v2_5"
+  },
+  "anchors": {
+    "vad_stop": "NULL under Flux: Deepgram Flux owns turn detection server-side (ExternalUserTurnStrategies); no local VAD runs, so VADUserStoppedSpeakingFrame never fires and there is no locally observable turn wait to record (RESEARCH Open Question 1). The server-side EOT detection latency is NOT captured here.",
+    "stt_final": "STT service TTFB reported by pipecat metrics during the user-stop -> bot-start cycle (time to first transcription byte). OFTEN NULL: streaming STT reports TTFB at the first partial, while the user is still speaking \u2014 outside the measured cycle. The STT finalization wait is already included in vad_stop (user_turn_secs).",
+    "llm_ttft": "LLM service TTFB reported by pipecat metrics during the cycle (request start -> first streamed token).",
+    "tts_first_audio": "TTS service TTFB reported by pipecat metrics during the cycle (synthesis request -> first audio byte).",
+    "voice_to_voice": "Flux-native anchor: Flux EndOfTurn (the plain UserStoppedSpeakingFrame Flux broadcasts) -> BotStartedSpeakingFrame. This is the POST-ENDPOINTING processing latency (LLM TTFT + first-sentence aggregation + TTS first audio); it EXCLUDES Flux's server-side EOT detection wait (Deepgram median <300ms). It is therefore comparable to the local arms' (voice_to_voice - vad_stop), NOT to their full voice_to_voice. Add the Flux EOT term for a full-pipeline estimate. Observer clock \u2014 never comparable with eval within_ms budgets (Pitfall 7)."
+  },
+  "first_bot_speech_ms": 976.4,
+  "turns": [
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 845.3,
+      "tts_first_audio_ms": 169.7,
+      "voice_to_voice_ms": 1958.2
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 1205.0,
+      "tts_first_audio_ms": 131.8,
+      "voice_to_voice_ms": 2066.8
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 1258.2,
+      "tts_first_audio_ms": 165.4,
+      "voice_to_voice_ms": 2288.2
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 479.3,
+      "tts_first_audio_ms": 133.0,
+      "voice_to_voice_ms": 1122.0
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 457.7,
+      "tts_first_audio_ms": 146.7,
+      "voice_to_voice_ms": 1324.3
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 764.7,
+      "tts_first_audio_ms": 163.2,
+      "voice_to_voice_ms": 1798.7
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 446.3,
+      "tts_first_audio_ms": 154.0,
+      "voice_to_voice_ms": 1318.2
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 707.1,
+      "tts_first_audio_ms": 169.7,
+      "voice_to_voice_ms": 1557.2
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 1597.3,
+      "tts_first_audio_ms": 151.8,
+      "voice_to_voice_ms": 2472.1
+    },
+    {
+      "vad_stop_ms": null,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 506.1,
+      "tts_first_audio_ms": 175.8,
+      "voice_to_voice_ms": 1760.1
+    }
+  ],
+  "summary": {
+    "vad_stop": null,
+    "stt_final": null,
+    "llm_ttft": {
+      "p50_ms": 735.9,
+      "p95_ms": 1444.7,
+      "n": 10
+    },
+    "tts_first_audio": {
+      "p50_ms": 158.6,
+      "p95_ms": 173.1,
+      "n": 10
+    },
+    "voice_to_voice": {
+      "p50_ms": 1779.4,
+      "p95_ms": 2389.3,
+      "n": 10
+    }
+  }
+}

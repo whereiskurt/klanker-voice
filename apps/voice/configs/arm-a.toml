@@ -1,0 +1,41 @@
+# arm-a.toml — endpointing A/B arm A: Nova-3 + Silero VAD + speech-timeout stop.
+#
+# Full pipeline.toml clone differing ONLY in the [stt]/[turn] sections so arm
+# runs are diffable (plan 01-04 Task 1). Selected via:
+#   KLANKER_PIPELINE_CONFIG=configs/arm-a.toml uv run python bot.py -t eval
+#
+# The turn strategy is vad_timeout — factories.py passes an EXPLICIT
+# SpeechTimeoutUserTurnStopStrategy because the pipecat 1.5.0 default stop
+# strategy is SmartTurn v3; relying on the default would silently measure the
+# wrong arm (RESEARCH Pitfall 2 — watch for the absence of the Smart Turn
+# model-load log line during arm-A runs).
+#
+# vad_stop_secs 0.2 is the sweep winner (0.2 / 0.3 / 0.5 measured 2026-07-05:
+# v2v p50 1799.8 / 1836.9 / 2071.7 ms — endpointing silence scales exactly with
+# stop_secs; table in docs/TUNING.md). No credential material, ever (D-09).
+
+[stt]
+provider = "deepgram-nova3"
+model = "nova-3-general"
+
+[stt.flux]                      # unused in this arm (only read for deepgram-flux)
+eot_threshold = 0.7
+eager_eot_threshold = 0.0
+
+[turn]
+strategy = "vad_timeout"
+vad_stop_secs = 0.2
+user_speech_timeout = 0.6
+
+[llm]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+
+[tts]
+provider = "elevenlabs"
+model = "eleven_flash_v2_5"
+voice_id = ""                   # empty until the D-02 audition (plan 01-05)
+speed = 1.1
+
+[persona]
+prompt_path = "../prompts/concierge.md"   # relative to this file's directory (configs/)

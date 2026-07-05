@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-05T01:39:34Z",
+  "config": {
+    "arm": "deepgram-nova3+vad_timeout",
+    "config_path": "configs/arm-a.toml",
+    "stt_provider": "deepgram-nova3",
+    "stt_model": "nova-3-general",
+    "turn_strategy": "vad_timeout",
+    "llm_model": "claude-haiku-4-5",
+    "tts_model": "eleven_flash_v2_5"
+  },
+  "anchors": {
+    "vad_stop": "actual user silence (VADUserStoppedSpeakingFrame timestamp minus vad stop_secs) -> turn release (UserStoppedSpeakingFrame). Includes the VAD silence window, STT finalization wait, and any turn-analyzer wait (strategy: vad_timeout).",
+    "stt_final": "STT service TTFB reported by pipecat metrics during the user-stop -> bot-start cycle (time to first transcription byte). OFTEN NULL: streaming STT reports TTFB at the first partial, while the user is still speaking \u2014 outside the measured cycle. The STT finalization wait is already included in vad_stop (user_turn_secs).",
+    "llm_ttft": "LLM service TTFB reported by pipecat metrics during the cycle (request start -> first streamed token).",
+    "tts_first_audio": "TTS service TTFB reported by pipecat metrics during the cycle (synthesis request -> first audio byte).",
+    "voice_to_voice": "UserBotLatencyObserver on_latency_measured: actual user silence (VAD stop_secs-adjusted) -> BotStartedSpeakingFrame. Observer clock \u2014 never comparable with eval-scenario within_ms budgets, which anchor on the harness's send (Pitfall 7)."
+  },
+  "first_bot_speech_ms": 1173.2,
+  "turns": [
+    {
+      "vad_stop_ms": 802.5,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 682.7,
+      "tts_first_audio_ms": 156.5,
+      "voice_to_voice_ms": 1865.6
+    },
+    {
+      "vad_stop_ms": 800.8,
+      "stt_final_ms": 278.2,
+      "llm_ttft_ms": 4370.6,
+      "tts_first_audio_ms": 130.0,
+      "voice_to_voice_ms": 5554.5
+    },
+    {
+      "vad_stop_ms": 801.6,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 638.6,
+      "tts_first_audio_ms": 166.6,
+      "voice_to_voice_ms": 2035.1
+    },
+    {
+      "vad_stop_ms": 800.6,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 709.8,
+      "tts_first_audio_ms": 132.9,
+      "voice_to_voice_ms": 1839.9
+    },
+    {
+      "vad_stop_ms": 801.3,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 459.2,
+      "tts_first_audio_ms": 157.9,
+      "voice_to_voice_ms": 1626.7
+    },
+    {
+      "vad_stop_ms": 801.2,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 569.1,
+      "tts_first_audio_ms": 180.7,
+      "voice_to_voice_ms": 1759.7
+    },
+    {
+      "vad_stop_ms": 801.6,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 464.4,
+      "tts_first_audio_ms": 156.7,
+      "voice_to_voice_ms": 1646.1
+    },
+    {
+      "vad_stop_ms": 801.4,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 543.3,
+      "tts_first_audio_ms": 131.2,
+      "voice_to_voice_ms": 1706.1
+    },
+    {
+      "vad_stop_ms": 801.1,
+      "stt_final_ms": null,
+      "llm_ttft_ms": 497.9,
+      "tts_first_audio_ms": 146.8,
+      "voice_to_voice_ms": 1670.3
+    },
+    {
+      "vad_stop_ms": 801.1,
+      "stt_final_ms": 198.3,
+      "llm_ttft_ms": 720.2,
+      "tts_first_audio_ms": 253.7,
+      "voice_to_voice_ms": 2228.8
+    }
+  ],
+  "summary": {
+    "vad_stop": {
+      "p50_ms": 801.2,
+      "p95_ms": 802.1,
+      "n": 10
+    },
+    "stt_final": {
+      "p50_ms": 238.2,
+      "p95_ms": 274.2,
+      "n": 2
+    },
+    "llm_ttft": {
+      "p50_ms": 603.9,
+      "p95_ms": 2727.9,
+      "n": 10
+    },
+    "tts_first_audio": {
+      "p50_ms": 156.6,
+      "p95_ms": 220.8,
+      "n": 10
+    },
+    "voice_to_voice": {
+      "p50_ms": 1799.8,
+      "p95_ms": 4057.9,
+      "n": 10
+    }
+  }
+}
