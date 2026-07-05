@@ -35,11 +35,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Agent remembers the full conversation within a session and speaks as the KlankerMaker concierge via a versioned markdown system prompt
   5. STT/LLM/TTS stages swap via config, and the endpointing A/B (Deepgram Flux vs Nova-3+VAD; SmartTurn) has measured verdicts recorded
 
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 
 Plans:
 
-- [ ] 01-01-PLAN.md — Toolchain, SSM→.env key bootstrap, and legitimacy-gated pipecat 1.5.0 install
+- [x] 01-01-PLAN.md — Toolchain, SSM→.env key bootstrap, and legitimacy-gated pipecat 1.5.0 install
 - [ ] 01-02-PLAN.md — Walking skeleton: config/factories/pipeline, persona v1, both run modes, greet-first
 - [ ] 01-03-PLAN.md — Latency harness (JSON + p50/p95 table) and named eval scenarios (barge-in, memory, greeting)
 - [ ] 01-04-PLAN.md — Three-arm endpointing A/B matrix with measured verdicts in docs/TUNING.md
@@ -128,7 +128,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Local Pipeline & Latency Harness | 0/5 | Not started | - |
+| 1. Local Pipeline & Latency Harness | 1/5 | In Progress|  |
 | 2. Infra Skeleton | 0/7 | Planned    |  |
 | 3. Auth Service & Access Codes | 0/TBD | Not started | - |
 | 4. Voice Service Deployed & Quota Enforcement | 0/TBD | Not started | - |
