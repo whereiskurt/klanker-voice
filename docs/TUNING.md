@@ -228,7 +228,7 @@ Flux carries a built-in ~0.5 s endpointing tax that keeps it behind SmartTurn. R
 exposes that timeout through Flux's metadata, or if a later phase deliberately accepts the double-endpointing
 wiring to reclaim it.
 
-### Lever 2 — persona trim (kept: modest, real, strictly good)
+### Lever 2 — persona trim (kept for hygiene; latency delta is within noise, not a win)
 
 `concierge.md` v1 → v2, compressed ~22 % (802 → 618 tokens) with every scenario-exercised fact and rule
 preserved. Measured on the SmartTurn winner (`docs/tuning/arm-b-trimmed.json`) vs the round-0 baseline
@@ -237,15 +237,21 @@ preserved. Measured on the SmartTurn winner (`docs/tuning/arm-b-trimmed.json`) v
 | stage | Arm B baseline (persona v1) | Arm B trimmed (persona v2) |
 |-------|------------------------------|-----------------------------|
 | vad_stop        | 401.2 / 413.9 (10)   | 397.5 / 403.6 (10)   |
-| llm_ttft        | 586.8 / 1433.0 (10)  | 542.7 / **818.0** (10) |
+| llm_ttft        | 586.8 / 1433.0 (10)  | 542.7 / 818.0 (10)   |
 | tts_first_audio | 163.7 / 212.4 (10)   | 155.8 / 172.0 (10)   |
-| **voice_to_voice** | 1460.9 / 2210.7 (10) | **1401.7** / 3877.5 (10) |
+| **voice_to_voice** | 1460.9 / 2210.7 (10) | 1401.7 / 3877.5 (10) |
 
-Robust wins: `voice_to_voice` p50 **−59 ms** (1460.9 → 1401.7) and `llm_ttft` p50 −44 ms with its **p95 tail
-roughly halved** (1433 → 818 ms). The trimmed run's `voice_to_voice` **p95 of 3877 ms is a single-turn
-anomaly** — turn 8 measured 5348 ms while its own `vad_stop`/`llm_ttft`/`tts` were all normal (a
-transport/interrupt stall, not a persona effect); excluding it the p95 is ~2080 ms, itself below the baseline.
-The trim is smaller-prompt-same-behavior with 5/5 scenarios passing, so it is kept as the default persona.
+**Honest read: the measured deltas are within run-to-run noise, not a demonstrated latency win.** The
+apparent `voice_to_voice` p50 −59 ms and `llm_ttft` p50 −44 ms were measured in a *different session* from
+the baseline (so they also carry time-of-day API variance), and — verified against the Anthropic API
+reference — at ~600 prefill tokens Haiku TTFT is dominated by model/service latency, not prefill compute, so
+a 184-token trim should not move TTFT meaningfully. Haiku's own per-turn TTFT ranges 457–1597 ms across
+these runs, which dwarfs a 44 ms shift on n=10. The trimmed run's `voice_to_voice` p95 of 3877 ms is a
+single-turn anomaly (turn 8 measured 5348 ms with all component stages normal — a transport/interrupt stall,
+not a persona effect; excluding it the p95 is ~2080 ms). **The trim is kept for prompt hygiene** — a
+smaller, cleaner prompt with identical measured behaviour and 5/5 scenarios passing — **not because it
+demonstrably lowers latency.** The honest negative result: trimming the persona is not a TTFT lever at this
+size.
 
 **Context caveat:** the eval harness runs all five scenarios in one pipeline session, so the LLM context
 accumulates to ~3000 prompt tokens — the persona is only ~600–800 of that. A production conversation is a
@@ -266,20 +272,31 @@ harness numbers. The measured TTFT is therefore a conservative (high) estimate.
 ### Round-1 winner and the ceiling
 
 **Winner: Nova-3 + SmartTurn v3 + persona v2 (trimmed).** This is the default in `pipeline.toml`
-(turn config unchanged from round 0; the improvement rides in `concierge.md`).
+(turn config unchanged from round 0; the persona-hygiene change rides in `concierge.md`).
 
-| Metric | Round-0 winner | **Round-1 winner** | 1.2 s ceiling | ~800 ms target | Verdict |
+| Metric | Round-0 winner | Round-1 winner | 1.2 s ceiling | ~800 ms target | Verdict |
 |--------|----------------|--------------------|---------------|----------------|---------|
-| voice_to_voice p50 | 1460.9 ms | **1401.7 ms** | 1200 ms | 800 ms | ⚠️ over |
+| voice_to_voice p50 | 1460.9 ms | 1401.7 ms (≈ baseline, within noise) | 1200 ms | 800 ms | ⚠️ over |
 | voice_to_voice p95 | 2210.7 ms | ~2080 ms (ex-outlier; 3877 raw) | 1200 ms | 800 ms | ⚠️ over |
 
-The tuning round closed part of the gap but the cascade floor still sits above the ceiling. Decomposition
-(p50 ~1402 ms): `vad_stop` ~398 + Haiku `llm_ttft` ~543 + Flash `tts` ~156 + aggregation/transport ≈ 300 ms.
-The three in-scope levers are now exhausted: Flux carries a 0.5 s built-in hold, eager costs spend without
-winning, stop_secs is at its safe floor, and the persona is trimmed. The remaining headroom is in levers
-outside this plan's scope: **PIPE-08 ack-masking** (mask perceived latency with an immediate filler),
-**Anthropic prompt caching** on the system prompt (untried; would cut repeated-context TTFT), or accepting
-the cascade floor as the Phase-1 number with ~800 ms as a v2 goal (RESEARCH Assumption A4).
+The tuning round did **not** meaningfully close the gap: the winner sits at ~1.4 s p50, statistically the
+same as round 0. Decomposition (p50 ~1402 ms): `vad_stop` ~398 + Haiku `llm_ttft` ~543 + Flash `tts` ~156 +
+aggregation/transport ≈ 300 ms. The three in-scope levers are now exhausted: Flux carries a 0.5 s built-in
+hold, eager costs spend without winning, `stop_secs` is at its safe floor, and the persona trim is
+within-noise on latency. **The dominant remaining cost is Haiku LLM TTFT (~543 ms p50, tail to ~1.4 s p95),
+and no in-scope lever moves it.**
+
+The remaining headroom is in levers outside this plan's scope:
+- **PIPE-08 ack-masking** — mask perceived latency with an immediate short filler (the design's named v2 lever). This is the most promising path: it hides the LLM+TTS wall without needing to shrink it.
+- **A faster/lighter LLM turn** — smaller/streamed system context, or a lower-latency model tier — to attack the Haiku TTFT floor directly (a model/architecture decision, not a knob).
+- **Accept** the cascade floor as the Phase-1 number with ~800 ms as a v2 goal (RESEARCH Assumption A4).
+
+**Prompt caching is NOT a viable lever here** (verified against the Anthropic API reference):
+claude-haiku-4-5's minimum cacheable prefix is **4096 tokens**, and the persona system prompt is only
+~600 tokens — a system-prompt cache breakpoint below the minimum silently never caches
+(`cache_creation_input_tokens` stays 0, which is exactly what the runs showed). Conversation-history caching
+only begins paying off once cumulative context exceeds 4096 tokens — i.e. deep in a long conversation, not
+the demo-critical early turns. So caching cannot cut the early-turn Haiku TTFT that dominates this budget.
 
 ### RE-ESCALATION — decision required (still over ceiling after tuning)
 
@@ -291,8 +308,10 @@ D-13 preserved (no gate, exit 0). Options:
 1. **Accept** the ~1.4 s p50 as the Phase-1 number, reasoning recorded (cascaded hosted-API floor; barge-in
    feels slick; fresh-session production context is lighter than the harness's accumulated context), with
    ~800 ms tracked as a v2 goal.
-2. **Scope a later phase** for the out-of-scope levers: PIPE-08 ack-masking and/or Anthropic prompt caching
-   on the system prompt (the untried TTFT lever with the most remaining headroom).
+2. **Scope a later phase** for the out-of-scope levers: PIPE-08 ack-masking (mask the LLM+TTS wall with an
+   immediate filler — the most promising path) and/or a faster/lighter LLM turn to attack the dominant
+   Haiku TTFT floor. (Prompt caching is *not* on this list — Haiku's 4096-token minimum cacheable prefix
+   rules out caching the ~600-token system prompt; see the note above.)
 3. **Deliberately accept Flux's double-endpointing wiring** in a future phase to reclaim its 0.5 s hold and
    re-measure — only if server-side EOT then beats SmartTurn end-to-end.
 
