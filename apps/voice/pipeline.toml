@@ -1,0 +1,35 @@
+# pipeline.toml — the single stage-selection surface for the klanker-voice pipeline.
+#
+# No credential material, ever (D-09). Provider keys come exclusively from
+# environment variables (.env, written by `make -C apps/voice env`). config.py
+# rejects any field whose name looks like credential material.
+#
+# This file is consumed unchanged by the Phase 4 deployed service — keep the
+# schema boring and stable. A/B arm configs (configs/arm-*.toml) reuse this
+# exact schema and are selected via the KLANKER_PIPELINE_CONFIG env var.
+
+[stt]
+provider = "deepgram-nova3"     # "deepgram-nova3" | "deepgram-flux"
+model = "nova-3-general"
+
+[stt.flux]                      # only read when stt.provider = "deepgram-flux"
+eot_threshold = 0.7             # end-of-turn confidence, 0.5-0.9 (Flux default 0.7)
+eager_eot_threshold = 0.0       # 0 = disabled; nonzero trades LLM spend for latency
+
+[turn]                          # ignored when stt.provider = "deepgram-flux"
+strategy = "smart_turn_v3"      # "vad_timeout" | "smart_turn_v3"
+vad_stop_secs = 0.2
+user_speech_timeout = 0.6
+
+[llm]
+provider = "anthropic"
+model = "claude-haiku-4-5"      # mandatory override: pipecat 1.5.0 defaults to a Sonnet model
+
+[tts]
+provider = "elevenlabs"
+model = "eleven_flash_v2_5"
+voice_id = ""                   # empty until the D-02 three-voice audition (plan 01-05)
+speed = 1.1                     # D-03: slightly above default; ElevenLabs WS range 0.7-1.2
+
+[persona]
+prompt_path = "prompts/concierge.md"
