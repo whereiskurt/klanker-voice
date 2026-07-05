@@ -31,18 +31,19 @@ Decimal phases appear between their surrounding integers in numeric order.
 
   1. Developer can run the full bot locally with only the three provider API keys and hold a natural spoken conversation
   2. Latency harness reports per-stage and voice-to-voice milliseconds from recorded audio, and measured voice-to-voice latency is ≤1.2s (tuned toward ~800ms typical)
+     — AMENDED 2026-07-05 (user decision, 01-04 re-escalation): after a two-round measured A/B, ~1402ms p50 is ACCEPTED as the Phase-1 number (cascaded hosted-API floor; barge-in slick; harness context heavier than fresh prod sessions). ≤1.2s (~800ms aspiration) is a committed Phase 6 goal — see docs/TUNING.md § RE-ESCALATION
   3. User can interrupt the agent mid-speech: playback stops promptly and conversation context truncates to words actually spoken, verified by named barge-in test scenarios
   4. Agent remembers the full conversation within a session and speaks as the KlankerMaker concierge via a versioned markdown system prompt
   5. STT/LLM/TTS stages swap via config, and the endpointing A/B (Deepgram Flux vs Nova-3+VAD; SmartTurn) has measured verdicts recorded
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 
 - [x] 01-01-PLAN.md — Toolchain, SSM→.env key bootstrap, and legitimacy-gated pipecat 1.5.0 install
 - [x] 01-02-PLAN.md — Walking skeleton: config/factories/pipeline, persona v1, both run modes, greet-first
 - [x] 01-03-PLAN.md — Latency harness (JSON + p50/p95 table) and named eval scenarios (barge-in, memory, greeting)
-- [ ] 01-04-PLAN.md — Three-arm endpointing A/B matrix with measured verdicts in docs/TUNING.md
+- [x] 01-04-PLAN.md — Three-arm endpointing A/B matrix with measured verdicts in docs/TUNING.md
 - [ ] 01-05-PLAN.md — 3-voice audition (user picks by ear), final config, conversational-feel sign-off
 
 ### Phase 2: Infra Skeleton
@@ -121,6 +122,21 @@ Plans:
 **Plans**: TBD
 **UI hint**: yes
 
+### Phase 6: Latency v2 (deferred — scoped 2026-07-05)
+
+**Goal**: Close the gap from the accepted ~1402ms p50 local baseline to ≤1.2s voice-to-voice (aspiration ~800ms), measured on the deployed service
+**Mode:** mvp
+**Depends on**: Phase 1 (pipeline), Phase 4 (deployed measurement baseline); executes after Phase 5 unless schedule slack allows earlier
+**Origin**: 01-04 re-escalation decision (user: "accept + scope later phase"); levers recorded in docs/TUNING.md § RE-ESCALATION
+**Success Criteria** (what must be TRUE):
+
+  1. PIPE-08 ack-masking implemented: an immediate acknowledgment masks the LLM+TTS wall, measured perceptual gap ≤~600ms from user stop to first agent audio
+  2. Lighter/faster LLM turn A/B measured via the config-swappable LLM service (deployed, fresh-session context)
+  3. (Optional) Flux double-endpointing experiment: deliberate Pitfall-3 acceptance measured end-to-end; adopted only if server EOT beats SmartTurn v3
+  4. Deployed voice-to-voice p50/p95 re-measured from us-east-1 against the 1402ms local baseline and recorded in docs/TUNING.md
+
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
@@ -128,8 +144,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Local Pipeline & Latency Harness | 3/5 | In Progress|  |
-| 2. Infra Skeleton | 6/7 | In Progress|  |
+| 1. Local Pipeline & Latency Harness | 4/5 | In Progress|  |
+| 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 0/TBD | Not started | - |
 | 4. Voice Service Deployed & Quota Enforcement | 0/TBD | Not started | - |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
+| 6. Latency v2 (deferred) | 0/TBD | Not started | - |

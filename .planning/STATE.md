@@ -28,10 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-04)
 
 ## Current Position
 
-Phase: 1 (Local Pipeline & Latency Harness) — EXECUTING (3/5 done; 01-04 tuning round in flight, 01-05 audition pending)
+Phase: 1 (Local Pipeline & Latency Harness) — EXECUTING (4/5 done; 01-05 audition is the final wave — needs user's ears)
 Phase 2 (Infra Skeleton): ✅ COMPLETE — 7/7 plans merged, verification PASSED 5/5 (02-VERIFICATION.md; TLS handshake deferred to Phase 4 by design)
-Status: Executing Phase 1 (Phase 2 complete)
-Last activity: 2026-07-05 — Phase 2 verified complete; 01-04 tuning round in flight per user "tune further now"
+Phase 6 (Latency v2): scoped and added to ROADMAP per 01-04 re-escalation decision — deferred
+Status: Executing Phase 1 final wave
+Last activity: 2026-07-05 — 01-04 closed (winner Nova-3+SmartTurn v3, ~1402ms p50 accepted, ≤1.2s → Phase 6); merged to main
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -70,7 +71,7 @@ Recent decisions affecting current work:
 - [Phase 02]: SGUID locked at 6e913c73 — state bucket/lock table tf-kmv-use1-6e913c73 live in 052251888500 — bootstrap-state.sh is the single source (Pitfall 3); same value must land in site.hcl random_suffix default (Plan 02) and gh repo var SGUID (Plan 06)
 - [Phase 02]: Apex DMARC via route 2: standalone _dmarc inline unit, make_site_domain=false — zone audit found zero apex mail records and no auth./voice. NS delegation collisions; route 1 would hijack apex inbound MX (Pitfall 6)
 - [Phase 02]: kmv-github-delegate CORRECTION — the 02-06 "user-created" role never existed; 02-07 executor created it via sudo-management (which HAS admin in 481723467561, contra 02-06's assumption) + added route53:ListTagsForResource (5th action, needed by aws_route53_zone data source). INFR-07 proof run green. 02-06-SUMMARY/02-USER-SETUP reconciled
-- [Phase 01]: Endpointing A/B winner Nova-3 + SmartTurn v3 (p50 1461ms / p95 2211ms) — over 1.2s ceiling, Haiku TTFT now dominant cost; user chose TUNE FURTHER NOW (Flux-native observer, persona trim, lower stop_secs/eager EOT) — 01-04 still open
+- [Phase 01]: Endpointing A/B FINAL — winner Nova-3 + SmartTurn v3 + persona v2, v2v p50 ~1402ms / p95 ~2080ms ACCEPTED (user decision after two measured rounds); Flux LOSES on pipecat 1.5.0 (hard-coded 0.5s ExternalUserTurnStopStrategy hold); eager EOT rejected; prompt caching ruled out at this prompt size (Haiku 4096-token cache minimum vs ~600-token persona); ≤1.2s committed to Phase 6 (ack-masking headline, lighter LLM A/B, optional Flux double-endpointing)
 
 ### Pending Todos
 
@@ -82,6 +83,7 @@ None yet.
 - [Phase 3]: oidc-provider v9 JWT access tokens with tier claims (Resource Indicators) not yet prototyped — spike early; it is the contract Phase 4 blocks on
 - [Phase 4]: STUN srflx behind Fargate 1:1 NAT is source-verified but not live-tested — deployed ICE smoke test is the first Phase 4 deliverable
 - [Phase 4]: Confirm the ElevenLabs API key SOPS entry is populated before the voice deploy (flagged by 02-07)
+- [Phase 4]: Re-measure deployed voice-to-voice p50/p95 against the 1402ms local baseline as part of the ICE smoke test — expectation (user + analysis 2026-07-05): us-east-1 proximity to Deepgram/Anthropic/ElevenLabs endpoints + fresh-session context (~600 vs ~3000 tokens) should improve on local numbers; new browser↔task WebRTC leg adds ~20-50ms each way
 
 ## Deferred Items
 
