@@ -86,7 +86,15 @@ Plans:
   4. Operator-defined codes carry expiry and max-redemption limits, and the login form is protected by Altcha captcha
   5. Operator can create, list, and expire access codes and define/list tiers via `kv`
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Port run.auth app; trim to single-region Email-only voice-client; magic-link login green with interstitial confirm page + Altcha; two DynamoDB tables live (AUTH-01, AUTH-05)
+- [ ] 03-02-PLAN.md — access_codes/tier/login_intent/code_redemption entities; login-time code→tier resolution + email→token bridge; unique-user redemption counting (AUTH-03, AUTH-04)
+- [ ] 03-03-PLAN.md — Enable Resource Indicators; RS256 JWT access token + tier_id/group claims; persistent JWKS in SSM; pin Phase-4 contract (AUTH-02)
+- [ ] 03-04-PLAN.md — `kv` CLI code + tier CRUD; ElectroDB key-compat round-trip; seed demo/kphdemo123 tiers and codes (KV-01, KV-02)
+
+**Waves:** 1 → {03-01}; 2 → {03-02}; 3 → {03-03, 03-04 parallel}
 **UI hint**: yes
 
 ### Phase 4: Voice Service Deployed & Quota Enforcement
