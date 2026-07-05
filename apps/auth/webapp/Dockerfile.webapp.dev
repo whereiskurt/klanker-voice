@@ -1,0 +1,25 @@
+FROM node:current-alpine@sha256:fd164609b5ab0c6d49bac138ae06c347e72261ec6ae1de32b6aa9f5ee2271110
+
+RUN apk update && apk add --no-cache \
+      sudo \
+      curl \
+      build-base \
+      g++ \
+      python3 \
+      ;
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+COPY . .
+
+RUN chown node:node /app
+RUN chown -R node:node /app/.dockerignore
+RUN chown -R node:node /app/src
+RUN chown -R node:node /app/public
+RUN chown -R node:node /app/next*
+
+USER node
+
+CMD ["npm","run","dev"]

@@ -1,0 +1,30 @@
+HOSTNAME=0.0.0.0
+NEXTAUTH_URL=http://localhost:3002
+SITE_DOMAIN=klankermaker.ai
+
+# dynamodb-local (see plan 03-01 user_setup) — local magic-link login green
+# check without touching the live nextauth/electro tables.
+AUTH_DYNAMODB_ENDPOINT=http://localhost:8000
+AUTH_ELECTRO_ENDPOINT=http://localhost:8000
+AUTH_DYNAMODB_DBNAME=kmv-auth-authjs
+AUTH_ELECTRO_DBNAME=kmv-auth-electro
+AUTH_DYNAMODB_REGION=us-east-1
+AWS_REGION=us-east-1
+AUTH_DYNAMODB_ID=local
+AUTH_DYNAMODB_SECRET=local
+AUTH_ELECTRO_ID=local
+AUTH_ELECTRO_SECRET=local
+
+AUTH_SES_ACCESS_KEY_ID=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/ses/smtp/default/auth.klankermaker.ai/username
+AUTH_SES_SECRET_ACCESS_KEY=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/ses/smtp/default/auth.klankermaker.ai/password
+AUTH_SES_REGION=us-east-1
+AUTH_SES_SMTP_FROM="no-reply@auth.klankermaker.ai"
+
+AUTH_JWT_SECRET=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/jwt/secret
+OIDC_COOKIE_KEYS=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/cookie_keys
+ALTCHA_HMAC_KEY=arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/altcha/secret
+
+# OIDC voice client shell — not SSM-provisioned by Phase 2 (single first-party
+# client, D-09); local dev placeholder values only.
+OIDC_VOICE_CLIENT_ID=voice-local-dev
+OIDC_VOICE_SECRET=voice-local-dev-secret
