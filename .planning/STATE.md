@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 3 complete (4/4 plans, verified 4/5; guidance→Phase 5, JWKS live, table seeded); Phase 4 next
-last_updated: "2026-07-05T17:15:00.000Z"
+stopped_at: Phase 4 context gathered
+last_updated: "2026-07-05T21:59:33.454Z"
 last_activity: 2026-07-05
-last_activity_desc: Phase 3 executed, verified, and closed
+last_activity_desc: Phase 3 executed, verified, closed; KPHv1 voice clone swapped into pipeline.toml
 progress:
   total_phases: 7
   completed_phases: 3
@@ -36,6 +36,7 @@ Status: Phases 1+2+3 complete; Phase 4 (Voice Service Deployed & Quota Enforceme
 Last activity: 2026-07-05 — Phase 3 executed, verified, closed; KPHv1 voice clone swapped into pipeline.toml
 
 ### Phase 4 handoff (the auth contract Phase 4 consumes)
+
 - JWT ACCESS token contract (pinned in 03-03-SUMMARY): issuer https://auth.klankermaker.ai/use1/api/oidc, jwks .../use1/api/oidc/jwks, aud https://voice.klankermaker.ai, RS256, scope voice, TTL 3600s, claims https://klankermaker.ai/tier_id (string, "no-access" default) + https://klankermaker.ai/group (string|null). Voice service uses PyJWT+PyJWKClient to validate offline.
 - Live: DynamoDB kmv-auth-authjs + kmv-auth-electro (ACTIVE, seeded); SSM /kmv/secrets/use1/oidc/jwks (RS256 JWK Set, kid kmv-oidc-m-zCTIi5).
 - Phase 4 will also: re-measure deployed voice-to-voice p50/p95 vs the ~1402ms local baseline (us-east-1 proximity expected to improve it), and build the usage table + quota enforcement (QUOT-01..05) against the tiers this phase defined.
@@ -102,8 +103,10 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-05 (long session — compacting)
-Stopped at: Phases 1+2+3 COMPLETE & pushed to origin/main (@09058a8). Mid Phase 4 (Voice Service Deployed & Quota Enforcement) DISCUSSION — 1 of 4 gray areas captured (Concurrency & usage race-safety) in 04-DISCUSS-CHECKPOINT.json; 3 areas remain (Session lifecycle wind-down+teardown, Kill-switch + operator loop, Deploy/autoscale/ICE smoke test).
+**Resume file:** .planning/phases/04-voice-service-deployed-quota-enforcement/04-CONTEXT.md
+
+Last session: 2026-07-05T21:59:33.447Z
+Stopped at: Phase 4 context gathered
 Resume: re-run `/gsd-discuss-phase 4` — it detects 04-DISCUSS-CHECKPOINT.json and offers to resume the remaining 3 areas. Then plan+execute Phase 4.
 Also live/done this session: KPHv1 (Kurt's voice clone, voice_id 6zcBdCPOI1TDYCTSsqUv) swapped into apps/voice/pipeline.toml (flash_v2_5-supported); OIDC JWKS signing key created in SSM /kmv/secrets/use1/oidc/jwks; kmv-auth-electro seeded with demo/kphdemo123 + tiers; Phase 7 router/recorded-transcript design evolution captured in 07-DESIGN-NOTES.md.
 Note: git guard is a harmless `rm -f` wrapper in ~/.zshrc (footgun-prevention) — avoid `rm -f`/`-r` in non-interactive shells (use plain `rm`), git itself is fine.
