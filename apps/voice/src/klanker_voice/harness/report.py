@@ -113,7 +113,11 @@ def build_anchors(stt_provider: str, turn_strategy: str | None) -> dict[str, str
         "vad_stop": vad_stop,
         "stt_final": (
             "STT service TTFB reported by pipecat metrics during the "
-            "user-stop -> bot-start cycle (time to first transcription byte)."
+            "user-stop -> bot-start cycle (time to first transcription "
+            "byte). OFTEN NULL: streaming STT reports TTFB at the first "
+            "partial, while the user is still speaking — outside the "
+            "measured cycle. The STT finalization wait is already included "
+            "in vad_stop (user_turn_secs)."
         ),
         "llm_ttft": (
             "LLM service TTFB reported by pipecat metrics during the cycle "

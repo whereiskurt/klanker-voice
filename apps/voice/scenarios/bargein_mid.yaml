@@ -1,0 +1,46 @@
+# bargein_mid: interrupt mid-sentence ~1500ms after the LLM starts responding
+# (PIPE-02, PITFALLS #3; per the RESEARCH barge-in scenario sketch).
+#
+# Asserts: user_started_speaking registers, the next bot response arrives
+# within a bounded window, and the judge checks the follow-up is coherent with
+# being cut off (context truncated to words actually spoken — RESEARCH
+# Pattern 5, 1.5.0 word-timestamp path).
+#
+# NOTE (RESEARCH Pitfall 7): within_ms measures the harness clock — pass/fail
+# plumbing only; it never feeds the D-11 latency table.
+name: bargein_mid
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # Observe the D-04 greeting so later anchors track the provoked answer.
+  - expect:
+      - event: tts_response
+  - user: "Tell me the long version of the klanker story."
+    expect:
+      - event: llm_started
+  # Interrupt mid-monologue: 1500ms after generation started.
+  - user: "Wait, stop. Shorter please."
+    send_after: { event: llm_started, delay_ms: 1500 }
+    expect:
+      # Discard-proof interrupt assertion (see bargein_early.yaml): the
+      # transcription proves user speech registered through the real path.
+      - event: user_transcription
+      - event: response
+        within_ms: 30000
+        eval: >-
+          Judge ONLY these two things and answer yes when both hold: (1) the
+          reply reacts to being cut off with something brief (a shorter
+          answer or an acknowledgment, not another long monologue), and (2)
+          it does not restart or repeat the interrupted story verbatim. Do
+          NOT judge the quality, fluency, or completeness of the shorter
+          answer itself, and ignore transcription noise such as fragmented
+          abbreviations
