@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-07-05T23:16:27.832Z"
+stopped_at: Phase 4 Plan 02 executed (voice deploy infra)
+last_updated: "2026-07-05T23:35:35Z"
 last_activity: 2026-07-05
-last_activity_desc: Phase 3 executed, verified, closed; KPHv1 voice clone swapped into pipeline.toml
+last_activity_desc: "Phase 4 Plan 02 executed: voice ECS task/service enabled+wired, webrtc_udp SG narrowed to 20000-20100, kmv-voice-usage table + least-privilege task IAM, session-count autoscale (1->4) — module-level terraform validate clean; live terragrunt plan blocked by expired AWS SSO session"
 progress:
   total_phases: 7
   completed_phases: 3
   total_plans: 22
-  completed_plans: 17
-  percent: 43
+  completed_plans: 18
+  percent: 82
 current_phase: 4
 current_phase_name: Voice Service Deployed & Quota Enforcement
 ---
@@ -31,10 +31,10 @@ See: .planning/PROJECT.md (updated 2026-07-04)
 Phase 1 (Local Pipeline & Latency Harness): ✅ COMPLETE — 5/5 plans, verification PASSED 5/5 (amended latency criterion; 01-VERIFICATION.md)
 Phase 2 (Infra Skeleton): ✅ COMPLETE — 7/7 plans merged, verification PASSED 5/5 (02-VERIFICATION.md; TLS handshake deferred to Phase 4 by design)
 Phase 3 (Auth Service & Access Codes): ✅ COMPLETE — 4/4 plans merged, verification 4/5 (03-VERIFICATION.md). run.auth ported to apps/auth/webapp; access-code→tier + login→token bridge; OIDC RS256 JWT tokens; kv CLI. JWKS signing key live in SSM; kmv-auth-electro seeded (demo/kphdemo123 + tiers). Criterion-3 no-access GUIDANCE deferred to Phase 5 (logic done); deployed E2E is a Phase-4 verification item.
-Phase 4 (Voice Service Deployed & Quota Enforcement): IN PROGRESS — Plan 01/6 done (04-01-SUMMARY.md): server.py (production FastAPI /api/offer + /health entrypoint), auth.py (offline RS256 JWT validation + smoke-credential bypass), webrtc.py (public-IP + STUN ICE candidate gathering), Dockerfile — live-verified via `docker build` + a running container answering /health (200) and /api/offer (401 unauthenticated). Plans 02-06 (deploy infra, ICE smoke test, quota enforcement, idle teardown, kv operator loop) remain.
+Phase 4 (Voice Service Deployed & Quota Enforcement): IN PROGRESS — Plan 02/6 done (04-02-SUMMARY.md): voice ECS task/service enabled + wired from voice/service.hcl locals (public-IP, site.hcl ecs_tasks/ecs_services flipped on); webrtc_udp SG narrowed to 20000-20100/udp; kmv-voice-usage DynamoDB table (electro, TTL expiresAt); dedicated least-privilege task-role IAM (new ecs-task module capability); ecs-service module extended for custom-metric TargetTrackingScaling; voice autoscaling min1/max4 on ActiveSessions. Module-level `terraform validate -backend=false` clean on all 3 touched modules; live `terragrunt run-all validate`/`plan` BLOCKED by an expired AWS SSO session (Developer sso_session, InvalidGrantException) — must be refreshed (`aws sso login`) before 04-03 applies. Plans 03-06 (deploy image + ICE smoke test, quota enforcement, idle teardown, kv operator loop) remain.
 Phase 6 (Latency v2) + Phase 7 (KPH Knowledge Base): scoped, deferred (Phase 7 has a router/recorded-transcript design evolution captured in 07-DESIGN-NOTES.md)
-Status: Phases 1+2+3 complete; Phase 4 in progress (1/6 plans)
-Last activity: 2026-07-05 — Phase 4 Plan 01 executed: server.py/auth.py/webrtc.py + Dockerfile, live-verified via docker build+run
+Status: Phases 1+2+3 complete; Phase 4 in progress (2/6 plans)
+Last activity: 2026-07-05 — Phase 4 Plan 02 executed: voice deploy infra (SG narrow, task/service enable+wire, usage table, least-privilege IAM, session-count autoscale)
 
 ### Phase 4 handoff (the auth contract Phase 4 consumes)
 
@@ -43,7 +43,7 @@ Last activity: 2026-07-05 — Phase 4 Plan 01 executed: server.py/auth.py/webrtc
 - Phase 4 will also: re-measure deployed voice-to-voice p50/p95 vs the ~1402ms local baseline (us-east-1 proximity expected to improve it), and build the usage table + quota enforcement (QUOT-01..05) against the tiers this phase defined.
 - 04-01 done: production entrypoint (server.py), offline JWT validation (auth.py), public-IP+STUN ICE gathering (webrtc.py), Dockerfile — all unit-tested (30 new tests, 90/90 total) and the Docker image live-verified (build + running container). Known gap: real ECS task-metadata shape and live ICE/SDP-munging interop are unverified until 04-03's deployed smoke test.
 
-Progress: [████████░░] 77%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Progress: [████████░░] 77%
 *Updated after each plan completion*
 | Phase 02 P01 | 5 min | 3 tasks | 5 files |
 | Phase 04 P01 | 10min | 3 tasks | 9 files |
+| Phase 04 P02 | 35min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,7 @@ Recent decisions affecting current work:
 - [Phase 01]: Endpointing A/B FINAL — winner Nova-3 + SmartTurn v3 + persona v2, v2v p50 ~1402ms / p95 ~2080ms ACCEPTED (user decision after two measured rounds); Flux LOSES on pipecat 1.5.0 (hard-coded 0.5s ExternalUserTurnStopStrategy hold); eager EOT rejected; prompt caching ruled out at this prompt size (Haiku 4096-token cache minimum vs ~600-token persona); ≤1.2s committed to Phase 6 (ack-masking headline, lighter LLM A/B, optional Flux double-endpointing)
 - [Phase 04]: [Phase 04-01]: ENI public-IP lookup keys off the ECS task-metadata MAC address (ec2:DescribeNetworkInterfaces mac-address filter), not an ENI-id field — task metadata v4 doesn't expose the ENI id directly
 - [Phase 04]: [Phase 04-01]: Dockerfile resolves the libvpx package name dynamically via apt-cache (libvpx9 on the current Debian trixie base, not the libvpx7 CLAUDE.md documented against an older base); CMD invokes uvicorn directly instead of uv run uvicorn (uv run re-syncs the dev group's pyaudio and breaks the container)
+- [Phase 04-02]: Extended the ecs-task module (dedicated per-task IAM role + container systemControls) beyond this plan's declared file scope - no existing mechanism in the codebase could express least-privilege task-role IAM or kernel sysctls; the ecs-cluster module's shared task role is wide-open (dynamodb:*/cloudwatch:*/ssm:*/s3:*/secretsmanager:* on Resource=*)
 
 ### Pending Todos
 
@@ -98,6 +100,7 @@ Recent decisions affecting current work:
 - [Phase 4]: Confirm the ElevenLabs API key SOPS entry is populated before the voice deploy (flagged by 02-07)
 - [Phase 4]: Re-measure deployed voice-to-voice p50/p95 against the 1402ms local baseline as part of the ICE smoke test — expectation (user + analysis 2026-07-05): us-east-1 proximity to Deepgram/Anthropic/ElevenLabs endpoints + fresh-session context (~600 vs ~3000 tokens) should improve on local numbers; new browser↔task WebRTC leg adds ~20-50ms each way
 - [Phase 4]: REQUIREMENTS.md's INFR-03 checkbox was auto-marked `[x]` after 04-01 (per the plan's own `requirements:` frontmatter and the standard per-plan mark-complete step) — but INFR-03's text explicitly requires "verified by a deployed ICE smoke test," which is 04-03's job. 04-01 only delivers the code half (auth + candidate gathering + entrypoint, all unit-tested against synthetic fixtures, no live Fargate task yet). Treat INFR-03 as genuinely done only once 04-03's deployed smoke test passes, not from this checkbox alone.
+- [Phase 4-02]: AWS SSO session (Developer, profiles klanker-terraform/klanker-application/klanker-management) expired (InvalidGrantException on refresh) - could not run terragrunt run-all validate/plan against live state for the voice deploy infra. Module-level terraform validate -backend=false passed for all touched modules as a substitute. Before 04-03 applies: run 'aws sso login --profile klanker-terraform' interactively, then re-run terragrunt run --all validate + a targeted terragrunt plan on the ecs-task/ecs-service units.
 
 ## Deferred Items
 
@@ -109,10 +112,10 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-**Resume file:** .planning/phases/04-voice-service-deployed-quota-enforcement/04-02-PLAN.md
+**Resume file:** .planning/phases/04-voice-service-deployed-quota-enforcement/04-03-PLAN.md
 
-Last session: 2026-07-05T23:16:27.832Z
-Stopped at: Phase 4 Plan 01 executed (voice service WebRTC entrypoint + auth + Docker image)
-Resume: execute 04-02-PLAN.md (deploy infra delta — public-IP Fargate tasks, UDP SG range, ECR push) through Plan 06 (kv operator loop), in order per 04-PATTERNS.md wave sequencing.
-Also live/done this session: 04-01 executed (server.py, auth.py, webrtc.py, Dockerfile — 3 tasks, 9 files, 90/90 tests pass, Docker image live-verified via build+run); earlier this session: KPHv1 (Kurt's voice clone, voice_id 6zcBdCPOI1TDYCTSsqUv) swapped into apps/voice/pipeline.toml (flash_v2_5-supported); OIDC JWKS signing key created in SSM /kmv/secrets/use1/oidc/jwks; kmv-auth-electro seeded with demo/kphdemo123 + tiers; Phase 7 router/recorded-transcript design evolution captured in 07-DESIGN-NOTES.md.
+Last session: 2026-07-05T23:35:35Z
+Stopped at: Phase 4 Plan 02 executed (voice deploy infra: SG narrow, task/service enable+wire, usage table, least-privilege IAM, session-count autoscale)
+Resume: before executing 04-03-PLAN.md (deploy the 04-01 container image + ICE smoke test), first refresh the AWS SSO session (`aws sso login --profile klanker-terraform`) and confirm `terragrunt run --all validate` + a targeted `terragrunt plan` on the ecs-task/ecs-service units are clean — 04-02 could not complete this live check in-session (expired SSO refresh token). Then continue through Plan 06 (kv operator loop), in order per 04-PATTERNS.md wave sequencing.
+Also live/done this session: 04-01 executed (server.py, auth.py, webrtc.py, Dockerfile — 3 tasks, 9 files, 90/90 tests pass, Docker image live-verified via build+run); 04-02 executed (network SG narrow + IAM/sysctl module extensions + voice service.hcl wiring — 4 commits, 8 files, module-level terraform validate clean); earlier this session: KPHv1 (Kurt's voice clone, voice_id 6zcBdCPOI1TDYCTSsqUv) swapped into apps/voice/pipeline.toml (flash_v2_5-supported); OIDC JWKS signing key created in SSM /kmv/secrets/use1/oidc/jwks; kmv-auth-electro seeded with demo/kphdemo123 + tiers; Phase 7 router/recorded-transcript design evolution captured in 07-DESIGN-NOTES.md.
 Note: git guard is a harmless `rm -f` wrapper in ~/.zshrc (footgun-prevention) — avoid `rm -f`/`-r` in non-interactive shells (use plain `rm`), git itself is fine.
