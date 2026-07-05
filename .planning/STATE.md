@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-04)
 
 ## Current Position
 
-Phase: 1 (Local Pipeline & Latency Harness) — 5/5 plans EXECUTED, user sign-off recorded; phase verifier running
+Phase 1 (Local Pipeline & Latency Harness): ✅ COMPLETE — 5/5 plans, verification PASSED 5/5 (amended latency criterion; 01-VERIFICATION.md)
 Phase 2 (Infra Skeleton): ✅ COMPLETE — 7/7 plans merged, verification PASSED 5/5 (02-VERIFICATION.md; TLS handshake deferred to Phase 4 by design)
 Phase 6 (Latency v2): scoped and added to ROADMAP per 01-04 re-escalation decision — deferred
-Status: Phase 1 execution complete (verification in flight); Phase 7 (KPH Knowledge Base) in discussion
+Status: Phases 1+2 complete; next executable phase is Phase 3 (Auth); Phase 7 context ready for planning
 Last activity: 2026-07-05 — 01-05 merged: voice=Will (bIHbv24MWmeRgasZH58o) speed 1.1, persona v3 (KPH self-ref, TTS-safe DEFCON), user APPROVED conversational feel
 
 Progress: [░░░░░░░░░░] 0%
