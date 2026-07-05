@@ -25,7 +25,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from pipecat.frames.frames import CancelFrame, EndFrame
+from pipecat.frames.frames import CancelFrame, EndFrame, UserStoppedSpeakingFrame
 from pipecat.observers.base_observer import FramePushed
 from pipecat.observers.user_bot_latency_observer import (
     LatencyBreakdown,
@@ -98,6 +98,7 @@ class LatencyReportObserver(UserBotLatencyObserver):
         super().__init__(**kwargs)
         if config_path is None:
             config_path = os.environ.get(CONFIG_PATH_ENV_VAR) or DEFAULT_CONFIG_PATH
+        self._flux = cfg.stt.provider == FLUX_PROVIDER
         arm = arm_name(cfg)
         turn_strategy = None if cfg.stt.provider == FLUX_PROVIDER else cfg.turn.strategy
         # Config metadata only — provider/model/knob names, never env values
@@ -143,6 +144,24 @@ class LatencyReportObserver(UserBotLatencyObserver):
         await super().on_push_frame(data)
         if data.direction != FrameDirection.DOWNSTREAM:
             return
+        # Flux-native voice-to-voice anchor. Flux owns endpointing server-side
+        # and never emits a VADUserStoppedSpeakingFrame, so the parent's anchor
+        # never arms and Arm C records zero turns (RESEARCH Open Question 1).
+        # Flux instead broadcasts a plain UserStoppedSpeakingFrame at its
+        # EndOfTurn. Seed the parent's user-stop anchor AFTER it has processed
+        # that frame — so user_turn_secs stays None (vad_stop stays null: there
+        # is no locally observable turn wait, the EOT wait is server-side) while
+        # on_latency_measured still fires at the next BotStartedSpeakingFrame.
+        # The resulting voice_to_voice is the POST-ENDPOINTING processing
+        # latency (LLM + TTS + aggregation); it EXCLUDES Flux's server-side EOT
+        # detection wait, so it is comparable to the local arms' (voice_to_voice
+        # minus vad_stop), not to their full voice_to_voice (see anchors).
+        if (
+            self._flux
+            and self._user_stopped_time is None
+            and isinstance(data.frame, UserStoppedSpeakingFrame)
+        ):
+            self._user_stopped_time = time.time()
         if isinstance(data.frame, (EndFrame, CancelFrame)):
             self.finalize()
 
