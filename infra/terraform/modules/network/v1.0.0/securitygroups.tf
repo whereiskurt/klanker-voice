@@ -179,18 +179,20 @@ resource "aws_security_group" "etherpad" {
 }
 
 # Security Group: WebRTC UDP media
-# Wide ephemeral UDP ingress for browser<->task WebRTC media (aiortc binds
-# OS-ephemeral ports). Structure-only until a service attaches it; Phase 4
-# tightens the range (sysctl ip_local_port_range + narrow SG).
+# Phase 4 (D-12/T-04-06): narrowed from the Phase-2 groundwork's wide
+# 1024-65535 ephemeral range to the bounded 20000-20100 media window. The
+# voice task's container sysctl (net.ipv4.ip_local_port_range) pins aiortc's
+# OS-ephemeral UDP bind range to this same window so the open ingress
+# surface matches exactly what WebRTC media needs.
 resource "aws_security_group" "webrtc_udp" {
   name        = "${var.region.label}.${var.dns.zonename}-webrtc-udp"
   description = "WebRTC UDP media ingress for voice tasks"
   vpc_id      = aws_vpc.vpc.id
 
   ingress {
-    description = "WebRTC media UDP ephemeral range"
-    from_port   = 1024
-    to_port     = 65535
+    description = "WebRTC media UDP range (20000-20100, D-12)"
+    from_port   = 20000
+    to_port     = 20100
     protocol    = "udp"
     cidr_blocks = ["0.0.0.0/0"]
   }
