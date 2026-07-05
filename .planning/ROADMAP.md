@@ -59,12 +59,12 @@ Plans:
   4. Provider API keys flow SOPS → SSM SecureString → container secrets with no plaintext secrets in the repo
   5. GitHub Actions deploys via OIDC roles with no long-lived AWS keys
 
-**Plans:** 0/7 plans executed
+**Plans:** 2/7 plans executed
 
 Plans:
 
-- [ ] 02-01-PLAN.md — Toolchain pins, zone/SES probes, state backend bootstrap (D-05/D-06), public repo push
-- [ ] 02-02-PLAN.md — Clone dc34 tree: 11 verbatim modules + kmv rewrites (site.hcl delta, stubs, DMARC unit, WebRTC SG) + validate/plan gates
+- [x] 02-01-PLAN.md — Toolchain pins, zone/SES probes, state backend bootstrap (D-05/D-06), public repo push
+- [x] 02-02-PLAN.md — Clone dc34 tree: 11 verbatim modules + kmv rewrites (site.hcl delta, stubs, DMARC unit, WebRTC SG) + validate/plan gates
 - [ ] 02-03-PLAN.md — Single-region SOPS KMS key + bootstrap-param migration into .secrets.sops.json
 - [ ] 02-04-PLAN.md — Apply site → certs → network (cross-account DNS, ACM ISSUED, VPC/ALB/SGs)
 - [ ] 02-05-PLAN.md — Apply ecs-cluster/ecr/dynamodb/secrets/email/dmarc; retire /kmv/bootstrap/*
@@ -129,7 +129,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Local Pipeline & Latency Harness | 2/5 | In Progress|  |
-| 2. Infra Skeleton | 0/7 | Planned    |  |
+| 2. Infra Skeleton | 2/7 | In Progress|  |
 | 3. Auth Service & Access Codes | 0/TBD | Not started | - |
 | 4. Voice Service Deployed & Quota Enforcement | 0/TBD | Not started | - |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
