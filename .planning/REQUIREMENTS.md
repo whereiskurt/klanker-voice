@@ -50,7 +50,7 @@
 - [ ] **INFR-04**: SES production access and DKIM for klankermaker.ai (request started week 1)
 - [ ] **INFR-05**: Provider API keys flow SOPS → SSM SecureString → container secrets
 - [ ] **INFR-06**: Voice service autoscales 1→4 tasks with scale-in protection while sessions are active
-- [ ] **INFR-07**: GitHub Actions deploys via OIDC roles (no long-lived AWS keys)
+- [x] **INFR-07**: GitHub Actions deploys via OIDC roles (no long-lived AWS keys)
 
 ### kv CLI (Go)
 
@@ -117,7 +117,7 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | INFR-04 | Phase 2 | Pending |
 | INFR-05 | Phase 2 | Pending |
 | INFR-06 | Phase 4 | Pending |
-| INFR-07 | Phase 2 | Pending |
+| INFR-07 | Phase 2 | Complete |
 | KV-01 | Phase 3 | Pending |
 | KV-02 | Phase 3 | Pending |
 | KV-03 | Phase 4 | Pending |
