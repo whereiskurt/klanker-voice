@@ -102,6 +102,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-05T16:06:27.285Z
-Stopped at: Phase 3 planned (4 plans, verified — 1 blocker fixed); ready to execute
-Resume file: .planning/phases/03-auth-service-access-codes/03-01-PLAN.md
+Last session: 2026-07-05 (long session — compacting)
+Stopped at: Phases 1+2+3 COMPLETE & pushed to origin/main (@09058a8). Mid Phase 4 (Voice Service Deployed & Quota Enforcement) DISCUSSION — 1 of 4 gray areas captured (Concurrency & usage race-safety) in 04-DISCUSS-CHECKPOINT.json; 3 areas remain (Session lifecycle wind-down+teardown, Kill-switch + operator loop, Deploy/autoscale/ICE smoke test).
+Resume: re-run `/gsd-discuss-phase 4` — it detects 04-DISCUSS-CHECKPOINT.json and offers to resume the remaining 3 areas. Then plan+execute Phase 4.
+Also live/done this session: KPHv1 (Kurt's voice clone, voice_id 6zcBdCPOI1TDYCTSsqUv) swapped into apps/voice/pipeline.toml (flash_v2_5-supported); OIDC JWKS signing key created in SSM /kmv/secrets/use1/oidc/jwks; kmv-auth-electro seeded with demo/kphdemo123 + tiers; Phase 7 router/recorded-transcript design evolution captured in 07-DESIGN-NOTES.md.
+Note: git guard is a harmless `rm -f` wrapper in ~/.zshrc (footgun-prevention) — avoid `rm -f`/`-r` in non-interactive shells (use plain `rm`), git itself is fine.
