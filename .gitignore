@@ -9,6 +9,14 @@ env.local.sh
 *.tfstate
 *.tfstate.backup
 
+# --- run artifacts (rendered audio, per-run JSON) — committed A/B verdicts live in docs/tuning/ ---
+apps/voice/artifacts/
+
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+
 # --- tool runtime / generated caches ---
 .claude/worktrees/
 .planning/research/.cache/
