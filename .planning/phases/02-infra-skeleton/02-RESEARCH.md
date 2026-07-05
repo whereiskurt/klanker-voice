@@ -575,19 +575,18 @@ aws dynamodb describe-table --table-name "$TABLE" --profile klanker-terraform >/
 | A5 | terraform-provider-aws current versions support systemControls on Fargate (issue #40034 was version-specific to 5.74.0) | WebRTC groundwork | Phase 4 concern only; wide-SG path unaffected |
 | A6 | Voice local dev port 7860 (pipecat runner default) for urls.local_ports | site.hcl delta | Cosmetic; trivially changed |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Apex DMARC route (make_site_domain vs standalone record)**
-   - What we know: module DMARC is per-identity; apex identity drags in receive MX; D-11 requires apex p=quarantine.
-   - What's unclear: whether any existing mail flows on klankermaker.ai apex.
-   - Recommendation: zone audit → default to standalone `_dmarc` unit (route 2); it satisfies D-11 with relaxed alignment.
-2. **Who creates `kmv-github-delegate` in 481723467561**
-   - What we know: needed only for CI runs touching the management provider; klanker-management (HostedZoneAdmin) cannot create IAM roles.
-   - Recommendation: plan a `checkpoint:human-verify`-style task — user creates the role from the github-oidc module's trust-policy output; CI DNS-touching plans stay red until then.
-3. **Elevenlabs bootstrap param timing**
-   - In progress per CONTEXT; SOPS migration task must handle presence/absence gracefully (`sops edit` later).
-4. **ALB idle timeout knob**
-   - Whether network module alb.tf exposes `idle_timeout` as an input — check during copy; if yes set ≥2400s now (PITFALLS #9), else defer to Phase 4.
+*Dispositions recorded at planning time (2026-07-04) — each question is embodied in the Phase 2 plan set.*
+
+1. **Apex DMARC route (make_site_domain vs standalone record)** — RESOLVED: route 2 (standalone `_dmarc` inline unit).
+   - Disposition: Plan 01 Task 1 performs the read-only zone audit (apex-MX check recorded in 02-ZONE-AUDIT.md); Plan 02 Task 2 locks `make_site_domain = false` in site.hcl and authors the `region/us-east-1/dmarc/` inline unit; Plan 05 Task 3 applies it with an automated empty-apex-MX gate.
+2. **Who creates `kmv-github-delegate` in 481723467561** — RESOLVED: the user, via a blocking checkpoint.
+   - Disposition: Plan 06 Task 1 writes the module's trust-policy output to 02-DELEGATE-TRUST.json; Plan 06 Task 2 is a `checkpoint:human-action` with exact console steps; Plan 07 Task 3 tolerates the documented partial-red CI state (Pitfall 8) if the user defers.
+3. **Elevenlabs bootstrap param timing** — RESOLVED: tolerated absence.
+   - Disposition: Plan 03 Task 2 continues on ParameterNotFound (placeholder retained, `sops edit` follow-up documented in SUMMARY); Plan 05 Task 2 preserves any unmigrated bootstrap param (ONLY-THEN deletion rule).
+4. **ALB idle timeout knob** — RESOLVED: conditional check during copy.
+   - Disposition: Plan 02 Task 2 step 4 checks whether network module alb.tf exposes an idle-timeout input — sets 2400 in network.hcl if yes, records "defer to Phase 4" in 02-02-SUMMARY.md if no. Module itself is not modified either way (D-02).
 
 ## Environment Availability
 

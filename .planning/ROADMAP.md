@@ -51,7 +51,16 @@ Plans:
   3. SES production-access request is submitted with SPF/DKIM/DMARC configured for klankermaker.ai
   4. Provider API keys flow SOPS → SSM SecureString → container secrets with no plaintext secrets in the repo
   5. GitHub Actions deploys via OIDC roles with no long-lived AWS keys
-**Plans**: TBD
+**Plans:** 7 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Toolchain pins, zone/SES probes, state backend bootstrap (D-05/D-06), public repo push
+- [ ] 02-02-PLAN.md — Clone dc34 tree: 11 verbatim modules + kmv rewrites (site.hcl delta, stubs, DMARC unit, WebRTC SG) + validate/plan gates
+- [ ] 02-03-PLAN.md — Single-region SOPS KMS key + bootstrap-param migration into .secrets.sops.json
+- [ ] 02-04-PLAN.md — Apply site → certs → network (cross-account DNS, ACM ISSUED, VPC/ALB/SGs)
+- [ ] 02-05-PLAN.md — Apply ecs-cluster/ecr/dynamodb/secrets/email/dmarc; retire /kmv/bootstrap/*
+- [ ] 02-06-PLAN.md — Apply github-oidc, repo variables + gated environments, delegate-role human checkpoint
+- [ ] 02-07-PLAN.md — CI workflows (plan/apply/build/deploy/gitleaks) + end-to-end OIDC proof run
 
 ### Phase 3: Auth Service & Access Codes
 **Goal**: A user can sign in via magic link with an access code and receive a tier-claimed JWT that downstream services validate offline; operators manage codes and tiers via `kv`
