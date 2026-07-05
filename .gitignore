@@ -1,0 +1,15 @@
+# --- secrets: NEVER track plaintext secret material (public repo, D-07) ---
+apps/*/.env
+infra/terraform/live/site/.secrets.json
+env.local.sh
+
+# --- terraform / terragrunt runtime state ---
+.terragrunt-cache/
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# --- tool runtime / generated caches ---
+.claude/worktrees/
+.planning/research/.cache/
+.DS_Store
