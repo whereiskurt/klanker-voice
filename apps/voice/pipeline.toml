@@ -28,7 +28,7 @@ model = "claude-haiku-4-5"      # mandatory override: pipecat 1.5.0 defaults to 
 [tts]
 provider = "elevenlabs"
 model = "eleven_flash_v2_5"
-voice_id = ""                   # empty until the D-02 three-voice audition (plan 01-05)
+voice_id = "bIHbv24MWmeRgasZH58o"  # "Will - Relaxed Optimist" — D-02 audition winner, picked by ear (plan 01-05)
 speed = 1.1                     # D-03: slightly above default; ElevenLabs WS range 0.7-1.2
 
 [persona]

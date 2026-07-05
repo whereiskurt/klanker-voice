@@ -348,5 +348,61 @@ decision and the scoped levers so it is self-contained.)_
 
 ## Chosen voice
 
-_Stub — completed by plan 01-05 after the D-02 three-voice ElevenLabs audition. `pipeline.toml`
-`tts.voice_id` is empty until then; the harness uses an interim premade voice (see plan 01-03)._
+**Winner: "Will — Relaxed Optimist" (`bIHbv24MWmeRgasZH58o`), speed 1.1, `eleven_flash_v2_5` — picked by
+ear (D-02), landed in `pipeline.toml` `[tts]`.** Audition held 2026-07-05 via
+`apps/voice/scripts/audition.py`: every candidate rendered the identical K-register script (greeting as K,
+a depth-hook answer, a playful-with-teeth line) at speed 1.1 on `eleven_flash_v2_5`, one voice per HTTP
+render call (RESEARCH Pitfall 8 — voice settings never flip mid-session). Renders + manifest live in
+gitignored `apps/voice/artifacts/audition/`; this section is the durable record.
+
+**Round 1 lineup** (shortlisted from the live premade library against the D-03 brief — conversational,
+fast-punchy, high demo intelligibility; narration/ambient registers penalized):
+
+| Candidate | voice_id | Labels | Outcome |
+|-----------|----------|--------|---------|
+| Chris — Charming, Down-to-Earth | `iP95p4xoKVk53GoZ742B` | male, american, conversational, casual | kept as incumbent into round 2 |
+| Jessica — Playful, Bright, Warm | `cgSgspJ2msm6clMCkdW9` | female, american, conversational | out — user confirmed a male voice |
+| Roger — Laid-Back, Casual, Resonant | `CwhRBWXzGAHq8TQ4Fs17` | male, american, conversational, classy | out — user disliked the snide/classy register |
+
+**User direction after round 1:** definitely male; keep Chris in the running; avoid smug/classy/knowing
+registers (this also disqualified Eric — Smooth, Trustworthy, the only other conversational male premade,
+labeled "classy"); want casual/warm/down-to-earth "guy at the booth", not a narrator.
+
+**Round 2 lineup** (the plan's one re-audition loop — two new renders, Chris's take reused):
+
+| Candidate | voice_id | Labels | Outcome |
+|-----------|----------|--------|---------|
+| Chris — Charming, Down-to-Earth (incumbent) | `iP95p4xoKVk53GoZ742B` | male, american, casual | finalist |
+| Will — Relaxed Optimist | `bIHbv24MWmeRgasZH58o` | male, american, young, chill | finalist → **winner** |
+| Charlie — Deep, Confident, Energetic | `IKne3meq5aSn9XLyUdCD` | male, australian, young, hyped | eliminated |
+
+**Final tiebreak (Chris vs Will):** both finalists rendered the user's own line — "Hey! It's KPH, your
+concierge to understanding klanker-maker, defcon dot run thirty-four, mesh T K — the meshtastic toolkit."
+— at the same settings. **The user picked Will by ear**; tempo stayed at 1.1 (no tweak requested).
+Runners-up on record: Chris (`iP95p4xoKVk53GoZ742B`, closest second) and Charlie (`IKne3meq5aSn9XLyUdCD`).
+
+### Final knob values — the Phase-1 record (D-12), inherited by Phases 4–5
+
+```toml
+[stt]
+provider = "deepgram-nova3"        # endpointing A/B winner (arm B)
+model    = "nova-3-general"
+
+[turn]
+strategy            = "smart_turn_v3"   # A/B winner; pipecat 1.5.0 default, 8 MB ONNX
+vad_stop_secs       = 0.2               # safe floor (sweep: beats 0.3/0.5)
+user_speech_timeout = 0.6
+
+[llm]
+provider = "anthropic"
+model    = "claude-haiku-4-5"      # persona v2 (prompts/concierge.md, trimmed for hygiene)
+
+[tts]
+provider = "elevenlabs"
+model    = "eleven_flash_v2_5"
+voice_id = "bIHbv24MWmeRgasZH58o"  # "Will - Relaxed Optimist" — D-02 audition winner
+speed    = 1.1                     # D-03; ElevenLabs range 0.7-1.2
+```
+
+Accepted Phase-1 latency for this config: voice_to_voice p50 ~1402 ms / p95 ~2080 ms (ex-outlier) — see
+the RE-ESCALATION decision above (≤1.2 s / ~800 ms scoped to a later phase via PIPE-08 et al.).
