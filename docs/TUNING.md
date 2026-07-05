@@ -7,13 +7,16 @@
 comparable with the eval-harness `within_ms` budgets (a different anchor — Pitfall 7). Verdicts are
 **informational only (D-13)**: no run, report, or CLI ever exits nonzero on a threshold.
 
-> **STATUS: tuned (round 1, 2026-07-05) — still over the 1.2 s ceiling; re-escalated.**
-> The user chose **"tune further now"** on the round-0 escalation. A tuning round followed
-> (Flux-native observer + measurement, persona trim, eager-EOT test, stop_secs analysis).
-> The winner improved but its measured voice-to-voice still exceeds the 1.2 s ceiling
-> (p50 1401.7 ms). Full round-1 results and the fresh decision point are in
-> **[Tuning round 1](#tuning-round-1--2026-07-05)** at the end of this document. Verdicts remain
-> informational (D-13) — no tool exits nonzero; this is an execution decision, not a gate.
+> **STATUS: closed (2026-07-05) — accepted + scoped to a later phase.**
+> Round 0 chose the endpointing winner (Nova-3 + SmartTurn v3); the round-0 escalation over the 1.2 s
+> ceiling led the user to choose **"tune further now"**, and a tuning round followed (Flux-native observer +
+> measurement, persona trim, eager-EOT test, stop_secs analysis). The winner did not meaningfully change
+> (p50 ~1402 ms, still over the ceiling — Haiku LLM TTFT is the dominant, un-knobbable cost). On the
+> re-escalation the user chose **accept + scope a later phase**: ~1402 ms p50 is the accepted Phase-1
+> number, and ≤1.2 s / ~800 ms becomes a committed later-phase goal via PIPE-08 ack-masking and related
+> levers. Full record and the recorded decision are in
+> **[Tuning round 1](#tuning-round-1--2026-07-05)** at the end of this document. Verdicts stayed
+> informational (D-13) throughout — no tool exited nonzero; the escalation was an execution decision, not a gate.
 >
 > **The sections between here and the tuning round are the round-0 record, preserved as written.**
 
@@ -298,24 +301,48 @@ claude-haiku-4-5's minimum cacheable prefix is **4096 tokens**, and the persona 
 only begins paying off once cumulative context exceeds 4096 tokens — i.e. deep in a long conversation, not
 the demo-critical early turns. So caching cannot cut the early-turn Haiku TTFT that dominates this budget.
 
-### RE-ESCALATION — decision required (still over ceiling after tuning)
+### RE-ESCALATION — DECISION (2026-07-05): accept + scope a later phase
 
-Per the user's instruction ("if after these levers p95 is still >1200 ms, return a fresh checkpoint rather
-than iterating further"), execution pauses again. The winner is `Nova-3 + SmartTurn v3 + persona v2`, measured
-`voice_to_voice` p50 **1401.7 ms** / p95 ~2080 ms (ex-outlier) — improved but still over the 1.2 s ceiling.
-D-13 preserved (no gate, exit 0). Options:
+The round-1 winner `Nova-3 + SmartTurn v3 + persona v2` measures `voice_to_voice` p50 **1401.7 ms** /
+p95 ~2080 ms (ex-outlier) — still over the 1.2 s ceiling. The user chose **option 1 + option 2 combined:
+accept the current number as the Phase-1 result AND scope the remaining levers into a later phase.** D-13 is
+preserved throughout (no gate added, every run/report/CLI exits 0; this was an execution pause for a human
+decision, not a tooling failure).
 
-1. **Accept** the ~1.4 s p50 as the Phase-1 number, reasoning recorded (cascaded hosted-API floor; barge-in
-   feels slick; fresh-session production context is lighter than the harness's accumulated context), with
-   ~800 ms tracked as a v2 goal.
-2. **Scope a later phase** for the out-of-scope levers: PIPE-08 ack-masking (mask the LLM+TTS wall with an
-   immediate filler — the most promising path) and/or a faster/lighter LLM turn to attack the dominant
-   Haiku TTFT floor. (Prompt caching is *not* on this list — Haiku's 4096-token minimum cacheable prefix
-   rules out caching the ~600-token system prompt; see the note above.)
-3. **Deliberately accept Flux's double-endpointing wiring** in a future phase to reclaim its 0.5 s hold and
-   re-measure — only if server-side EOT then beats SmartTurn end-to-end.
+**Accepted Phase-1 number: ~1402 ms p50 / ~2080 ms p95 (ex-outlier).** Reasoning on record:
 
-**Decision: _pending_ (round 1).** Record the choice and reasoning here once made.
+- The cascaded hosted-API floor has been reached. All three in-scope endpointing levers are exhausted —
+  SmartTurn v3 already reclaims the turn-release time; Flux carries a fixed ~0.5 s built-in hold; eager EOT
+  loses and costs 50–70 % more LLM spend; `stop_secs` is at its barge-in-safe floor; the persona trim is
+  within measurement noise. The dominant remaining cost is Haiku LLM TTFT, which no endpointing knob touches.
+- Barge-in feels slick (all five scenarios pass, playback stops within one TTS word), which is the
+  demo's core "whoa" property.
+- The harness accumulates ~3000 prompt tokens across five scenarios in one session; a *fresh-session*
+  production conversation is a few turns, so real early-turn Haiku TTFT — and thus voice-to-voice — is
+  likely **lower** than these measured numbers. The accepted figure is a conservative (high) estimate.
+
+**≤1.2 s (and the ~800 ms aspiration) is now a committed later-phase goal, not a v2 vibe.** The scoped
+follow-up levers for that phase, in expected-value order:
+
+1. **PIPE-08 ack-masking** — highest expected perceptual value. Mask the LLM+TTS wall with an immediate
+   short filler so the user hears a response begin before the real turn is ready. Hides the floor rather
+   than shrinking it; the design's named perceived-latency lever.
+2. **A faster/lighter LLM turn** — attack the Haiku TTFT floor directly via a smaller/streamed system
+   context or a lower-latency model tier. A model/architecture decision, not a knob.
+3. **Prompt caching — with an honest cap.** claude-haiku-4-5's minimum cacheable prefix is **4096 tokens**;
+   the ~600-token system prompt is far below it, so caching **only engages once cumulative conversation
+   context exceeds 4096 tokens.** It is therefore a **long-conversation lever** (helps late turns of an
+   extended chat), **not** a fix for the demo-critical first turns that dominate this budget. Scope it with
+   that limitation stated, or it will be mis-sold as a TTFT fix (as this plan initially did before the
+   correction above).
+4. **Flux double-endpointing experiment (optional).** Deliberately accept the Pitfall-3 override to strip
+   Flux's ~0.5 s `ExternalUserTurnStopStrategy` hold and re-measure — worth doing **only** if Flux's
+   server-side EOT then beats SmartTurn end-to-end (this plan's measurement says it currently does not).
+
+_(The phase-level roadmap item for this later work is owned by the orchestrator; this document records the
+decision and the scoped levers so it is self-contained.)_
+
+**Plan 01-04 is closed on this decision.**
 
 ---
 

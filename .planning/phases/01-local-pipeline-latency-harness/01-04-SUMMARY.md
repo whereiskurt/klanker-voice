@@ -14,7 +14,7 @@ provides:
   - "three checked-in arm configs apps/voice/configs/arm-{a,b,c}.toml (diffable pipeline.toml clones)"
   - "RESEARCH Open Question 1 resolved: Flux nulls vad_stop AND yields zero UserBotLatencyObserver turns; needs a Flux-native observer to score"
   - "pipeline.toml confirmed as the tuned winner (smart_turn_v3, stop_secs 0.2) — the Phase 4 prod default"
-  - "OPEN ESCALATION: winner voice_to_voice p95 2210.7ms > 1.2s ceiling — human tuning/accept/scope decision pending"
+  - "RESOLVED escalation: winner v2v ~1402ms p50 still > 1.2s ceiling after tuning — user ACCEPTED it as the Phase-1 number and SCOPED ≤1.2s/~800ms to a later phase (PIPE-08 ack-masking et al.); decision recorded in docs/TUNING.md"
 affects: [01-05, phase-4-prod-config, phase-5-hud, phase-5-ci-gate, PIPE-08]
 
 # Tech tracking
@@ -52,7 +52,7 @@ key-decisions:
   - "Round 1 (2026-07-05): Flux made measurable via a Flux-native observer (EndOfTurn anchor) — Flux LOSES (post-endpointing v2v p50 1779ms > SmartTurn full 1402ms), root cause a built-in 0.5s ExternalUserTurnStopStrategy hold unreachable without the forbidden Pitfall-3 override"
   - "Round 1: persona trim v1->v2 kept for prompt HYGIENE only — the measured v2v p50 1460.9->1401.7ms is within run-to-run noise (cross-session; at ~600 prefill tokens Haiku TTFT is service-latency-bound, not prefill-bound, verified vs Anthropic API ref), NOT a demonstrated latency win"
   - "Prompt caching ruled OUT as a future TTFT lever: claude-haiku-4-5 min cacheable prefix is 4096 tokens; the ~600-token system prompt can never cache (0 cache hits observed). Remaining headroom is PIPE-08 ack-masking or a lighter LLM turn"
-  - "stop_secs held at 0.2 (safe floor); winner still over the 1.2s ceiling -> re-escalated per user instruction"
+  - "stop_secs held at 0.2 (safe floor); winner still over the 1.2s ceiling -> re-escalated -> user chose ACCEPT + SCOPE LATER; plan 01-04 closed on that decision"
 
 patterns-established:
   - "Pattern: per-arm TOML clones + committed docs/tuning/*.json as the diffable A/B record; artifacts/ stays gitignored"
@@ -93,9 +93,12 @@ coverage:
   - id: D4
     description: "Latency assessment vs the 1.2s ceiling / ~800ms target, and the escalation decision when the winner exceeds the ceiling"
     requirement: "PIPE-01"
-    verification: []
+    verification:
+      - kind: manual_procedural
+        ref: "docs/TUNING.md RE-ESCALATION section — user decision recorded 2026-07-05 (accept + scope later)"
+        status: pass
     human_judgment: true
-    rationale: "Round 0 winner p95 2210.7ms over the 1.2s ceiling -> user chose tune-further. Round 1 (Flux-native measurement, persona trim, eager test, stop_secs analysis) improved the winner to v2v p50 1401.7ms but it is STILL over the 1.2s ceiling; per the user's instruction a fresh checkpoint is returned. Decision pending (round 1) — recorded in TUNING.md."
+    rationale: "Round 0 winner over the 1.2s ceiling -> user chose tune-further. Round 1 left the winner at v2v p50 ~1402ms, still over the ceiling (Haiku LLM TTFT dominates, untouched by any in-scope lever). RESOLVED: on the re-escalation the user chose ACCEPT + SCOPE LATER — ~1402ms p50 is the accepted Phase-1 number; ≤1.2s/~800ms is a committed later-phase goal (PIPE-08 ack-masking et al.). Decision + scoped levers recorded in docs/TUNING.md; D-13 preserved (exit 0, no gate)."
   - id: D5
     description: "Flux made measurable (Open Question 1 fully resolved) via a Flux-native EndOfTurn observer anchor; Arm C measured and compared"
     requirement: "PIPE-04"
@@ -116,13 +119,13 @@ status: complete
 
 # Phase 1 Plan 04: Endpointing A/B — Measured Verdicts Summary
 
-**Three-arm endpointing A/B on pipecat 1.5.0 with a follow-on tuning round: Nova-3 + SmartTurn v3 wins; a new Flux-native observer resolves Open Question 1 and shows Deepgram Flux LOSES (post-endpointing v2v p50 1779 ms > SmartTurn's full 1402 ms, held back by a built-in 0.5 s ExternalUserTurnStop hold); a 22 % persona trim cut the winner to v2v p50 1401.7 ms (llm_ttft p95 1433→818 ms) and eager EOT was rejected — winner still over the 1.2 s ceiling, re-escalated for a human decision**
+**Three-arm endpointing A/B on pipecat 1.5.0 with a follow-on tuning round: Nova-3 + SmartTurn v3 wins; a new Flux-native observer resolves Open Question 1 and shows Deepgram Flux LOSES (post-endpointing v2v p50 1779 ms > SmartTurn's full 1402 ms, held back by a built-in 0.5 s ExternalUserTurnStop hold); a 22 % persona trim was kept for hygiene (its latency delta is within noise) and eager EOT was rejected — the winner stayed at ~1402 ms p50, still over the 1.2 s ceiling, and the user ACCEPTED it as the Phase-1 number while scoping ≤1.2 s / ~800 ms to a later phase (PIPE-08 ack-masking et al.). Plan closed.**
 
 ## Performance
 
 - **Duration:** ~90 min total (round 0: mined the surviving A/B artifacts + verdicts ~30 min; round 1 "tune further": Flux-native observer + 3 live tuning runs + docs ~60 min)
 - **Completed:** 2026-07-05
-- **Tasks:** round 0 (2/2 deliverables) + round 1 (3 levers) complete; latency/ceiling decision open (re-escalated)
+- **Tasks:** round 0 (2/2 deliverables) + round 1 (3 levers) complete; latency/ceiling decision RESOLVED (user: accept + scope later). Plan closed.
 - **Files created:** 11, modified: 3
 
 ## Accomplishments
@@ -135,9 +138,11 @@ status: complete
 - **Eager EOT decision: disabled** — unmeasurable on this harness for the same root cause; kept off as the conservative default (Pitfall 4: it trades speculative LLM spend for latency).
 - **pipeline.toml confirmed as the tuned winner** (it was already on `smart_turn_v3`, stop_secs 0.2 — the A/B validates that default). 21 config tests pass; greeting + all three barge-in + memory scenarios pass under the final config.
 
-## Escalation — Decision Required (open)
+## Escalation — Round 0 (resolved: user chose "tune further now")
 
-The winning configuration's measured `voice_to_voice` **p95 is 2210.7 ms** (p50 1460.9 ms) — **both exceed the 1.2 s roadmap ceiling**, and the ~800 ms target is well out of reach. Per the plan Task 2 escalation rule, execution is **paused for an explicit human decision** rather than closing the phase silently over the ceiling. This preserves D-13 exactly: no CI gate was added, and no run/report/CLI exits nonzero — the pause is an execution decision, not a tooling failure.
+_Historical: this round-0 escalation led to the tuning round below, which was then re-escalated and finally resolved (accept + scope later) — see "Tuning Round 1" and its resolution._
+
+The round-0 winning configuration's measured `voice_to_voice` **p95 was 2210.7 ms** (p50 1460.9 ms) — **both exceed the 1.2 s roadmap ceiling**, and the ~800 ms target is well out of reach. Per the plan Task 2 escalation rule, execution was **paused for an explicit human decision** rather than closing the phase silently over the ceiling. This preserves D-13 exactly: no CI gate was added, and no run/report/CLI exits nonzero — the pause is an execution decision, not a tooling failure.
 
 Decomposition of the p50 (~1461 ms): `vad_stop` ~401 ms + Haiku `llm_ttft` ~587 ms + Flash `tts_first_audio` ~164 ms + first-sentence aggregation/transport ≈ 300 ms. With SmartTurn already reclaiming the turn-release time, **the LLM TTFT is now the dominant remaining cost** (its p95 tail of 1433 ms is what pushes voice-to-voice p95 past 2 s). RESEARCH Assumption A4 (that ~800 ms is reachable untuned with this cascade) is in tension with this floor.
 
@@ -210,17 +215,21 @@ After the round-0 escalation the user chose option 1 (tune further). This round 
 
 **Round-1 winner: Nova-3 + SmartTurn v3 + persona v2** — v2v p50 **1401.7 ms** (statistically unchanged from round 0) / p95 ~2080 ms (ex a single all-stages-normal outlier turn; 3877 raw). `pipeline.toml` turn config unchanged; the persona-hygiene change rides in `concierge.md`.
 
-**Still over the 1.2 s ceiling → re-escalated.** Per the user's instruction ("if p95 still >1200 ms after these levers, return a fresh checkpoint rather than iterating further"), execution pauses again. The three in-scope levers are exhausted and the dominant cost — Haiku LLM TTFT — is untouched by any of them. Remaining headroom is out-of-scope: **PIPE-08 ack-masking** (the most promising path — mask the LLM+TTS wall with an immediate filler) or a faster/lighter LLM turn. **Prompt caching is ruled out** — claude-haiku-4-5's minimum cacheable prefix is 4096 tokens and the ~600-token system prompt can never cache (0 cache hits observed). Options recorded in the TUNING.md "RE-ESCALATION" section; decision pending.
+**Still over the 1.2 s ceiling → re-escalated → RESOLVED (accept + scope later).** The three in-scope levers were exhausted and the dominant cost — Haiku LLM TTFT — was untouched by any of them, so the winner stayed at ~1402 ms p50. On the re-escalation the user chose **accept the current number as the Phase-1 result AND scope the remaining levers into a later phase**:
+
+- **Accepted Phase-1 number:** ~1402 ms p50 / ~2080 ms p95 (ex-outlier). Reasoning on record in TUNING.md — cascaded hosted-API floor reached, in-scope levers exhausted, barge-in feels slick, and the harness's ~3000-token accumulated context means fresh-session production TTFT is likely lower than measured. ≤1.2 s (and the ~800 ms aspiration) is now a committed later-phase goal, not a v2 vibe.
+- **Scoped later-phase levers (in TUNING.md):** (1) PIPE-08 ack-masking — highest perceptual value; (2) a faster/lighter LLM turn to attack the Haiku TTFT floor; (3) prompt caching **with the honest cap** — Haiku's 4096-token minimum cacheable prefix makes it a *long-conversation* lever (engages only past 4096 cumulative tokens), not a first-turns fix; (4) optionally the Flux double-endpointing experiment, only worth it if server EOT then beats SmartTurn end-to-end.
+- The phase-level roadmap item for that later work is owned by the orchestrator (ROADMAP.md/STATE.md); TUNING.md and this SUMMARY are self-contained on the decision and scoped levers. **Plan 01-04 is closed on this decision.**
 
 ## Next Phase Readiness
 
 - **Plan 01-05** (voice audition) is unblocked: `docs/TUNING.md` has a stubbed "Chosen voice" section for it to complete, and `pipeline.toml` `voice_id` remains empty (interim premade voice per 01-03).
 - **Phase 4** inherits `pipeline.toml` as the tuned prod default (Nova-3 + SmartTurn v3, stop_secs 0.2, persona v2) unchanged.
-- **Blocker for phase close:** the round-1 latency escalation above needs a recorded human decision in `docs/TUNING.md`. The dominant cost is Haiku LLM TTFT, untouched by any in-scope lever. PIPE-08 ack-masking (mask the wall with a filler) is the design's named perceived-latency lever and the most promising path; a lighter/faster LLM turn is the other. Prompt caching is ruled out for this budget (Haiku's 4096-token minimum cacheable prefix vs a ~600-token system prompt).
+- **Latency escalation: RESOLVED.** The user accepted ~1402 ms p50 as the Phase-1 number and scoped ≤1.2 s / ~800 ms to a later phase (decision recorded in `docs/TUNING.md`). The orchestrator owns adding that phase-level roadmap item. The scoped levers for it: PIPE-08 ack-masking (design's named perceived-latency lever, most promising), a lighter/faster LLM turn, prompt caching (long-conversation only — Haiku's 4096-token minimum prefix vs ~600-token system prompt), and optionally the Flux double-endpointing experiment.
 
 ## Self-Check: PASSED
 
-All created files exist on disk and are tracked in git (arm-{a,b,c}.toml; docs/tuning/arm-a.json, arm-b.json, arm-b-trimmed.json, arm-c.json, arm-c-eager.json; docs/TUNING.md; observers.py, report.py, concierge.md, tests/test_observers.py); all five task commits (e84555f, b920330, e2f02a9, 7ae801b, e4241ff) present in git log; compare CLI exits 0 and renders arm-c with 10 turns; 60 unit tests pass; all five eval scenarios PASS under the trimmed-persona winner; committed artifacts carry config metadata only (no key-like strings, T-1-09); no forbidden legacy project-name strings in any produced file. Two deliverables (D4 latency/ceiling decision) remain human_judgment: true and open — the round-1 re-escalation above.
+All created files exist on disk and are tracked in git (arm-{a,b,c}.toml; docs/tuning/arm-a.json, arm-b.json, arm-b-trimmed.json, arm-c.json, arm-c-eager.json; docs/TUNING.md; observers.py, report.py, concierge.md, tests/test_observers.py); the code + artifact commits (e84555f, b920330, e2f02a9, 7ae801b, e4241ff) plus the tuning-round and decision docs commits are all present in git log; compare CLI exits 0 and renders arm-c with 10 turns; 60 unit tests pass; all five eval scenarios PASS under the trimmed-persona winner; committed artifacts carry config metadata only (no key-like strings, T-1-09); no forbidden legacy project-name strings in any produced file. D4 (latency/ceiling decision) was human_judgment: true and is now RESOLVED — the user's accept + scope-later decision is recorded in docs/TUNING.md and this SUMMARY; plan 01-04 is closed.
 
 ---
 *Phase: 01-local-pipeline-latency-harness*
