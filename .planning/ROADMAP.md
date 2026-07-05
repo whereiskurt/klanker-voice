@@ -84,6 +84,7 @@ Plans:
   1. User can sign in via magic-link email, with an interstitial confirm-click page so corporate link-scanners don't consume tokens
   2. Auth issues JWT access tokens with tier/group claims that a relying service validates offline via the JWKS endpoint
   3. User may enter any access code (or none) at login: known codes map to tiers, unknown/blank yields a no-access tier with guidance
+     — NOTE 2026-07-05 (03-VERIFICATION): resolve-to-no-access logic complete + tested; the "with guidance" UI clause (D-07) DEFERRED to Phase 5 client UX by user decision (users are redirected to the voice client, which is where they hit the "need a code" moment — CLNT-01/08). Live-table seed (demo/kphdemo123 + tiers) applied to kmv-auth-electro this session.
   4. Operator-defined codes carry expiry and max-redemption limits, and the login form is protected by Altcha captcha
   5. Operator can create, list, and expire access codes and define/list tiers via `kv`
 
@@ -124,6 +125,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
 
   1. User signs in via OIDC redirect to auth.klankermaker.ai before the mic is available, then grants mic through a gesture-gated flow with distinct error states (denied / no device / unsupported browser)
+     — includes the no-access-tier guidance surfaced in-client (moved from Phase 3 / D-07, 2026-07-05): a no-access user is told they cannot start a session and how to get a code
   2. User sees a connection state machine with clear ICE-failure/UDP-blocked messaging and auto-retry, verified on a real iPhone and a restricted conference-style network
   3. User sees live captions for both sides, a state-aware orb (listening / thinking / speaking), and a visible session countdown timer
   4. User can toggle a latency HUD showing per-stage pipeline latency
@@ -172,7 +174,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have 
 |-------|----------------|--------|-----------|
 | 1. Local Pipeline & Latency Harness | 5/5 | ✅ Complete (verified 5/5, amended) | 2026-07-05 |
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
-| 3. Auth Service & Access Codes | 4/4 | Complete   | 2026-07-05 |
+| 3. Auth Service & Access Codes | 4/4 | ✅ Complete (verified 4/5; #3 guidance→Phase 5, seed done) | 2026-07-05 |
 | 4. Voice Service Deployed & Quota Enforcement | 0/TBD | Not started | - |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |

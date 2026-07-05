@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 3 planned (4 plans, verified — 1 blocker fixed); ready to execute
-last_updated: "2026-07-05T16:49:11.697Z"
+stopped_at: Phase 3 complete (4/4 plans, verified 4/5; guidance→Phase 5, JWKS live, table seeded); Phase 4 next
+last_updated: "2026-07-05T17:15:00.000Z"
 last_activity: 2026-07-05
-last_activity_desc: Phase 3 execution started
+last_activity_desc: Phase 3 executed, verified, and closed
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 16
-  completed_plans: 12
-  percent: 29
-current_phase: 1
-current_phase_name: Local Pipeline & Latency Harness
+  completed_plans: 16
+  percent: 43
+current_phase: 3
+current_phase_name: Auth Service & Access Codes
 ---
 
 # Project State
@@ -30,9 +30,15 @@ See: .planning/PROJECT.md (updated 2026-07-04)
 
 Phase 1 (Local Pipeline & Latency Harness): ✅ COMPLETE — 5/5 plans, verification PASSED 5/5 (amended latency criterion; 01-VERIFICATION.md)
 Phase 2 (Infra Skeleton): ✅ COMPLETE — 7/7 plans merged, verification PASSED 5/5 (02-VERIFICATION.md; TLS handshake deferred to Phase 4 by design)
-Phase 6 (Latency v2): scoped and added to ROADMAP per 01-04 re-escalation decision — deferred
-Status: Executing Phase 3
-Last activity: 2026-07-05 — Phase 3 execution started
+Phase 3 (Auth Service & Access Codes): ✅ COMPLETE — 4/4 plans merged, verification 4/5 (03-VERIFICATION.md). run.auth ported to apps/auth/webapp; access-code→tier + login→token bridge; OIDC RS256 JWT tokens; kv CLI. JWKS signing key live in SSM; kmv-auth-electro seeded (demo/kphdemo123 + tiers). Criterion-3 no-access GUIDANCE deferred to Phase 5 (logic done); deployed E2E is a Phase-4 verification item.
+Phase 6 (Latency v2) + Phase 7 (KPH Knowledge Base): scoped, deferred (Phase 7 has a router/recorded-transcript design evolution captured in 07-DESIGN-NOTES.md)
+Status: Phases 1+2+3 complete; Phase 4 (Voice Service Deployed & Quota Enforcement) is next
+Last activity: 2026-07-05 — Phase 3 executed, verified, closed; KPHv1 voice clone swapped into pipeline.toml
+
+### Phase 4 handoff (the auth contract Phase 4 consumes)
+- JWT ACCESS token contract (pinned in 03-03-SUMMARY): issuer https://auth.klankermaker.ai/use1/api/oidc, jwks .../use1/api/oidc/jwks, aud https://voice.klankermaker.ai, RS256, scope voice, TTL 3600s, claims https://klankermaker.ai/tier_id (string, "no-access" default) + https://klankermaker.ai/group (string|null). Voice service uses PyJWT+PyJWKClient to validate offline.
+- Live: DynamoDB kmv-auth-authjs + kmv-auth-electro (ACTIVE, seeded); SSM /kmv/secrets/use1/oidc/jwks (RS256 JWK Set, kid kmv-oidc-m-zCTIi5).
+- Phase 4 will also: re-measure deployed voice-to-voice p50/p95 vs the ~1402ms local baseline (us-east-1 proximity expected to improve it), and build the usage table + quota enforcement (QUOT-01..05) against the tiers this phase defined.
 
 Progress: [░░░░░░░░░░] 0%
 
