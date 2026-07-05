@@ -221,10 +221,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
 });
 
-// NOTE (T-03-01 / AUTH-01): this still points at the direct-consumption
-// nodemailer callback, matching run.auth's ported behavior. Task 3 of this
-// plan replaces this link with the net-new /login/confirm interstitial so a
-// bare GET/prefetch by a corporate link-scanner cannot consume the token.
+// AUTH-01 / T-03-01: the primary button targets the net-new interstitial
+// /login/confirm page (src/app/(authlogin)/login/confirm/page.tsx) — NOT the
+// direct-consumption /api/auth/callback/nodemailer URL. A bare GET/prefetch
+// of /login/confirm by a corporate link-scanner renders the confirm button
+// only; it does NOT touch the callback, so the one-time token is never
+// consumed until the human explicitly clicks through. The numeric one-time
+// code fallback (typed into /login/verify) is unaffected.
 export function signupHTML(params: {
   url: any;
   host: any;
@@ -233,8 +236,7 @@ export function signupHTML(params: {
   token: string;
 }) {
   const { host, theme, token, email } = params;
-  // Construct callback URL with region prefix for multi-region deployment
-  const url = `${config.urls.baseUrl}/api/auth/callback/nodemailer?token=${token}&email=${email}&callbackUrl=${encodeURIComponent(config.urls.callbackPath)}`;
+  const url = `${config.urls.baseUrl}/login/confirm?token=${token}&email=${email}`;
   const escapedHost = host.replace(/\./g, "&#8203;.");
 
   const brandColor = "#686EA0";
