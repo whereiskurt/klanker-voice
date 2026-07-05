@@ -1,0 +1,23 @@
+{
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "kmv"
+        }
+      },
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::052251888500:role/kmv-github-deploy",
+          "arn:aws:iam::052251888500:role/kmv-github-readonly",
+          "arn:aws:iam::052251888500:role/kmv-github-release",
+          "arn:aws:iam::052251888500:role/kmv-github-terragrunt"
+        ]
+      },
+      "Sid": "AllowAssumeFromGitHubRoles"
+    }
+  ],
+  "Version": "2012-10-17"
+}
