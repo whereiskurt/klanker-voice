@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-05T01:53:06Z",
+  "config": {
+    "arm": "deepgram-flux",
+    "config_path": "configs/arm-c.toml",
+    "stt_provider": "deepgram-flux",
+    "stt_model": "flux-general-en",
+    "turn_strategy": null,
+    "llm_model": "claude-haiku-4-5",
+    "tts_model": "eleven_flash_v2_5"
+  },
+  "anchors": {
+    "vad_stop": "NULL under Flux: Deepgram Flux owns turn detection server-side (ExternalUserTurnStrategies); no local VAD runs, so VADUserStoppedSpeakingFrame never fires and there is no local VAD-stop anchor to measure from (RESEARCH Open Question 1).",
+    "stt_final": "STT service TTFB reported by pipecat metrics during the user-stop -> bot-start cycle (time to first transcription byte). OFTEN NULL: streaming STT reports TTFB at the first partial, while the user is still speaking \u2014 outside the measured cycle. The STT finalization wait is already included in vad_stop (user_turn_secs).",
+    "llm_ttft": "LLM service TTFB reported by pipecat metrics during the cycle (request start -> first streamed token).",
+    "tts_first_audio": "TTS service TTFB reported by pipecat metrics during the cycle (synthesis request -> first audio byte).",
+    "voice_to_voice": "UserBotLatencyObserver on_latency_measured: actual user silence (VAD stop_secs-adjusted) -> BotStartedSpeakingFrame. Observer clock \u2014 never comparable with eval-scenario within_ms budgets, which anchor on the harness's send (Pitfall 7)."
+  },
+  "first_bot_speech_ms": 921.5,
+  "turns": [],
+  "summary": {
+    "vad_stop": null,
+    "stt_final": null,
+    "llm_ttft": null,
+    "tts_first_audio": null,
+    "voice_to_voice": null
+  }
+}

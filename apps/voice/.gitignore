@@ -1,8 +1,11 @@
 # Secrets — never commit (D-09/D-10: SSM is the source of truth)
 .env
 
-# Run artifacts (rendered audio, per-run JSON)
+# Run artifacts (rendered audio, per-run JSON) — committed A/B verdicts live in docs/tuning/
 artifacts/
+
+# Per-scenario eval run logs (transient; the diffable record is docs/tuning/*.json)
+*.eval.log
 
 # Python
 .venv/

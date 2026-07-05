@@ -1,0 +1,45 @@
+# arm-c.toml — endpointing A/B arm C: Deepgram Flux (model-integrated end-of-turn).
+#
+# Full pipeline.toml clone differing ONLY in the [stt]/[turn] sections so arm
+# runs are diffable (plan 01-04 Task 1). Selected via:
+#   KLANKER_PIPELINE_CONFIG=configs/arm-c.toml uv run python bot.py -t eval
+#
+# Flux owns turn detection server-side: the service auto-installs
+# ExternalUserTurnStrategies, and factories.py REFUSES local turn strategies
+# for this arm by construction (RESEARCH Pitfall 3 — double endpointing).
+# The [turn] table below is ignored for this provider (config.py contract);
+# it is kept schema-identical so the arm files stay diffable.
+#
+# eager_eot_threshold stays 0.0 (disabled): it could not be measured on this
+# harness — under Flux the UserBotLatencyObserver records no turns (no local
+# VAD-stop frame to anchor on; RESEARCH Open Question 1), so an eager vs
+# non-eager voice-to-voice delta is unavailable here. Kept off as the
+# conservative default (Pitfall 4: eager trades speculative LLM spend for
+# latency). Revisit with a Flux-native observer (docs/TUNING.md). No
+# credential material, ever (D-09).
+
+[stt]
+provider = "deepgram-flux"
+model = "flux-general-en"
+
+[stt.flux]
+eot_threshold = 0.7             # Flux default; 0.5-0.9 (lower = faster, more false EOTs)
+eager_eot_threshold = 0.0       # 0 = disabled; nonzero trades LLM spend for latency
+
+[turn]                          # IGNORED for deepgram-flux (Flux owns turn detection)
+strategy = "smart_turn_v3"
+vad_stop_secs = 0.2
+user_speech_timeout = 0.6
+
+[llm]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+
+[tts]
+provider = "elevenlabs"
+model = "eleven_flash_v2_5"
+voice_id = ""                   # empty until the D-02 audition (plan 01-05)
+speed = 1.1
+
+[persona]
+prompt_path = "../prompts/concierge.md"   # relative to this file's directory (configs/)

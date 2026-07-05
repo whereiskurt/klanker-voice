@@ -1,0 +1,35 @@
+# arm-b.toml — endpointing A/B arm B: Nova-3 + SmartTurn v3 (the 1.5.0 default).
+#
+# Full pipeline.toml clone differing ONLY in the [stt]/[turn] sections so arm
+# runs are diffable (plan 01-04 Task 1). Selected via:
+#   KLANKER_PIPELINE_CONFIG=configs/arm-b.toml uv run python bot.py -t eval
+#
+# smart_turn_v3 matches the pipecat 1.5.0 default stop strategy, but
+# factories.py still sets it EXPLICITLY so the config is self-documenting
+# (RESEARCH Pitfall 2). No credential material, ever (D-09).
+
+[stt]
+provider = "deepgram-nova3"
+model = "nova-3-general"
+
+[stt.flux]                      # unused in this arm (only read for deepgram-flux)
+eot_threshold = 0.7
+eager_eot_threshold = 0.0
+
+[turn]
+strategy = "smart_turn_v3"
+vad_stop_secs = 0.2
+user_speech_timeout = 0.6
+
+[llm]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+
+[tts]
+provider = "elevenlabs"
+model = "eleven_flash_v2_5"
+voice_id = ""                   # empty until the D-02 audition (plan 01-05)
+speed = 1.1
+
+[persona]
+prompt_path = "../prompts/concierge.md"   # relative to this file's directory (configs/)
