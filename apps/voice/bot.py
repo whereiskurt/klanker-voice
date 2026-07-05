@@ -40,7 +40,7 @@ async def bot(runner_args: RunnerArguments):
     # Every session is measured (D-11): JSON artifact in artifacts/harness/
     # plus a console table at session end, with zero extra flags.
     worker = build_worker(built.pipeline, observers=[LatencyReportObserver(cfg)])
-    register_greet_first(transport, worker)
+    register_greet_first(transport, worker, built.context)
 
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
     await runner.add_workers(worker)

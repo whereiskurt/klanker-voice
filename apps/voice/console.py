@@ -44,7 +44,7 @@ async def main():
     runner = WorkerRunner(handle_sigint=True)
     await runner.add_workers(worker)
     # Terminal mode: no on_client_connected event — greet as soon as we start (D-04).
-    await greet_now(worker)
+    await greet_now(worker, built.context)
     await runner.run()
 
 
