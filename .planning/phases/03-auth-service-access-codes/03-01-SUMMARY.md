@@ -238,3 +238,9 @@ None beyond the plan's own threat model — no new network endpoints, auth paths
 ---
 *Phase: 03-auth-service-access-codes*
 *Completed: 2026-07-05*
+
+## Self-Check: PASSED
+
+- Created files verified present: `apps/auth/webapp/src/app/(authlogin)/login/confirm/page.tsx`, `apps/auth/webapp/src/app/api/health/route.ts`, `apps/auth/webapp/from-aws.tmpl`, `infra/terraform/live/site/services/auth/service.hcl`, this SUMMARY.md
+- Commits verified present in `git log --oneline --all`: `f8291f0` (RED), `bf99689` (port+trim+tables), `8114349` (confirm page GREEN), `c42462c` (this doc commit)
+- Live AWS state re-verified: `kmv-auth-authjs` and `kmv-auth-electro` both `TableStatus: ACTIVE` in us-east-1 via `aws dynamodb describe-table`
