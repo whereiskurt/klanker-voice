@@ -83,7 +83,7 @@ describe("resolveAccessCode (AUTH-03, AUTH-04)", () => {
   it("case policy: resolve('DEMO'-cased) matches a stored lowercase code", async () => {
     const { AccessCode, resolveAccessCode } = await import("../access-code");
     const code = uniqueCode("caseinsensitive");
-    await AccessCode.create({ code, tierId: "demo-tier", group: null as any }).go();
+    await AccessCode.create({ code, tierId: "demo-tier" }).go();
 
     const result = await resolveAccessCode(code.toUpperCase());
     expect(result.tierId).toBe("demo-tier");
