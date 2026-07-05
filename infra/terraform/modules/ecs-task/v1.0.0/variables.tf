@@ -40,6 +40,22 @@ variable "ecs_tasks" {
     task_role_arn      = optional(string, "")
     execution_role_arn = optional(string, "")
 
+    # Phase 4 (T-04-13): declarative least-privilege task-role statements.
+    # When non-empty, the module creates a DEDICATED IAM role for this task
+    # (scoped to exactly these statements) and uses it instead of any
+    # externally-injected task_role_arn (e.g. the shared per-cluster role
+    # from the ecs-cluster module) — see main.tf's task_role_arn selection.
+    task_role_policy_statements = optional(list(object({
+      sid       = optional(string, null)
+      actions   = list(string)
+      resources = optional(list(string), ["*"])
+      condition = optional(object({
+        test     = string
+        variable = string
+        values   = list(string)
+      }), null)
+    })), [])
+
     containers = list(object({
       name               = string
       image              = string
@@ -89,6 +105,13 @@ variable "ecs_tasks" {
       }), null)
 
       log_stream_prefix = optional(string, "ecs")
+
+      # Phase 4 (D-12/T-04-06): kernel sysctls, e.g. pinning aiortc's
+      # ephemeral UDP bind range to match the webrtc_udp security group.
+      system_controls = optional(list(object({
+        namespace = string
+        value     = string
+      })), [])
     }))
   }))
   description = "List of ECS task definitions"
