@@ -44,7 +44,7 @@
 
 ### Infrastructure
 
-- [ ] **INFR-01**: Terragrunt skeleton (site "kmv") provisions network, certs, ecs-cluster, ecr, dynamodb, secrets, email, github-oidc, ecs-task, ecs-service from the defcon.run.34 layout
+- [x] **INFR-01**: Terragrunt skeleton (site "kmv") provisions network, certs, ecs-cluster, ecr, dynamodb, secrets, email, github-oidc, ecs-task, ecs-service from the defcon.run.34 layout
 - [ ] **INFR-02**: voice.klankermaker.ai and auth.klankermaker.ai resolve with valid TLS via cross-account DNS (management zone)
 - [ ] **INFR-03**: WebRTC delta works deployed: public-IP Fargate tasks, wide UDP SG range, STUN-advertised srflx candidates — verified by a deployed ICE smoke test
 - [ ] **INFR-04**: SES production access and DKIM for klankermaker.ai (request started week 1)
@@ -111,7 +111,7 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | QUOT-03 | Phase 4 | Pending |
 | QUOT-04 | Phase 4 | Pending |
 | QUOT-05 | Phase 4 | Pending |
-| INFR-01 | Phase 2 | Pending |
+| INFR-01 | Phase 2 | Complete |
 | INFR-02 | Phase 2 | Pending |
 | INFR-03 | Phase 4 | Pending |
 | INFR-04 | Phase 2 | Pending |

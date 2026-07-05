@@ -4,15 +4,15 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 1
 current_phase_name: Local Pipeline & Latency Harness
-status: planning
+status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-07-04T22:48:01.186Z"
-last_activity: 2026-07-04
-last_activity_desc: Roadmap created (5 phases, 37/37 v1 requirements mapped)
+last_updated: "2026-07-05T00:30:23.163Z"
+last_activity: 2026-07-05
+last_activity_desc: Phase 1 execution started
 progress:
   total_phases: 5
   completed_phases: 0
-  total_plans: 0
+  total_plans: 12
   completed_plans: 0
   percent: 0
 ---
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-04)
 
 ## Current Position
 
-Phase: 1 of 5 (Local Pipeline & Latency Harness)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-07-04 — Roadmap created (5 phases, 37/37 v1 requirements mapped)
+Phase: 1 (Local Pipeline & Latency Harness) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 1
+Last activity: 2026-07-05 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02 P01 | 5 min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,8 @@ Recent decisions affecting current work:
 - Roadmap: 5-phase structure per research — local pipeline first (de-risks core value, zero infra dependency), infra parallel (SES clock), auth before voice (JWT/tier-claims contract is voice's hard dependency), client/hardening last
 - Roadmap: `kv` CLI has no standalone phase — grows incrementally in Phase 3 (code/tier CRUD) and Phase 4 (usage, kill-switch, smoke test)
 - Roadmap: INFR-03 (deployed ICE smoke test) and INFR-06 (autoscaling) live in Phase 4, not Phase 2 — only verifiable once the voice service is deployed
+- [Phase 02]: SGUID locked at 6e913c73 — state bucket/lock table tf-kmv-use1-6e913c73 live in 052251888500 — bootstrap-state.sh is the single source (Pitfall 3); same value must land in site.hcl random_suffix default (Plan 02) and gh repo var SGUID (Plan 06)
+- [Phase 02]: Apex DMARC via route 2: standalone _dmarc inline unit, make_site_domain=false — zone audit found zero apex mail records and no auth./voice. NS delegation collisions; route 1 would hijack apex inbound MX (Pitfall 6)
 
 ### Pending Todos
 
@@ -87,6 +90,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-04T22:48:01.177Z
+Last session: 2026-07-05T00:30:15.072Z
 Stopped at: Phase 2 context gathered
 Resume file: .planning/phases/02-infra-skeleton/02-CONTEXT.md
