@@ -178,6 +178,39 @@ resource "aws_security_group" "etherpad" {
   )
 }
 
+# Security Group: WebRTC UDP media
+# Wide ephemeral UDP ingress for browser<->task WebRTC media (aiortc binds
+# OS-ephemeral ports). Structure-only until a service attaches it; Phase 4
+# tightens the range (sysctl ip_local_port_range + narrow SG).
+resource "aws_security_group" "webrtc_udp" {
+  name        = "${var.region.label}.${var.dns.zonename}-webrtc-udp"
+  description = "WebRTC UDP media ingress for voice tasks"
+  vpc_id      = aws_vpc.vpc.id
+
+  ingress {
+    description = "WebRTC media UDP ephemeral range"
+    from_port   = 1024
+    to_port     = 65535
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(
+    var.vpc.tags,
+    {
+      Name = "${var.region.label}.${var.dns.zonename}-webrtc-udp"
+    }
+  )
+}
+
 # Security Group: NLB (MQTT)
 resource "aws_security_group" "nlb" {
   name        = "${var.region.label}.${var.dns.zonename}-mqtt-nlb"

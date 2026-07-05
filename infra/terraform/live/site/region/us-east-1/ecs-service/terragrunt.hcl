@@ -20,13 +20,8 @@ dependency "ecs_task" {
 
   mock_outputs = {
     task_definition_arns = {
-      "run-auth"       = "arn:aws:ecs:us-east-1:123456789012:task-definition/run-auth-use1-example-site:1"
-      "run-human"      = "arn:aws:ecs:us-east-1:123456789012:task-definition/run-human-use1-example-site:1"
-      "run-cms-master" = "arn:aws:ecs:us-east-1:123456789012:task-definition/run-cms-master-use1-example-site:1"
-      "run-cms-worker" = "arn:aws:ecs:us-east-1:123456789012:task-definition/run-cms-worker-use1-example-site:1"
-      "run-gpx"        = "arn:aws:ecs:us-east-1:123456789012:task-definition/run-gpx-use1-example-site:1"
-      "run-flash"      = "arn:aws:ecs:us-east-1:123456789012:task-definition/run-flash-use1-example-site:1"
-      "run-mqtt"       = "arn:aws:ecs:us-east-1:123456789012:task-definition/run-mqtt-use1-example-site:1"
+      "auth"  = "arn:aws:ecs:us-east-1:123456789012:task-definition/auth-use1-example-site:1"
+      "voice" = "arn:aws:ecs:us-east-1:123456789012:task-definition/voice-use1-example-site:1"
     }
   }
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy"]
@@ -54,10 +49,10 @@ dependency "certs" {
 
   mock_outputs = {
     cert_map = {
-      "mqtt.defcon.run" = {
-        arn                       = "arn:aws:acm:us-east-1:123456789012:certificate/mock-mqtt-cert"
-        domain_name               = "mqtt.defcon.run"
-        subject_alternative_names = ["*.mqtt.defcon.run"]
+      "voice.klankermaker.ai" = {
+        arn                       = "arn:aws:acm:us-east-1:123456789012:certificate/mock-voice-cert"
+        domain_name               = "voice.klankermaker.ai"
+        subject_alternative_names = ["*.voice.klankermaker.ai"]
         validation_method         = "DNS"
       }
     }
@@ -111,7 +106,8 @@ inputs = merge(
     alb_listener_arn   = try(dependency.network.outputs.alb_listener_arn, "")
     nlb_arn            = try(dependency.network.outputs.nlb_arn, "")
 
-    # Default certificate for NLB TLS listeners (mqtt.defcon.run cert covers MQTT service)
+    # Default certificate for NLB TLS listeners — no NLB/MQTT for this site;
+    # try() falls back to "" when no matching cert exists (safe no-op)
     nlb_default_certificate_arn = try(dependency.certs.outputs.cert_map["mqtt.${local.site_vars.locals.dns.zonename}"].arn, "")
   }
 )

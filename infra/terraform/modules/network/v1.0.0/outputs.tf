@@ -57,11 +57,12 @@ output "nat_eip_public_ip" {
 output "security_groups" {
   description = "Map of security group IDs by name"
   value = {
-    sshhttps  = aws_security_group.sshhttps.id
-    http_only = aws_security_group.http_only.id
-    postgres  = aws_security_group.postgres.id
-    etherpad  = aws_security_group.etherpad.id
-    nlb       = aws_security_group.nlb.id
+    sshhttps   = aws_security_group.sshhttps.id
+    http_only  = aws_security_group.http_only.id
+    postgres   = aws_security_group.postgres.id
+    etherpad   = aws_security_group.etherpad.id
+    nlb        = aws_security_group.nlb.id
+    webrtc_udp = aws_security_group.webrtc_udp.id
   }
 }
 
@@ -71,7 +72,8 @@ output "security_group_ids" {
   value = concat(
     [
       aws_security_group.sshhttps.id,
-      aws_security_group.http_only.id
+      aws_security_group.http_only.id,
+      aws_security_group.webrtc_udp.id
     ],
     var.nlb.enabled ? [aws_security_group.nlb.id] : []
   )
