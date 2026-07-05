@@ -108,6 +108,16 @@ class TestServiceBuilders:
         assert tts._settings.speed == 1.1
         assert tts._settings.voice == "voice-abc"
 
+    def test_tts_empty_voice_id_falls_back_to_interim_voice(self, stub_provider_keys):
+        # ElevenLabs WS rejects voice_id None (1008 policy violation) — an
+        # empty config voice_id must map to the documented interim premade
+        # voice, never to None, or TTS cannot speak at all (found live in
+        # plan 01-03; the D-02 audition in plan 01-05 lands the real voice).
+        from klanker_voice.factories import INTERIM_ELEVENLABS_VOICE_ID
+
+        tts = build_tts(_cfg(voice_id=""))
+        assert tts._settings.voice == INTERIM_ELEVENLABS_VOICE_ID
+
     def test_missing_api_key_fails_loudly(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):

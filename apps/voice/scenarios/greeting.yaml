@@ -1,0 +1,42 @@
+# greeting: K greets first (D-04) and speaks in persona (PIPE-06).
+#
+# User audio is synthesized locally by kokoro (deterministic cached WAVs played
+# through the real input path — no fourth API key, PIPE-07); the bot's actual
+# audio is transcribed locally by moonshine and judged by the Anthropic judge.
+#
+# NOTE (RESEARCH Pitfall 7): within_ms budgets measure the HARNESS clock (from
+# the turn's send/start), not the in-pipeline observer clock. They are
+# pass/fail plumbing only and never feed the D-11 latency table.
+name: greeting
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # Bot-first: no user turn — K must speak unprompted within 3s of connect.
+  - expect:
+      - event: tts_response
+        within_ms: 3000
+      - event: response
+        eval: >-
+          The bot introduces itself by name without being asked and invites
+          the user to ask it something. Its name is K (also KPH); the
+          speech-to-text pass often distorts a single spoken letter, so any
+          short name resembling K, Kay, or Kaye counts as introducing itself
+  # Identity/persona check: concierge that knows Kurt's world, not a generic
+  # assistant disclaimer.
+  - user: "Who made you, and what kind of things should I ask you about?"
+    expect:
+      - event: response
+        eval: >-
+          Answers in a playful concierge persona that is aware of Kurt and/or
+          his projects (the klanker platform, defcon run, his repos), and
+          suggests what to ask about; it is not a generic "I am an AI
+          assistant" boilerplate answer

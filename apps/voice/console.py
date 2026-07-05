@@ -24,6 +24,7 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from pipecat.workers.runner import WorkerRunner
 
 from klanker_voice.config import load_config
+from klanker_voice.observers import LatencyReportObserver
 from klanker_voice.pipeline import build_pipeline, build_worker, greet_now
 
 
@@ -36,12 +37,14 @@ async def main():
 
     cfg = load_config()  # KLANKER_PIPELINE_CONFIG-aware
     built = build_pipeline(cfg, transport)
-    worker = build_worker(built.pipeline)
+    # Terminal iteration gets numbers for free (D-11): JSON artifact +
+    # console table at session end, no extra flags.
+    worker = build_worker(built.pipeline, observers=[LatencyReportObserver(cfg)])
 
     runner = WorkerRunner(handle_sigint=True)
     await runner.add_workers(worker)
     # Terminal mode: no on_client_connected event — greet as soon as we start (D-04).
-    await greet_now(worker)
+    await greet_now(worker, built.context)
     await runner.run()
 
 

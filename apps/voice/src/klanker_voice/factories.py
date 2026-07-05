@@ -44,6 +44,15 @@ from klanker_voice.config import PipelineConfig
 
 FLUX_PROVIDER = "deepgram-flux"
 
+#: Interim ElevenLabs voice used while pipeline.toml's voice_id is "" (the
+#: D-02 three-voice audition in plan 01-05 lands the real one). The ElevenLabs
+#: WS API REJECTS a null voice_id outright (1008 policy violation, "A voice
+#: with voice_id None does not exist") — there is no server-side default, so
+#: an explicit premade voice is required for TTS to speak at all. Verified
+#: live against this account's key (premade "Rachel", available on every
+#: ElevenLabs account).
+INTERIM_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+
 
 def _require_env(name: str) -> str:
     value = os.environ.get(name)
@@ -94,8 +103,10 @@ def _build_tts_elevenlabs(cfg: PipelineConfig) -> ElevenLabsTTSService:
         api_key=_require_env("ELEVENLABS_API_KEY"),
         settings=ElevenLabsTTSService.Settings(
             model=cfg.tts.model,
-            # voice_id is "" until the D-02 audition lands one in config.
-            voice=cfg.tts.voice_id or None,
+            # voice_id is "" until the D-02 audition lands one in config;
+            # None is NOT accepted by the ElevenLabs WS API (no default
+            # voice), so fall back to the documented interim premade voice.
+            voice=cfg.tts.voice_id or INTERIM_ELEVENLABS_VOICE_ID,
             speed=cfg.tts.speed,
         ),
     )

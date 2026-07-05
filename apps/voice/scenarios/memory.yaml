@@ -1,0 +1,43 @@
+# memory: in-session recall across scripted turns (PIPE-03).
+#
+# Turn 3 only makes sense if turn 1 was remembered: the user gives a name up
+# front, changes the subject, then asks for the name back. All user turns are
+# deterministic kokoro-rendered audio through the real input path.
+#
+# NOTE (RESEARCH Pitfall 7): within_ms budgets (none set here — 60s default)
+# measure the harness clock; they never feed the D-11 latency table.
+name: memory
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) — just observe it.
+  - expect:
+      - event: tts_response
+  - user: "Hi K. My name is Marvin. Please remember my name."
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply addresses or mentions the user by the name
+          Marvin anywhere (for example "Hey Marvin" or "Got it, Marvin").
+          That alone is a pass: garbled transcription fragments, odd
+          phrasing, or unrelated content elsewhere in the reply must NOT
+          cause a no
+  # Subject change: recall must survive an unrelated turn.
+  - user: "Now tell me one quick thing about the klanker platform."
+    expect:
+      - event: response
+  - user: "One more thing. What is my name?"
+    expect:
+      - event: response
+        eval: >-
+          States that the user's name is Marvin (accept close speech-to-text
+          renderings of Marvin)

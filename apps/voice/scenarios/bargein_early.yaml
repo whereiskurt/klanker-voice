@@ -1,0 +1,56 @@
+# bargein_early: interrupt ~200ms after bot speech starts (PIPE-02, PITFALLS #3).
+#
+# send_after anchors on the latest tts_response — the harness's bot-speech
+# proxy (bot-tts-text is paced to audio playout), so the interrupting
+# utterance is injected through the real audio input path right as the bot's
+# first spoken sentence begins.
+#
+# Asserts: the interruption registers (user_started_speaking), the next bot
+# response arrives within a bounded window, and the judge checks the follow-up
+# is coherent with being cut off — context is truncated to words actually
+# spoken by the 1.5.0 built-in word-timestamp path (RESEARCH Pattern 5).
+#
+# NOTE (RESEARCH Pitfall 7): within_ms measures the harness clock — pass/fail
+# plumbing only; it never feeds the D-11 latency table.
+name: bargein_early
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # Greeting plays in audio mode (D-04) — observe it so the barge-in anchors
+  # on the provoked answer, not the greeting.
+  - expect:
+      - event: tts_response
+  # Provoke a long answer so there is something to interrupt.
+  - user: "Tell me the long version of the klanker story. Give me every detail you have."
+    expect:
+      - event: llm_started
+      - event: tts_response
+  # Interrupt almost immediately after bot speech starts.
+  - user: "Whoa, stop right there. Just give me the one sentence version."
+    send_after: { event: tts_response, delay_ms: 200 }
+    expect:
+      # The interrupt registering is asserted via its transcription: the raw
+      # user_started_speaking event can be dropped by the harness's own
+      # interruption discard (multi-burst utterances re-drain the event
+      # queue), while user_transcription is discard-proof and is strictly
+      # downstream of user-speech detection.
+      - event: user_transcription
+      - event: response
+        within_ms: 30000
+        eval: >-
+          Judge ONLY these two things and answer yes when both hold: (1) the
+          reply reacts to being cut off with something brief (a short version
+          of the answer or an acknowledgment, not another long monologue),
+          and (2) it does not restart or repeat the interrupted long answer
+          verbatim. Do NOT judge the quality, fluency, or completeness of the
+          short answer itself, and ignore transcription noise such as
+          fragmented abbreviations

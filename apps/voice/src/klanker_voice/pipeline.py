@@ -94,19 +94,34 @@ def build_worker(pipeline: Pipeline, *, observers: list | None = None) -> Pipeli
     )
 
 
-async def greet_now(worker: PipelineWorker) -> None:
-    """Queue an LLMRunFrame so K produces the greeting immediately (D-04)."""
+#: The canonical 1.5.0 greet kick (cli/templates/server/_macros/
+#: event_handlers.jinja2). Without this developer message the LLM run sees a
+#: system-only (or assistant-terminated) context and produces a "briefing
+#: acknowledgment" — or nothing at all on re-connects — instead of greeting
+#: (found live in plan 01-03).
+GREET_KICK_MESSAGE = {
+    "role": "developer",
+    "content": "Start by concisely introducing yourself.",
+}
+
+
+async def greet_now(worker: PipelineWorker, context: LLMContext) -> None:
+    """Kick the context and queue an LLMRunFrame so K greets immediately (D-04)."""
+    context.add_message(dict(GREET_KICK_MESSAGE))
     await worker.queue_frames([LLMRunFrame()])
 
 
-def register_greet_first(transport: BaseTransport, worker: PipelineWorker) -> None:
+def register_greet_first(
+    transport: BaseTransport, worker: PipelineWorker, context: LLMContext
+) -> None:
     """Greet the moment the connection lands (D-04, Pattern 6).
 
     Verified against the installed 1.5.0 CLI template
     (``cli/templates/server/_macros/event_handlers.jinja2``): the standard
-    handler queues ``LLMRunFrame`` on ``on_client_connected``. The eval
-    transport pre-suppresses greetings in text-mode scenarios before this
-    event fires, so the wiring is harness-compatible.
+    handler appends a developer kick message to the context and queues
+    ``LLMRunFrame`` on ``on_client_connected``. The eval transport
+    pre-suppresses greetings in text-mode scenarios before this event fires,
+    so the wiring is harness-compatible.
 
     Note: ``LocalAudioTransport`` (terminal mode) never fires
     ``on_client_connected`` — console.py calls :func:`greet_now` directly
@@ -115,4 +130,4 @@ def register_greet_first(transport: BaseTransport, worker: PipelineWorker) -> No
 
     @transport.event_handler("on_client_connected")
     async def _on_client_connected(transport, client):  # noqa: ANN001 — pipecat handler shape
-        await greet_now(worker)
+        await greet_now(worker, context)
