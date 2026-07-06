@@ -154,8 +154,55 @@ Plans:
   4. User can toggle a latency HUD showing per-stage pipeline latency
   5. User gets a clean session end and one-click reconnect that re-checks quota before reconnecting
 
-**Plans**: TBD
+**Plans**: 7 plans
 **UI hint**: yes
+
+Plans:
+**Wave 1** *(parallel: server + client scaffold, no file overlap)*
+
+- [ ] 05-01-PLAN.md — Server RTVI wiring (transcripts + bot/user speaking + audio levels) + composed per-turn latency emission + StaticFiles SPA mount (CLNT-03, CLNT-04, CLNT-06 server half)
+- [ ] 05-02-PLAN.md — Vite+TS+React scaffold + UI-SPEC design tokens + hero orb (WebGL2 shader + particle ring, winner A) with 2D fallback + attract landing + D-03 multi-stage Docker (CLNT-04)
+
+**Wave 2** *(depends on 05-02)*
+
+- [ ] 05-03-PLAN.md — authorization-code + PKCE sign-in (in-memory token) + callback route + no-access exclusive gate (CLNT-08)
+
+**Wave 3** *(depends on 05-01, 05-02, 05-03)*
+
+- [ ] 05-04-PLAN.md — Gesture-gated mic + distinct errors + SmallWebRTC connect (Bearer) + connection state machine + live orb reactivity + subtitle captions (CLNT-01, CLNT-02, CLNT-03, CLNT-04)
+
+**Wave 4** *(depends on 05-04)*
+
+- [ ] 05-05-PLAN.md — Escalating session countdown + toggleable latency HUD from kmv-latency RTVI messages (CLNT-05, CLNT-06)
+
+**Wave 5** *(depends on 05-05)*
+
+- [ ] 05-06-PLAN.md — Bounded retry → honest UDP-blocked wall + typed gate-rejection copy + clean end + quota-rechecked reconnect (CLNT-02, CLNT-07)
+
+**Wave 6** *(depends on 05-06)*
+
+- [ ] 05-07-PLAN.md — Mobile/iOS layout + a11y baseline + real-iPhone & restricted-network conference verification (CLNT-01…08)
+
+**Waves:** 1 → {05-01, 05-02}; 2 → {05-03}; 3 → {05-04}; 4 → {05-05}; 5 → {05-06}; 6 → {05-07}
+
+### Phase 05.1: Operator Admin Panel (INSERTED)
+
+**Goal**: The operator (KPH) can invite his dad + a few close friends (≤25 users) and glance at usage — a gated `/admin` section in the existing auth app showing users, sessions, minutes, quota trips, and code create/list/expire + kill-switch, so the first-look audience can be onboarded and watched without touching the CLI
+**Mode:** mvp
+**Depends on**: Phase 5 (voice client must exist to have sessions to observe)
+**Design spec**: docs/superpowers/specs/2026-07-06-admin-panel-design.md
+**Success Criteria** (what must be TRUE):
+
+  1. An `ADMIN_EMAILS`-allowlisted operator logs in via magic link (code-free) and reaches `/admin`; a non-allowlisted session gets 404 (route existence not advertised)
+  2. Operator sees a users list (email, tier, group, first/last seen, total sessions, total minutes) and per-user session detail (start, duration, quota trips, force-stop) — operational data only, NO transcripts (deferred to Phase 7)
+  3. Operator can create and expire access codes from the panel, producing DynamoDB writes byte-compatible with `kv code create/expire`
+  4. Operator can view and toggle the kill-switch from the panel
+
+**Plans**: TBD
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 05.1 to break down)
 
 ### Phase 6: Latency v2 (deferred — scoped 2026-07-05)
 
