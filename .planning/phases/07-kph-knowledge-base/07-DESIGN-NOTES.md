@@ -62,8 +62,38 @@ transcript is the SOURCE, not the pack — it needs ASR cleanup + per-topic dist
   (over-eager "let me dig in" on a one-liner question feels slow, not slick). (4) topic-map
   authoring/maintenance is ongoing — tie it to the manifest refresh command (D-07).
 
+## Amendment 2 — corpus depth + reply STYLE (2026-07-05, from Kurt mid-planning)
+
+Two new directions from Kurt while Phase 7 was being planned:
+
+**1. Corpus = the FULL codebases + docs, not just READMEs.** The klanker-maker and
+defcon.run.34 codebases and docs are "really good" — primary, high-signal knowledge worth a
+deep-learn pass to distill per-system packs + the topic map. Local sources:
+- **klanker-maker (`km`)** → `/Users/khundeck/working/klankrmkr` (~1,950 md files, has `docs/`)
+- **defcon.run.34** → `/Users/khundeck/working/defcon.run.34` (~283 md files, has `docs/`)
+- **meshtk** → `/Users/khundeck/working/meshtk` (~123 md files)
+
+  A capable model (Fable) can survey these and produce structured per-system digests + a
+  topic map. This is the concrete input to the router's per-topic deep packs (Amendment 1).
+
+**2. Replies must sound like KURT, not just be factually right.** Kurt will provide
+**transcripts of himself talking through a diagram**. These ground KPH's *speaking style*
+(phrasing, cadence, how he explains) — not only the facts. So the one recording/transcript
+now serves **THREE uses**: (a) KPHv1 ElevenLabs voice clone, (b) knowledge corpus,
+(c) **reply-style exemplar**.
+
+**Implication for the plan — two axes of grounding:**
+- **WHAT** (facts): per-topic factual packs distilled from repos + transcript → the
+  swappable deep-context layer the router selects.
+- **HOW-IT-SOUNDS** (style): a persona/style layer derived from Kurt's transcripts
+  (few-shot style exemplars or a distilled style guide) → lives in the **stable cached
+  prefix** alongside the router (it does NOT change per topic, so it stays cache-warm).
+
+  Planner: keep the style layer separate from the per-topic packs; the router prompt +
+  style layer are the always-loaded stable prefix, per-topic packs append after.
+
 ## Status
 
 Not scoped into a plan yet — Phase 7 is still at CONTEXT stage. When Phase 7 is planned,
-the planner should treat this note as a design amendment to 07-CONTEXT.md and reconcile
-D-10/D-11/D-13 accordingly. No code exists for any of this.
+the planner should treat this note (both amendments) as a design amendment to 07-CONTEXT.md
+and reconcile D-10/D-11/D-13 accordingly. No code exists for any of this.

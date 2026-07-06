@@ -602,10 +602,13 @@ used here has a documented deprecation as of this research date.
 | A3 | The ROADMAP.md "retrieval path" wording in success criterion 2 means the pre-baked long-version pack, not live tool-calling retrieval | User Constraints → Note on ROADMAP wording | Medium — if the planner reads it literally as live retrieval, that directly contradicts locked decision D-11; flagged explicitly for discuss-phase/planning to resolve in writing before task-level planning proceeds |
 | A4 | Keyword-first routing with a Haiku fallback (rather than an embedding classifier) is the right default given the three-key constraint | Architecture Patterns → Pattern 2 | Low-Medium — PIPE-07's three-key constraint is VERIFIED in code, but the specific keyword-vs-embedding tradeoff is engineering judgment; if keyword matching proves too brittle in practice, a same-vendor tiny-Haiku-only router (no embeddings) is the correct escalation, not a 4th vendor |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does ROADMAP.md success criterion 2's "retrieval path... from full repo content"
    mean something beyond D-10's pre-baked long-version pack?**
+   RESOLVED: 07-01 "Reconciliation note" — criterion 2 is satisfied by a bounded
+   classify-then-LOAD-a-pack (router picks a pre-baked per-topic deep pack), NOT open RAG.
+   ROADMAP wording flagged for a one-line correction; no retrieval infra built.
    - What we know: CONTEXT.md D-10/D-11 explicitly reject live retrieval/tool-calling;
      DESIGN-NOTES Amendment 1 frames the router as "lighter than RAG."
    - What's unclear: whether ROADMAP's specific phrase was written before D-10/D-11
@@ -617,6 +620,9 @@ used here has a documented deprecation as of this research date.
 2. **How many topics does the router need to size for at launch — 3 (Amendment 1's
    klanker-maker/defcon.run.34/meshtk) or 5 (this research brief's tiogo/kvmlab
    inclusion)?**
+   RESOLVED: 07-01 authors an N-topic-clean manifest/topic-map schema; 07-01 (km) + 07-02
+   (defcon.run.34 + meshtk) populate exactly the 3 confirmed topics for the MVP. tiogo/kvmlab
+   are a later manifest edit, not an architecture change.
    - What we know: Amendment 1 names exactly 3 confirmed-content-ready topics.
    - What's unclear: tiogo and kvmlab's content readiness — no manifest entries or
      corpus sources for them were found in this research pass.
@@ -626,6 +632,9 @@ used here has a documented deprecation as of this research date.
 
 3. **Where exactly does remaining-session-time (D-06 time-aware pacing) get injected
    without touching the cached stable prefix?**
+   RESOLVED: 07-04 Task 1 — `build_system_blocks(..., remaining_seconds)` PREPENDS a pacing
+   note to the uncached `system[1]` block (or a standalone post-breakpoint block for
+   hook-only topics), never `system[0]`; a test asserts block[0] byte-identity.
    - What we know: D-06 defers the injection mechanism to planner discretion; Pitfall 3
      establishes it must NOT go into `system[0]`.
    - What's unclear: whether it belongs in the topic-pack block (`system[1]`,
