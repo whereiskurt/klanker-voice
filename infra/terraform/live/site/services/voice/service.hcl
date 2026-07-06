@@ -107,6 +107,31 @@ locals {
           }
         ]
 
+        # Phase 4 (04-03 deploy checkpoint): inject the pipeline provider keys and
+        # the KV-05 smoke/service credential from SSM SecureStrings (D-09 no-secrets-
+        # in-code; execution role has ssm:GetParameters + kms:Decrypt). Issuer / JWKS
+        # URI / audience / STUN / config-path all default correctly in-app, so only
+        # these four need wiring. smoke_token is provisioned out-of-band (like the
+        # SOPS-seeded provider keys), not terraform-managed.
+        secrets = [
+          {
+            name      = "DEEPGRAM_API_KEY"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/deepgram/api_key"
+          },
+          {
+            name      = "ANTHROPIC_API_KEY"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/anthropic/api_key"
+          },
+          {
+            name      = "ELEVENLABS_API_KEY"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/elevenlabs/api_key"
+          },
+          {
+            name      = "KMV_SMOKE_SERVICE_TOKEN"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voice/smoke_token"
+          }
+        ]
+
         port_mappings = [
           {
             container_port = 7860
