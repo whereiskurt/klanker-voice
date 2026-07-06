@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "Phase 4 SHIPPED (merged to main, PR #2). Live at voice.klankermaker.ai. Next: Phase 5 browser client."
-last_updated: "2026-07-06T02:52:17.551Z"
+stopped_at: Phase 5 context gathered
+last_updated: "2026-07-06T03:18:37.702Z"
 last_activity: 2026-07-06
 last_activity_desc: "Phase 4 Plan 04 executed: race-safe quota enforcement (usage.ts/quota.py/session.py, start_gate, SessionLifecycle)"
 progress:
@@ -116,10 +116,10 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-**Resume file:** .planning/phases/04-voice-service-deployed-quota-enforcement/04-VERIFICATION.md
+**Resume file:** .planning/phases/05-browser-client-conference-readiness/05-CONTEXT.md
 
-Last session: 2026-07-06T02:52:17.543Z
-Stopped at: Phase 4 SHIPPED (merged to main, PR #2). Live at voice.klankermaker.ai. Next: Phase 5 browser client.
+Last session: 2026-07-06T03:18:37.693Z
+Stopped at: Phase 5 context gathered
 Resume: before executing 04-05-PLAN.md (idle teardown + spoken wind-down), be aware 04-04's `SessionLifecycle.on_warning`/`on_stop`/`on_daily_exhausted` are the named hook points already wired and tested — 04-05 fills their bodies (LLM-context injection at -30s, deterministic goodbye TTS at 0, then the actual transport teardown) rather than restructuring the timer. Also: close the Known Gap flagged above (voice task role IAM needs cross-table read on `kmv-auth-electro`) before any live-traffic verification of the quota gate — locally everything passes against dynamodb-local, but a real deployed `/api/offer` call will fail closed at `read_tier()` today.
 Also live/done this session: 04-03 Task 3 (deploy checkpoint) completed by the orchestrator — `kv smoke` PASS against the live `https://voice.klankermaker.ai` (ICE connected, host+srflx, 244 RTP packets; INFR-03/KV-05 verified live); 04-04 executed (usage.ts + quota.py + session.py — 3 tasks, 10 files, 32 new tests, 134/134 total pass; caught and fixed a test-isolation gap that had leaked 3 stray items into the real `kmv-voice-usage` table, cleaned up before commit).
 Note: git guard is a harmless `rm -f` wrapper in ~/.zshrc (footgun-prevention) — avoid `rm -f`/`-r` in non-interactive shells (use plain `rm`), git itself is fine.
