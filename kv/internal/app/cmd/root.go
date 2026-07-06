@@ -79,6 +79,7 @@ func NewRootCmd() *cobra.Command {
 
 	root.AddCommand(NewCodeCmd(cfg))
 	root.AddCommand(NewTierCmd(cfg))
+	root.AddCommand(NewSmokeCmd(cfg))
 
 	return root
 }
