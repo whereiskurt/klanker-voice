@@ -146,3 +146,13 @@ None for Tasks 1-2. Task 3 (deferred) requires:
 ---
 *Phase: 04-voice-service-deployed-quota-enforcement*
 *Tasks 1-2 completed: 2026-07-05 (Task 3 deferred to orchestrator)*
+
+## Self-Check: PASSED
+
+- FOUND: kv/internal/app/cmd/smoke.go
+- FOUND: kv/internal/app/cmd/root.go
+- FOUND: apps/voice/tests/test_smoke.py
+- FOUND: .planning/phases/04-voice-service-deployed-quota-enforcement/04-03-SUMMARY.md
+- FOUND commit: 7766e92 (Task 1)
+- FOUND commit: 927315f (Task 2)
+- FOUND commit: 035606c (this SUMMARY)
