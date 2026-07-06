@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Sketch 001 — Immersive Orb Stage · klanker-voice</title>
+<link rel="stylesheet" href="../themes/default.css" />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-ui);
+    color: var(--text-primary);
+    background: var(--stage-edge);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Variant tab bar (sketch chrome) ---- */
+  .tabs {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+    display: flex; gap: 2px; padding: 6px 8px;
+    background: rgba(4,5,10,0.66); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 12px;
+  }
+  .tabs button {
+    font: inherit; color: var(--text-secondary);
+    background: transparent; border: 1px solid transparent; border-radius: 8px;
+    padding: 6px 12px; cursor: pointer; transition: var(--motion-fast);
+  }
+  .tabs button:hover { color: var(--text-primary); }
+  .tabs button.active { color: var(--stage-core); background: var(--accent); font-weight: 600; }
+  .tabs .win { color: var(--accent); }
+  .tabs .spacer { flex: 1; }
+  .tabs .note { color: var(--text-interim); padding: 6px 4px; align-self: center; }
+
+  /* ---- The stage ---- */
+  .stage {
+    position: fixed; inset: 0;
+    background: radial-gradient(120% 120% at 50% 42%, var(--stage-core) 0%, var(--stage-edge) 70%);
+    display: none;
+  }
+  .stage.active { display: block; }
+
+  canvas.orb { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  canvas.orb-fx { z-index: 5; pointer-events: none; } /* particle-ring overlay above the shader orb */
+
+  /* ---- Overlays over the orb ---- */
+  .wordmark {
+    position: absolute; top: max(var(--lg), env(safe-area-inset-top)); left: var(--xl); z-index: 10;
+    font-size: var(--sz-label); letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-secondary); font-weight: 600;
+  }
+  .wordmark b { color: var(--text-primary); }
+
+  .countdown {
+    position: absolute; top: max(var(--lg), env(safe-area-inset-top)); right: var(--xl); z-index: 10;
+    display: flex; align-items: center; gap: var(--xs);
+    font-family: var(--font-mono); font-size: var(--sz-label);
+    color: var(--text-primary);
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--scrim); border: 1px solid var(--border-subtle); backdrop-filter: blur(10px);
+    transition: var(--motion-base);
+  }
+  .countdown .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .countdown.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 50%, var(--border-subtle)); }
+  .countdown.warn .dot { background: var(--amber); }
+  .countdown.crit { color: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 60%, var(--border-subtle));
+    animation: escalate 800ms ease-in-out infinite; }
+  .countdown.crit .dot { background: var(--destructive); }
+  @keyframes escalate { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.06); opacity: 0.82; } }
+
+  /* caption band — subtitle style, last exchange only */
+  .captions {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: calc(var(--3xl) + 84px); width: min(720px, calc(100% - var(--xl)));
+    z-index: 10; display: flex; flex-direction: column; gap: var(--md);
+    text-align: center; pointer-events: none;
+  }
+  .cap { display: flex; align-items: baseline; gap: var(--sm); justify-content: center;
+    font-size: var(--sz-body); line-height: 1.4; transition: var(--motion-base); }
+  .cap .who { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em;
+    padding: 2px 8px; border-radius: 6px; color: var(--text-secondary);
+    border: 1px solid var(--border-subtle); flex: none; }
+  .cap.agent .who { color: var(--stage-core); background: var(--accent); border-color: transparent; font-weight: 600; }
+  .cap .txt { color: var(--text-primary); }
+  .cap.interim .txt { color: var(--text-interim); font-style: italic; }
+  .cap.faded { opacity: 0.35; }
+
+  /* mic CTA — lower third, big hit area */
+  .cta-wrap { position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: max(var(--3xl), calc(env(safe-area-inset-bottom) + var(--3xl))); z-index: 12; text-align: center; }
+  .cta {
+    font: inherit; font-size: var(--sz-body); font-weight: 600; color: var(--stage-core);
+    background: var(--accent); border: none; cursor: pointer;
+    padding: 16px 32px; min-height: 56px; border-radius: 999px;
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent),
+                0 8px 40px color-mix(in srgb, var(--accent) 30%, transparent);
+    transition: var(--motion-fast);
+  }
+  .cta:hover { transform: translateY(-1px); box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 22%, transparent), 0 10px 48px color-mix(in srgb, var(--accent) 38%, transparent); }
+  .cta.secondary { background: transparent; color: var(--text-primary); border: 1px solid var(--border-subtle); box-shadow: none; }
+  .cta-sub { margin-top: var(--md); font-size: var(--sz-label); color: var(--text-secondary); }
+  .status-line { position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: max(var(--2xl), calc(env(safe-area-inset-bottom) + var(--lg))); z-index: 12;
+    font-family: var(--font-mono); font-size: var(--sz-label); color: var(--text-secondary); }
+
+  /* HUD toggle + panel */
+  .hud-toggle {
+    position: absolute; left: var(--lg); bottom: max(var(--lg), calc(env(safe-area-inset-bottom) + var(--sm))); z-index: 12;
+    display: flex; align-items: center; gap: var(--xs);
+    font-size: var(--sz-label); color: var(--text-secondary);
+    background: var(--scrim); border: 1px solid var(--border-subtle); border-radius: 999px;
+    padding: 8px 12px; cursor: pointer; backdrop-filter: blur(10px); transition: var(--motion-fast);
+  }
+  .hud-toggle:hover { color: var(--text-primary); }
+  .hud-panel {
+    position: absolute; left: var(--lg); bottom: 64px; z-index: 14;
+    width: 260px; padding: var(--md); border-radius: var(--radius);
+    background: var(--scrim); border: 1px solid var(--border-subtle); backdrop-filter: blur(16px);
+    font-family: var(--font-mono); font-size: var(--sz-label);
+    opacity: 0; transform: translateY(8px); pointer-events: none; transition: var(--motion-base);
+  }
+  .hud-panel.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  .hud-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border-subtle); }
+  .hud-row:last-child { border-bottom: none; }
+  .hud-row .k { color: var(--text-secondary); }
+  .hud-row .v { color: var(--text-primary); }
+  .hud-row.total .v { color: var(--accent); }
+
+  /* Gate / wall / end overlay cards */
+  .overlay {
+    position: absolute; inset: 0; z-index: 30; display: none;
+    align-items: center; justify-content: center; padding: var(--lg);
+    background: radial-gradient(120% 120% at 50% 42%, rgba(6,7,12,0.55), rgba(4,5,10,0.86));
+    backdrop-filter: blur(3px);
+  }
+  .overlay.open { display: flex; animation: cardin var(--motion-base); }
+  @keyframes cardin { from { opacity: 0; } to { opacity: 1; } }
+  .card {
+    width: min(440px, 100%); padding: var(--2xl) var(--lg);
+    background: var(--scrim); border: 1px solid var(--border-subtle); border-radius: var(--radius);
+    backdrop-filter: blur(20px); text-align: center;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+  }
+  .card .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: var(--md); }
+  .card.err .eyebrow { color: var(--destructive); }
+  .card h2 { font-size: var(--sz-display); font-weight: 600; line-height: 1.2; margin-bottom: var(--md);
+    letter-spacing: -0.01em; }
+  .card p { font-size: var(--sz-body); line-height: 1.5; color: var(--text-secondary); margin-bottom: var(--lg); }
+  .card .actions { display: flex; flex-direction: column; gap: var(--sm); align-items: center; }
+  .card .summary-min { font-family: var(--font-mono); color: var(--text-primary); }
+
+  /* ---- Demo control dock (sketch-only) ---- */
+  .dock {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 70;
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    padding: 8px 10px; background: rgba(4,5,10,0.82); backdrop-filter: blur(10px);
+    border-top: 1px solid var(--border-subtle); font-size: 12px;
+  }
+  .dock .grp { display: flex; gap: 4px; align-items: center; padding-right: 10px; margin-right: 4px;
+    border-right: 1px solid var(--border-subtle); }
+  .dock .grp:last-child { border-right: none; }
+  .dock label { color: var(--text-interim); margin-right: 4px; }
+  .dock button {
+    font: inherit; color: var(--text-secondary); background: transparent;
+    border: 1px solid var(--border-subtle); border-radius: 7px; padding: 5px 10px; cursor: pointer;
+    transition: var(--motion-fast);
+  }
+  .dock button:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+  .dock button.on { color: var(--stage-core); background: var(--accent); border-color: transparent; font-weight: 600; }
+  .dock .hint { color: var(--text-interim); margin-left: auto; }
+
+  @media (max-width: 640px) {
+    .wordmark, .countdown { }
+    .countdown { top: max(var(--lg), env(safe-area-inset-top)); right: 50%; transform: translateX(50%); }
+    .captions { bottom: calc(var(--2xl) + 96px); }
+    .card h2 { font-size: clamp(24px, 7vw, 32px); }
+  }
+</style>
+</head>
+<body>
+
+<!-- Variant tab bar -->
+<nav class="tabs" id="tabs">
+  <button data-variant="A" class="active">Variant A — Shader nebula + particle ring <span class="win">★</span></button>
+  <button data-variant="B">Variant B — Calm glow (fallback)</button>
+  <button data-variant="C">Variant C — Particle ring only</button>
+  <span class="spacer"></span>
+  <span class="note">Sketch 001 · immersive orb stage · press <b>H</b> for HUD</span>
+</nav>
+
+<!-- Three stages, one per variant, sharing chrome markup -->
+<div id="stages"></div>
+
+<!-- Demo control dock (not part of the product — lets you eyeball every state) -->
+<div class="dock">
+  <div class="grp">
+    <label>Orb state</label>
+    <button data-state="idle" class="on">idle</button>
+    <button data-state="listening">listening</button>
+    <button data-state="thinking">thinking</button>
+    <button data-state="speaking">speaking</button>
+    <button data-state="auto">▶ auto-cycle</button>
+  </div>
+  <div class="grp">
+    <label>Countdown</label>
+    <button data-cd="normal" class="on">1:47</button>
+    <button data-cd="warn">0:28 warn</button>
+    <button data-cd="crit">0:08 crit</button>
+  </div>
+  <div class="grp">
+    <label>Screens</label>
+    <button data-screen="none" class="on">live</button>
+    <button data-screen="noaccess">no-access</button>
+    <button data-screen="wall">UDP wall</button>
+    <button data-screen="end">session end</button>
+  </div>
+  <span class="hint">theme: 05-UI-SPEC tokens</span>
+</div>
+
+<script>
+// ------- shared stage chrome (built per variant) -------
+function stageMarkup(variant) {
+  return `
+  <div class="stage" data-variant="${variant}">
+    <canvas class="orb"></canvas>
+    <canvas class="orb orb-fx"></canvas>
+    <div class="wordmark">voice<b>.klankermaker.ai</b></div>
+    <div class="countdown"><span class="dot"></span><span class="cd-val">1:47</span> left</div>
+
+    <div class="captions">
+      <div class="cap agent"><span class="who">KPH</span><span class="txt cap-agent">Ask me about defcon.run or Kurt's repos.</span></div>
+      <div class="cap you interim"><span class="who">You</span><span class="txt cap-you">what's the fastest way to…</span></div>
+    </div>
+
+    <div class="status-line" style="display:none"></div>
+    <div class="cta-wrap">
+      <button class="cta">Tap to talk</button>
+      <div class="cta-sub">A live conversation with the KlankerMaker concierge.</div>
+    </div>
+
+    <div class="hud-toggle" title="Toggle latency HUD (H)">⌁ Latency</div>
+    <div class="hud-panel">
+      <div class="hud-row"><span class="k">STT</span><span class="v">142 ms</span></div>
+      <div class="hud-row"><span class="k">LLM · TTFT</span><span class="v">318 ms</span></div>
+      <div class="hud-row"><span class="k">TTS · 1st-audio</span><span class="v">76 ms</span></div>
+      <div class="hud-row total"><span class="k">voice → voice p50</span><span class="v">1.40 s</span></div>
+    </div>
+
+    <!-- overlays -->
+    <div class="overlay ov-noaccess">
+      <div class="card">
+        <div class="eyebrow">Exclusive demo</div>
+        <h2>You're on the list — almost.</h2>
+        <p>This is an exclusive demo — Kurt needs to give you access. You'll need an access code to start a conversation.</p>
+        <div class="actions">
+          <button class="cta">How to get a code</button>
+          <button class="cta secondary">Sign out</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay ov-wall">
+      <div class="card err">
+        <div class="eyebrow">Connection blocked</div>
+        <h2>This network blocks the audio channel.</h2>
+        <p>Some Wi-Fi networks block the live-audio connection. Try switching to cellular or a personal hotspot.</p>
+        <div class="actions"><button class="cta">Try again</button></div>
+      </div>
+    </div>
+
+    <div class="overlay ov-end">
+      <div class="card">
+        <div class="eyebrow">Session complete</div>
+        <h2>Nice talking with you.</h2>
+        <p>That session's done — <span class="summary-min">2:00 spoken.</span></p>
+        <div class="actions">
+          <button class="cta">Reconnect</button>
+          <button class="cta secondary">Sign out</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+const VARIANTS = ["A", "B", "C"];
+document.getElementById("stages").innerHTML = VARIANTS.map(stageMarkup).join("");
+
+// ------- state -------
+const STATE_COLORS = {
+  idle:      [0.176, 0.886, 0.784], // #2DE2C8
+  listening: [0.306, 0.659, 1.0],   // #4EA8FF
+  thinking:  [0.545, 0.486, 0.965], // #8B7CF6
+  speaking:  [0.204, 0.961, 0.816], // #34F5D0
+};
+const CAPTIONS = {
+  idle:      { agent: "Ask me about defcon.run or Kurt's repos.", you: "", interim: true },
+  listening: { agent: "Ask me about defcon.run or Kurt's repos.", you: "what's the fastest way to get on defcon dot run", interim: true },
+  thinking:  { agent: "Ask me about defcon.run or Kurt's repos.", you: "what's the fastest way to get on defcon.run?", interim: false },
+  speaking:  { agent: "Easiest path is the access code Kurt hands out — it maps straight to a tier.", you: "what's the fastest way to get on defcon.run?", interim: false },
+};
+
+let current = { variant: "A", state: "idle", auto: false, target: 0, amp: 0 };
+let autoTimer = null;
+
+function setVariant(v) {
+  current.variant = v;
+  document.querySelectorAll(".stage").forEach(s => s.classList.toggle("active", s.dataset.variant === v));
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.variant === v));
+}
+function activeStage() { return document.querySelector(`.stage[data-variant="${current.variant}"]`); }
+
+function setState(st) {
+  current.state = st;
+  document.querySelectorAll('.dock [data-state]').forEach(b => b.classList.toggle("on", b.dataset.state === st));
+  // update captions on the active stage
+  document.querySelectorAll(".stage").forEach(stage => {
+    const c = CAPTIONS[st];
+    const you = stage.querySelector(".cap.you");
+    const youTxt = stage.querySelector(".cap-you");
+    const agentTxt = stage.querySelector(".cap-agent");
+    agentTxt.textContent = c.agent;
+    if (!c.you) { you.style.display = "none"; }
+    else { you.style.display = ""; youTxt.textContent = c.you; you.classList.toggle("interim", c.interim); }
+    // agent caption is "live" (accent) only while speaking
+    stage.querySelector(".cap.agent").classList.toggle("faded", st === "listening");
+  });
+}
+
+function setCountdown(kind) {
+  document.querySelectorAll('.dock [data-cd]').forEach(b => b.classList.toggle("on", b.dataset.cd === kind));
+  const map = { normal: ["1:47", ""], warn: ["0:28", "warn"], crit: ["0:08", "crit"] };
+  const [val, cls] = map[kind];
+  document.querySelectorAll(".countdown").forEach(cd => {
+    cd.classList.remove("warn", "crit");
+    if (cls) cd.classList.add(cls);
+    cd.querySelector(".cd-val").textContent = val;
+  });
+}
+
+function setScreen(name) {
+  document.querySelectorAll('.dock [data-screen]').forEach(b => b.classList.toggle("on", b.dataset.screen === name));
+  document.querySelectorAll(".stage").forEach(stage => {
+    stage.querySelector(".ov-noaccess").classList.toggle("open", name === "noaccess");
+    stage.querySelector(".ov-wall").classList.toggle("open", name === "wall");
+    stage.querySelector(".ov-end").classList.toggle("open", name === "end");
+  });
+}
+
+// HUD toggle (per stage) + H key
+function toggleHud() {
+  const p = activeStage().querySelector(".hud-panel");
+  p.classList.toggle("open");
+}
+document.addEventListener("keydown", e => { if (e.key.toLowerCase() === "h") toggleHud(); });
+document.querySelectorAll(".hud-toggle").forEach(t => t.addEventListener("click", toggleHud));
+
+// dock wiring
+document.querySelectorAll('.dock [data-state]').forEach(b => b.addEventListener("click", () => {
+  if (b.dataset.state === "auto") { current.auto = !current.auto; b.classList.toggle("on", current.auto);
+    if (current.auto) startAuto(); else stopAuto(); return; }
+  current.auto = false; stopAuto();
+  document.querySelector('.dock [data-state="auto"]').classList.remove("on");
+  setState(b.dataset.state);
+}));
+document.querySelectorAll('.dock [data-cd]').forEach(b => b.addEventListener("click", () => setCountdown(b.dataset.cd)));
+document.querySelectorAll('.dock [data-screen]').forEach(b => b.addEventListener("click", () => setScreen(b.dataset.screen)));
+document.querySelectorAll("#tabs [data-variant]").forEach(b => b.addEventListener("click", () => setVariant(b.dataset.variant)));
+
+function startAuto() {
+  const seq = ["idle", "listening", "thinking", "speaking"];
+  let i = 0;
+  const step = () => { setState(seq[i % seq.length]); i++; };
+  step();
+  autoTimer = setInterval(step, 2600);
+}
+function stopAuto() { if (autoTimer) clearInterval(autoTimer); autoTimer = null; }
+
+// ------- amplitude envelope (simulated; real client uses RTVI RMS) -------
+let t0 = performance.now();
+function ampFor(state, tSec) {
+  // fast attack ~60ms / slow release ~180ms feel is approximated by the envelope shape
+  if (state === "listening") { // spiky, voice-like
+    const s = Math.sin(tSec * 9.0) * 0.5 + 0.5;
+    const s2 = Math.sin(tSec * 21.0 + 1.3) * 0.5 + 0.5;
+    return Math.min(1, 0.15 + 0.7 * s * s2 * (0.6 + 0.4 * Math.sin(tSec * 2.1)));
+  }
+  if (state === "speaking") { // confident, smoother swells
+    const s = Math.sin(tSec * 5.5) * 0.5 + 0.5;
+    return 0.35 + 0.5 * Math.pow(s, 1.5);
+  }
+  if (state === "thinking") return 0.12 + 0.05 * (Math.sin(tSec * 1.2) * 0.5 + 0.5); // internal churn only
+  return 0.06 + 0.04 * (Math.sin(tSec * 0.9) * 0.5 + 0.5); // idle breathe
+}
+
+// =====================================================================
+// Variant A — WebGL2 fragment-shader nebula orb (the recommended path)
+// =====================================================================
+function initShaderOrb(canvas, fxCanvas) {
+  const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+  if (!gl) return initGlowOrb(canvas, { churn: 0.9 }); // graceful fallback
+  const particles = fxCanvas ? makeParticleLayer(fxCanvas, { overlay: true }) : null; // C's ring, layered over A
+  const vsrc = `attribute vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }`;
+  const fsrc = `
+  precision highp float;
+  uniform vec2 uRes; uniform float uTime; uniform float uAmp; uniform vec3 uColor;
+  // hash + simplex-ish value noise
+  float hash(vec3 p){ p=fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+  float noise(vec3 x){ vec3 i=floor(x); vec3 f=fract(x); f=f*f*(3.0-2.0*f);
+    return mix(mix(mix(hash(i+vec3(0,0,0)),hash(i+vec3(1,0,0)),f.x),
+                   mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+               mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),
+                   mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
+  float fbm(vec3 p){ float v=0.,a=0.5; for(int i=0;i<5;i++){ v+=a*noise(p); p*=2.03; a*=0.5;} return v; }
+  void main(){
+    vec2 uv=(gl_FragCoord.xy-0.5*uRes)/min(uRes.x,uRes.y);
+    float t=uTime*0.25;
+    float r=length(uv);
+    // domain-warped radius so the rim breathes organically
+    vec3 q=vec3(uv*2.2, t);
+    float warp=fbm(q + fbm(q+ t)*0.6);
+    float base=0.34 + uAmp*0.13;                    // radius pulse ±
+    float edge=base + (warp-0.5)*(0.10+uAmp*0.12);  // noisy rim, amplitude-driven
+    // core disk
+    float core=smoothstep(edge, edge-0.14, r);
+    // bloom / halo
+    float bloom=exp(-max(r-edge,0.0)*(7.0-uAmp*2.5));
+    float inner=smoothstep(0.0, edge, edge-r)*0.6;
+    vec3 col=uColor*(core*1.0 + inner*0.7) + uColor*bloom*(0.55+uAmp*0.6);
+    // hot center
+    col += vec3(1.0)*core*smoothstep(0.16,0.0,r)*(0.10+uAmp*0.25);
+    // subtle noise texture inside the orb
+    col *= 0.82 + 0.30*fbm(vec3(uv*5.0, t*2.0));
+    // vignette into the stage
+    col *= smoothstep(1.15, 0.2, r);
+    gl_FragColor=vec4(col, 1.0);
+  }`;
+  function sh(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); return s; }
+  const prog=gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, vsrc));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fsrc.replace(/gl_FragColor/g,'gl_FragColor')));
+  gl.linkProgram(prog); gl.useProgram(prog);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  const loc=gl.getAttribLocation(prog,"p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  const uRes=gl.getUniformLocation(prog,"uRes"), uTime=gl.getUniformLocation(prog,"uTime"),
+        uAmp=gl.getUniformLocation(prog,"uAmp"), uColor=gl.getUniformLocation(prog,"uColor");
+  let smoothColor=[...STATE_COLORS.idle];
+  return {
+    draw(state, amp) {
+      const dpr=Math.min(window.devicePixelRatio||1, 2);
+      const w=canvas.clientWidth*dpr, h=canvas.clientHeight*dpr;
+      if (canvas.width!==w||canvas.height!==h){ canvas.width=w; canvas.height=h; }
+      gl.viewport(0,0,canvas.width,canvas.height);
+      const tgt=STATE_COLORS[state];
+      for(let i=0;i<3;i++) smoothColor[i]+=(tgt[i]-smoothColor[i])*0.05; // 600ms-ish morph
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.uniform1f(uTime, (performance.now()-t0)/1000);
+      gl.uniform1f(uAmp, amp);
+      gl.uniform3f(uColor, smoothColor[0], smoothColor[1], smoothColor[2]);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (particles) particles.draw(state, amp); // orbiting ring on top of the plasma orb
+    }
+  };
+}
+
+// =====================================================================
+// Variant B — Canvas2D calm radial glow (the mandatory reduced-motion fallback)
+// =====================================================================
+function initGlowOrb(canvas, opts={}) {
+  const ctx = canvas.getContext("2d");
+  let smoothColor=[...STATE_COLORS.idle];
+  const rgb = c => `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`;
+  const rgba = (c,a) => `rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},${a})`;
+  return {
+    draw(state, amp) {
+      const dpr=Math.min(window.devicePixelRatio||1, 2);
+      const w=canvas.clientWidth, h=canvas.clientHeight;
+      if (canvas.width!==w*dpr||canvas.height!==h*dpr){ canvas.width=w*dpr; canvas.height=h*dpr; }
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      ctx.clearRect(0,0,w,h);
+      const cx=w/2, cy=h*0.42;
+      const tgt=STATE_COLORS[state];
+      for(let i=0;i<3;i++) smoothColor[i]+=(tgt[i]-smoothColor[i])*0.05;
+      const R=Math.min(w,h)*0.20*(1+amp*0.12);
+      // outer halo
+      let g=ctx.createRadialGradient(cx,cy,R*0.2,cx,cy,R*3.4);
+      g.addColorStop(0, rgba(smoothColor, 0.5+amp*0.35));
+      g.addColorStop(0.4, rgba(smoothColor, 0.12));
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(cx,cy,R*3.4,0,Math.PI*2); ctx.fill();
+      // core
+      let c2=ctx.createRadialGradient(cx,cy-R*0.15,R*0.1,cx,cy,R);
+      c2.addColorStop(0, "rgba(255,255,255,"+(0.5+amp*0.3)+")");
+      c2.addColorStop(0.5, rgb(smoothColor));
+      c2.addColorStop(1, rgba(smoothColor, 0.5));
+      ctx.fillStyle=c2; ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.fill();
+    }
+  };
+}
+
+// =====================================================================
+// Particle ring — shared. Variant C uses it WITH a solid core; Variant A
+// layers it (ring only, subtler) over the shader orb as the synthesis.
+// =====================================================================
+function makeParticleLayer(canvas, opts={}) {
+  const overlay = !!opts.overlay;          // true = ring only, tuned to sit over the plasma orb
+  const ctx = canvas.getContext("2d");
+  let smoothColor=[...STATE_COLORS.idle];
+  const N = overlay ? 120 : 140;
+  const parts=Array.from({length:N},(_,i)=>({ a:(i/N)*Math.PI*2, r:0.8+Math.random()*0.4, sp:0.2+Math.random()*0.5, sz:0.6+Math.random()*1.8 }));
+  const rgba=(c,a)=>`rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},${a})`;
+  return {
+    draw(state, amp) {
+      const dpr=Math.min(window.devicePixelRatio||1,2);
+      const w=canvas.clientWidth,h=canvas.clientHeight;
+      if (canvas.width!==w*dpr||canvas.height!==h*dpr){ canvas.width=w*dpr; canvas.height=h*dpr; }
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      ctx.clearRect(0,0,w,h);            // transparent — overlay lets the shader show through
+      const cx=w/2, cy=h*0.42, base=Math.min(w,h)*0.16;
+      const tgt=STATE_COLORS[state]; for(let i=0;i<3;i++) smoothColor[i]+=(tgt[i]-smoothColor[i])*0.05;
+      const tt=(performance.now()-t0)/1000;
+      if (!overlay) {                     // Variant C: own solid core
+        let cg=ctx.createRadialGradient(cx,cy,base*0.1,cx,cy,base*(1+amp*0.15));
+        cg.addColorStop(0,"rgba(255,255,255,"+(0.4+amp*0.3)+")");
+        cg.addColorStop(0.6, rgba(smoothColor,0.9));
+        cg.addColorStop(1, rgba(smoothColor,0));
+        ctx.fillStyle=cg; ctx.beginPath(); ctx.arc(cx,cy,base*(1+amp*0.15),0,Math.PI*2); ctx.fill();
+      }
+      // orbiting particles pushed out by amplitude
+      ctx.globalCompositeOperation="lighter";
+      const ringMin = overlay ? 1.55 : 1.3;   // sit just outside the plasma rim in overlay mode
+      const alphaK  = overlay ? 0.42 : 0.6;    // a touch dimmer so it accents, not overwhelms
+      for(const p of parts){
+        const ring=base*(ringMin + p.r*(0.5 + amp*1.1));
+        const ang=p.a + tt*p.sp*(state==="thinking"?1.6:0.6);
+        const x=cx+Math.cos(ang)*ring, y=cy+Math.sin(ang)*ring*0.92;
+        const a=0.22+amp*alphaK;
+        ctx.fillStyle=rgba(smoothColor, a*(0.4+p.r*0.6));
+        ctx.beginPath(); ctx.arc(x,y,p.sz*(1+amp),0,Math.PI*2); ctx.fill();
+      }
+      ctx.globalCompositeOperation="source-over";
+    }
+  };
+}
+
+// ------- bind renderers to each stage canvas -------
+const renderers = {};
+VARIANTS.forEach(v => {
+  const stage = document.querySelector(`.stage[data-variant="${v}"]`);
+  const canvas = stage.querySelector(".orb:not(.orb-fx)");
+  const fx = stage.querySelector(".orb-fx");
+  renderers[v] = v==="A" ? initShaderOrb(canvas, fx)          // shader + particle-ring overlay (synthesis)
+              : v==="B" ? initGlowOrb(canvas)
+              : makeParticleLayer(canvas);                     // Variant C: core + ring
+});
+
+// ------- main loop (only active variant draws) -------
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function frame() {
+  const tSec=(performance.now()-t0)/1000;
+  const targetAmp = ampFor(current.state, tSec);
+  // EMA smoothing: fast attack / slow release
+  const k = targetAmp > current.amp ? 0.25 : 0.06;
+  current.amp += (targetAmp - current.amp) * k;
+  const r = renderers[current.variant];
+  if (r) r.draw(current.state, reduce ? current.amp*0.4 : current.amp);
+  requestAnimationFrame(frame);
+}
+
+// init
+setVariant("A"); setState("idle"); setCountdown("normal"); setScreen("none");
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

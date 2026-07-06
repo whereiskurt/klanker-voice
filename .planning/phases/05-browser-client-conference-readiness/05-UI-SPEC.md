@@ -153,6 +153,15 @@ geometry — but default to raw WebGL2 for footprint. **Mandatory fallback:** no
 
 State color morph: **600ms** ease (see motion tokens); never a hard cut.
 
+**Sketch-locked treatment (user, 2026-07-05 — sketch 001, winner A):** the orb is the WebGL2
+shader plasma orb **plus an orbiting particle-ring overlay**. The ring is a transparent Canvas2D
+layer above the shader canvas: particles orbit just outside the plasma rim (~1.55× core radius),
+`lighter` blend, tuned dimmer than a standalone ring so it accents rather than competes;
+particle orbital speed increases in the *thinking* state; the ring shares the orb's per-state
+color morph. Fallback (no-WebGL / reduced-motion): drop the ring with the shader and use the 2D
+radial-glow. See `.planning/sketches/001-immersive-orb-stage/` (README + index.html) for the
+reference implementation the executor should port to `apps/voice/client/`.
+
 ---
 
 ## Stage Layout & Composition

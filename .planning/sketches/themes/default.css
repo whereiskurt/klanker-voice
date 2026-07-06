@@ -1,0 +1,44 @@
+/* klanker-voice — sketch theme
+   Tokens lifted verbatim from 05-UI-SPEC.md (approved 2026-07-05).
+   Immersive orb-first dark stage. 60/30/10 split, nothing competes with the orb. */
+
+:root {
+  /* --- Color: stage / overlays / accent / destructive --- */
+  --stage-core: #06070C;      /* dominant 60% — center of radial */
+  --stage-edge: #04050A;      /* dominant 60% — edge of radial */
+  --overlay:    #10121C;      /* secondary 30% — cards, HUD, walls (used @0.72 + blur) */
+  --accent:     #2DE2C8;      /* accent 10% — reserved list only */
+  --destructive:#FF5A5F;      /* UDP wall, mic-denied, <10s countdown */
+  --amber:      #F5A623;      /* countdown warning band */
+
+  /* --- Neutral text ramp --- */
+  --text-primary:   #E6E8EF;  /* final captions, headlines (>=7:1) */
+  --text-secondary: #A6ABBD;  /* body, HUD labels */
+  --text-interim:   #7C8296;  /* interim caption text — provisional gray */
+  --border-subtle:  #232636;  /* hairlines, dividers, pill stroke */
+
+  /* --- Orb state colors (core + halo) --- */
+  --orb-idle:      #2DE2C8;
+  --orb-listening: #4EA8FF;
+  --orb-thinking:  #8B7CF6;
+  --orb-speaking:  #34F5D0;
+
+  /* --- Spacing scale (4-based) --- */
+  --xs: 4px; --sm: 8px; --md: 16px; --lg: 24px; --xl: 32px; --2xl: 48px; --3xl: 64px;
+
+  /* --- Typography --- */
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  --sz-display: 32px; --sz-heading: 20px; --sz-body: 16px; --sz-label: 13px;
+  --w-regular: 400; --w-semibold: 600;
+
+  /* --- Motion tokens --- */
+  --motion-instant: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-fast:    200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-base:    320ms cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-orb-morph: 600ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --- Surfaces --- */
+  --scrim: color-mix(in srgb, var(--overlay) 72%, transparent);
+  --radius: 16px;
+}
