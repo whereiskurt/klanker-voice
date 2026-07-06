@@ -63,6 +63,11 @@ export interface CreateVoiceSessionOptions {
   /** Additional RTVI callbacks (transcripts, audio levels, speaking, etc.) --
    * merged with this module's own CONNECTED/DISCONNECTED/error wiring. */
   rtvi?: RTVIEventCallbacks;
+  /** Fired once with the tier `session_max_seconds` the `/api/offer`
+   * response carries (CLNT-05, D-10) -- the JWT itself only carries
+   * `tier_id`, not the numeric cap, so the connect flow's own answer is the
+   * one source for the client countdown (05-05 key_link). Display only. */
+  onSessionMax?: (sessionMaxSeconds: number) => void;
 }
 
 /**
@@ -99,8 +104,13 @@ export interface CreateVoiceSessionOptions {
  * either way) -- but 05-06 should confirm this live and consider hardening
  * further if it proves user-visible.
  */
+function readSessionMaxSeconds(body: unknown): number | null {
+  const value = (body as { session_max_seconds?: unknown } | null)?.session_max_seconds;
+  return typeof value === "number" ? value : null;
+}
+
 export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSession {
-  const { getToken, onEvent, rtvi } = options;
+  const { getToken, onEvent, rtvi, onSessionMax } = options;
 
   const transport = new SmallWebRTCTransport({
     webrtcRequestParams: buildConnectParams(getToken()),
@@ -139,17 +149,33 @@ export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSes
 
       window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         const response = await originalFetch(input, init);
-        if (!settled && !response.ok && isOfferRequest(input, init)) {
-          settled = true;
-          window.fetch = originalFetch;
-          const rejection = await parseRejection(response);
-          onEvent({ type: "OFFER_REJECTED", rejection });
-          // Stop the vendor client's silent retry loop -- it doesn't know
-          // the reject is final (see docstring above).
-          void client.disconnect().catch(() => {
-            /* already tearing down; nothing to recover */
-          });
-          resolve();
+        if (isOfferRequest(input, init)) {
+          if (!settled && !response.ok) {
+            settled = true;
+            window.fetch = originalFetch;
+            const rejection = await parseRejection(response);
+            onEvent({ type: "OFFER_REJECTED", rejection });
+            // Stop the vendor client's silent retry loop -- it doesn't know
+            // the reject is final (see docstring above).
+            void client.disconnect().catch(() => {
+              /* already tearing down; nothing to recover */
+            });
+            resolve();
+          } else if (response.ok && onSessionMax) {
+            // Non-blocking peek at the answer body for the CLNT-05 countdown
+            // cap (see `onSessionMax` docstring) -- never consumes/mutates
+            // the response the vendor transport still needs to read.
+            void response
+              .clone()
+              .json()
+              .then((body: unknown) => {
+                const sessionMax = readSessionMaxSeconds(body);
+                if (sessionMax != null) onSessionMax(sessionMax);
+              })
+              .catch(() => {
+                /* non-JSON/odd body -- countdown simply won't render, not fatal */
+              });
+          }
         }
         return response;
       };

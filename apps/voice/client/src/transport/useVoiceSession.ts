@@ -17,6 +17,11 @@ export interface UseVoiceSessionResult {
   /** The live RTVI client once connecting has begun -- Task 3 subscribes
    * orb/caption bindings to this via `client.on(RTVIEvent.X, handler)`. */
   client: PipecatClient | null;
+  /** The tier session_max_seconds carried back on the `/api/offer` answer
+   * (CLNT-05, D-10); `null` until it arrives (near-immediate -- same
+   * response the pipeline connects from) or if this connect never reached
+   * that point. */
+  sessionMaxSeconds: number | null;
   /** Gesture-gated: call this from the "Tap to talk" handler, never on mount. */
   start: () => Promise<void>;
   stop: () => Promise<void>;
@@ -33,6 +38,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const [outcome, setOutcome] = useState<ConnectionOutcome>(INITIAL_CONNECTION_OUTCOME);
   const [micError, setMicError] = useState<MicError | null>(null);
   const [client, setClient] = useState<PipecatClient | null>(null);
+  const [sessionMaxSeconds, setSessionMaxSeconds] = useState<number | null>(null);
   const sessionRef = useRef<VoiceSession | null>(null);
 
   const dispatch = useCallback((event: ConnectionEvent) => {
@@ -41,6 +47,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
   const start = useCallback(async () => {
     setMicError(null);
+    setSessionMaxSeconds(null);
     dispatch({ type: "REQUEST_MIC" });
 
     const mic = await requestMic();
@@ -51,7 +58,11 @@ export function useVoiceSession(): UseVoiceSessionResult {
     }
     dispatch({ type: "MIC_GRANTED" });
 
-    const session = createVoiceSession({ getToken, onEvent: dispatch });
+    const session = createVoiceSession({
+      getToken,
+      onEvent: dispatch,
+      onSessionMax: setSessionMaxSeconds,
+    });
     sessionRef.current = session;
     setClient(session.client);
     await session.connect();
@@ -61,8 +72,9 @@ export function useVoiceSession(): UseVoiceSessionResult {
     await sessionRef.current?.disconnect();
     sessionRef.current = null;
     setClient(null);
+    setSessionMaxSeconds(null);
     dispatch({ type: "RESET" });
   }, [dispatch]);
 
-  return { outcome, micError, client, start, stop };
+  return { outcome, micError, client, sessionMaxSeconds, start, stop };
 }

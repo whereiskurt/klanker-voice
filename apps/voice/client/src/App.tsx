@@ -66,7 +66,7 @@ export default function App() {
   if (voice.outcome.state === "connected" && voice.client) {
     return (
       <div className="stage">
-        <Live client={voice.client} />
+        <Live client={voice.client} sessionMaxSeconds={voice.sessionMaxSeconds} />
       </div>
     );
   }

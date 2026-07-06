@@ -251,6 +251,17 @@ async def _negotiate_webrtc(
     public = gather_public_candidates()
     if answer and public.public_ip:
         answer["sdp"] = inject_public_host_candidate(answer["sdp"], public.public_ip)
+    if answer:
+        # CLNT-05/D-10: the client countdown has no other source for the tier
+        # session cap (the JWT only carries tier_id, not the numeric seconds
+        # -- see 03-03-SUMMARY's claim contract) other than this connect-flow
+        # response, per the plan's own key_link ("tier session_max_seconds
+        # (token claim / offer) + session start -> useCountdown"). Additive
+        # key -- SmallWebRTCTransport only reads sdp/type/pc_id and ignores
+        # unknown fields, so this is backward compatible with the vendor
+        # client's own answer parsing (T-05-05-T: display-only, the server's
+        # own service timer remains the authoritative hard-stop).
+        answer["session_max_seconds"] = gate_result.session_max_seconds
     return answer
 
 

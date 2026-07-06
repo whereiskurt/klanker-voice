@@ -57,3 +57,19 @@ button {
 a {
   color: inherit;
 }
+
+/* Visually-hidden but screen-reader-audible -- the countdown/HUD use this to
+   announce a differently-worded live-region string than their visible label
+   (UI-SPEC Copywriting: pill shows "{m:ss} left", screen-reader hears
+   "{n} seconds remaining"). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
