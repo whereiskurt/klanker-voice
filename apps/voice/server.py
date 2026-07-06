@@ -43,8 +43,14 @@ from klanker_voice import quota, session
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
 from klanker_voice.config import load_config, load_quota_config
 from klanker_voice.observers import LatencyReportObserver
-from klanker_voice.pipeline import build_pipeline, build_worker, register_greet_first
-from klanker_voice.session import SessionLifecycle
+from klanker_voice.pipeline import (
+    build_pipeline,
+    build_worker,
+    inject_warning_instruction,
+    register_greet_first,
+    speak_goodbye,
+)
+from klanker_voice.session import SessionLifecycle, TeardownObserver
 from klanker_voice.webrtc import (
     build_ice_servers,
     gather_public_candidates,
@@ -120,18 +126,65 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def _run_session(connection: SmallWebRTCConnection) -> None:
-    """Run the Phase-1 pipeline over an established SmallWebRTC connection."""
+async def _run_session(connection: SmallWebRTCConnection, lifecycle: SessionLifecycle) -> None:
+    """Build and run the pipeline over an established SmallWebRTC
+    connection, wiring the D-04/D-05 spoken wind-down and D-06/D-07 idle-
+    teardown layers onto the real worker/transport/context (04-05) —
+    :class:`SessionLifecycle` deliberately never holds these references
+    itself (module docstring), so this is the one seam that closes the loop
+    between its callback hooks and the live pipeline.
+    """
     transport = SmallWebRTCTransport(
         params=_WEBRTC_TRANSPORT_PARAMS,
         webrtc_connection=connection,
     )
     cfg = load_config()
+    quota_cfg = load_quota_config()
     built = build_pipeline(cfg, transport)
-    worker = build_worker(built.pipeline, observers=[LatencyReportObserver(cfg)])
+    worker = build_worker(
+        built.pipeline, observers=[LatencyReportObserver(cfg), TeardownObserver(lifecycle)]
+    )
     register_greet_first(transport, worker, built.context)
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
+
+    async def _on_warning() -> None:
+        # D-04 natural warning: a high-priority LLM-context instruction, not
+        # spoken verbatim by code.
+        await inject_warning_instruction(worker, built.context, quota_cfg.warning_copy)
+
+    async def _on_stop() -> None:
+        # D-04/D-05: the deterministic goodbye bypasses the LLM, gets up to
+        # goodbye_grace_seconds to finish, then a hard close. WorkerRunner
+        # .cancel is pipecat's own documented hangup call ("typically on
+        # transport disconnect") and is idempotent, so a racing idle-
+        # teardown layer calling it again is a harmless no-op.
+        await speak_goodbye(worker, quota_cfg.goodbye_copy)
+        await asyncio.sleep(quota_cfg.goodbye_grace_seconds)
+        await runner.cancel("session wind-down complete")
+
+    lifecycle.on_warning = _on_warning
+    lifecycle.on_stop = _on_stop
+    # D-06 layer 3 fallback / belt-and-suspenders: every idle-teardown layer
+    # (transport disconnect + reconnect grace, silence watchdog, pipeline
+    # stall) releases the DB/metric bookkeeping via SessionLifecycle.release()
+    # on its own; on_released is what actually ends *this* running pipeline
+    # once that happens, so an abandoned session never keeps burning STT/LLM/
+    # TTS spend after its slot has already been freed.
+    lifecycle.on_released = runner.cancel
+
+    @transport.event_handler("on_client_disconnected")
+    async def _on_client_disconnected(transport, client):  # noqa: ANN001 — pipecat handler shape
+        await lifecycle.on_transport_disconnected()
+
+    @transport.event_handler("on_client_connected")
+    async def _on_client_reconnected(transport, client):  # noqa: ANN001 — pipecat handler shape
+        # Fires both for the very first connect (register_greet_first's own
+        # handler greets there) and again if ICE reconnects after a drop —
+        # cancelling a pending reconnect-grace teardown is a no-op the rest
+        # of the time (D-07).
+        await lifecycle.on_transport_reconnected()
+
     await runner.run()
 
 
@@ -149,7 +202,7 @@ async def _start_and_run_tracked_session(
     """
     await lifecycle.start()
     try:
-        await _run_session(connection)
+        await _run_session(connection, lifecycle)
     finally:
         await lifecycle.stop()
 
