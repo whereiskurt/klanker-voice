@@ -1,0 +1,92 @@
+.no-access-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--lg);
+}
+
+.no-access-card {
+  max-width: 420px;
+  width: 100%;
+  padding: var(--2xl) var(--lg);
+  border-radius: var(--radius);
+  background: var(--scrim);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--md);
+}
+
+.no-access-heading {
+  font-size: var(--sz-display);
+  font-weight: var(--w-semibold);
+  line-height: var(--lh-tight);
+  color: var(--text-primary);
+}
+
+.no-access-body {
+  font-size: var(--sz-body);
+  line-height: var(--lh-prose);
+  color: var(--text-secondary);
+}
+
+/* The panel's single reserved-accent CTA (UI-SPEC "primary/only CTA in any panel"). */
+.no-access-cta {
+  min-height: var(--hit-min);
+  padding: 0 var(--lg);
+  margin-top: var(--sm);
+  font-size: var(--sz-body);
+  font-weight: var(--w-semibold);
+  color: var(--stage-core);
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: var(--motion-fast);
+}
+
+.no-access-cta:hover {
+  transform: translateY(-1px);
+}
+
+.no-access-cta:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 4px;
+}
+
+.no-access-expander {
+  font-size: var(--sz-label);
+  line-height: var(--lh-caption);
+  color: var(--text-secondary);
+}
+
+/* Secondary action — neutral, no accent (D-04: low-consequence single tap, no modal). */
+.no-access-signout {
+  min-height: var(--hit-min);
+  padding: 0 var(--md);
+  margin-top: var(--xs);
+  font-size: var(--sz-label);
+  font-weight: var(--w-regular);
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.no-access-signout:hover {
+  color: var(--text-primary);
+}
+
+.no-access-signout:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 4px;
+}
