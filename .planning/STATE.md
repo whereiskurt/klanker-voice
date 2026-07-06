@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 5 context gathered
-last_updated: "2026-07-06T03:18:37.702Z"
+stopped_at: Phase 05 Plan 01 executed
+last_updated: "2026-07-06T04:48:48.648Z"
 last_activity: 2026-07-06
-last_activity_desc: "Phase 4 Plan 04 executed: race-safe quota enforcement (usage.ts/quota.py/session.py, start_gate, SessionLifecycle)"
+last_activity_desc: "Phase 05 Plan 01 executed: server-side RTVI wiring + SPA mount (05-01-SUMMARY.md)"
 progress:
-  total_phases: 7
+  total_phases: 8
   completed_phases: 4
-  total_plans: 26
-  completed_plans: 22
-  percent: 57
+  total_plans: 33
+  completed_plans: 23
+  percent: 70
 current_phase: 4
 current_phase_name: Voice Service Deployed & Quota Enforcement
 ---
@@ -24,7 +24,7 @@ current_phase_name: Voice Service Deployed & Quota Enforcement
 See: .planning/PROJECT.md (updated 2026-07-04)
 
 **Core value:** The conversation must feel slick — ≤1.2s voice-to-voice latency with natural barge-in and ElevenLabs-quality speech.
-**Current focus:** Phase 4 — Voice Service Deployed & Quota Enforcement
+**Current focus:** Phase 05 — browser-client-conference-readiness
 
 ## Current Position
 
@@ -32,9 +32,10 @@ Phase 1 (Local Pipeline & Latency Harness): ✅ COMPLETE — 5/5 plans, verifica
 Phase 2 (Infra Skeleton): ✅ COMPLETE — 7/7 plans merged, verification PASSED 5/5 (02-VERIFICATION.md; TLS handshake deferred to Phase 4 by design)
 Phase 3 (Auth Service & Access Codes): ✅ COMPLETE — 4/4 plans merged, verification 4/5 (03-VERIFICATION.md). run.auth ported to apps/auth/webapp; access-code→tier + login→token bridge; OIDC RS256 JWT tokens; kv CLI. JWKS signing key live in SSM; kmv-auth-electro seeded (demo/kphdemo123 + tiers). Criterion-3 no-access GUIDANCE deferred to Phase 5 (logic done); deployed E2E is a Phase-4 verification item.
 Phase 4 (Voice Service Deployed & Quota Enforcement): IN PROGRESS — Plan 04/6 done. 04-02 (deploy infra): voice ECS task/service enabled + wired, webrtc_udp SG narrowed to 20000-20100/udp, kmv-voice-usage DynamoDB table, least-privilege task-role IAM, session-count autoscale min1/max4. 04-03 (deployed ICE smoke, INFR-03/KV-05 VERIFIED LIVE): `kv smoke` against `https://voice.klankermaker.ai` reports PASS — ICE connected, host+srflx candidates, 244 RTP packets — real UDP media flowing on the deployed public-IP Fargate task. 04-04 (race-safe quota enforcement, QUOT-01/QUOT-02/QUOT-04/INFR-06 done, see 04-04-SUMMARY.md): `usage.ts` (4 ElectroDB entities) + `quota.py` (typed 5-way start-gate reject, atomic-enough heartbeat lease, 15s tick with rollup+auto-trip) + `session.py` (`SessionLifecycle`: service timer hard-stop, ActiveSessions CloudWatch metric, ECS scale-in protection) — 32 new tests, 134/134 total pass. Known Gap: the deployed voice task role's IAM does not yet grant cross-table read on `kmv-auth-electro` (the tiers table) — real `/api/offer` calls would fail closed at `read_tier()` until that IAM statement is added; must fix before live-traffic verification. Plans 05-06 (idle teardown + spoken wind-down, kv operator loop) remain.
+Phase 5 (Browser Client & Conference Readiness): IN PROGRESS — Plan 01/7 done (05-01-SUMMARY.md). Server-side RTVI wiring: RTVIProcessor placed in build_pipeline right after transport.input(), RTVIObserver attached to the worker with audio-level flags on (CLNT-03/CLNT-04 server prerequisite); LatencyReportObserver emits one composed kmv-latency RTVIServerMessageFrame per turn for the HUD (CLNT-06/D-09); server.py mounts the built SPA (client/dist) with a 404-based deep-link fallback for the OIDC callback route, /api/* excluded. 166/166 tests pass. client/dist doesn't exist yet (05-02..05-07 build the SPA) — mount is tolerant, skips + logs until then.
 Phase 6 (Latency v2) + Phase 7 (KPH Knowledge Base): scoped, deferred (Phase 7 has a router/recorded-transcript design evolution captured in 07-DESIGN-NOTES.md)
-Status: Phases 1+2+3 complete; Phase 4 in progress (4/6 plans)
-Last activity: 2026-07-06 — Phase 4 Plan 04 executed: race-safe quota enforcement (usage.ts/quota.py/session.py, start_gate, SessionLifecycle)
+Status: Executing Phase 05 (1/7 plans done)
+Last activity: 2026-07-06 — Phase 05 Plan 01 executed: server-side RTVI wiring + SPA mount (05-01-SUMMARY.md)
 
 ### Phase 4 handoff (the auth contract Phase 4 consumes)
 
@@ -43,7 +44,7 @@ Last activity: 2026-07-06 — Phase 4 Plan 04 executed: race-safe quota enforcem
 - Phase 4 will also: re-measure deployed voice-to-voice p50/p95 vs the ~1402ms local baseline (us-east-1 proximity expected to improve it), and build the usage table + quota enforcement (QUOT-01..05) against the tiers this phase defined.
 - 04-01 done: production entrypoint (server.py), offline JWT validation (auth.py), public-IP+STUN ICE gathering (webrtc.py), Dockerfile — all unit-tested (30 new tests, 90/90 total) and the Docker image live-verified (build + running container). Known gap: real ECS task-metadata shape and live ICE/SDP-munging interop are unverified until 04-03's deployed smoke test.
 
-Progress: [█████████░] 86%
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
@@ -69,6 +70,7 @@ Progress: [█████████░] 86%
 | Phase 04 P01 | 10min | 3 tasks | 9 files |
 | Phase 04 P02 | 35min | 3 tasks | 8 files |
 | Phase 04 P04 | ~55min | 3 tasks | 10 files |
+| Phase 05 P01 | 25min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -89,6 +91,8 @@ Recent decisions affecting current work:
 - [Phase 04-02]: Extended the ecs-task module (dedicated per-task IAM role + container systemControls) beyond this plan's declared file scope - no existing mechanism in the codebase could express least-privilege task-role IAM or kernel sysctls; the ecs-cluster module's shared task role is wide-open (dynamodb:*/cloudwatch:*/ssm:*/s3:*/secretsmanager:* on Resource=*)
 - [Phase 04-04]: Concurrency-limit enforcement is a consistent Query + conditional write, not a cross-item DynamoDB transaction (the deployed task role's IAM grants no TransactWriteItems) — an atomic per-user counter alternative was rejected because it can't self-heal on a crashed task without a reaper, which would violate D-01's "no reaper" requirement. `release_heartbeat` never calls DeleteItem (not IAM-granted) — it sets `expiresAt` into the past; TTL is the real backstop either way.
 - [Phase 04-04]: KNOWN GAP — the deployed voice task role's IAM (`voice/service.hcl`'s `UsageTableCrud` statement) only grants access to `kmv-voice-usage`; `quota.read_tier()` needs `dynamodb:GetItem` on `kmv-auth-electro` (the Phase-3 tiers table) too. A real deployed `/api/offer` call will get `AccessDeniedException` on every non-bypass session today. Add a cross-table read statement to `voice/service.hcl` and re-apply before any live-traffic verification of the quota gate.
+- [Phase 05-01]: kmv-latency emission is pushed from the last-observed downstream FrameProcessor (cached in on_push_frame), not a constructor-injected RTVIProcessor reference — keeps the change within observers.py + tests only (no server.py change), since any live processor's push notifies the same pipeline-wide observer set
+- [Phase 05-01]: SPA deep-link fallback (client-side callback route) implemented via a global @app.exception_handler(404), not a second catch-all route — a root-mounted StaticFiles("/") prefix-matches every path in Starlette's router, so a later catch-all route would never be reached
 
 ### Pending Todos
 
@@ -106,6 +110,10 @@ Recent decisions affecting current work:
 - [Phase 4-02]: AWS SSO session (Developer, profiles klanker-terraform/klanker-application/klanker-management) expired (InvalidGrantException on refresh) - could not run terragrunt run-all validate/plan against live state for the voice deploy infra. Module-level terraform validate -backend=false passed for all touched modules as a substitute. Before 04-03 applies: run 'aws sso login --profile klanker-terraform' interactively, then re-run terragrunt run --all validate + a targeted terragrunt plan on the ecs-task/ecs-service units.
 - [Phase 4-04]: BLOCKER for live quota enforcement — the deployed voice task role's IAM does not grant `dynamodb:GetItem` on `kmv-auth-electro` (Phase-3 tiers table); `quota.read_tier()` will get `AccessDeniedException` in production until `voice/service.hcl`'s task role gets a cross-table read statement added and re-applied. All 04-04 tests pass locally against dynamodb-local, where this constraint doesn't exist — this is a real-deployment-only gap. Fix before relying on the quota gate against live traffic.
 
+### Roadmap Evolution
+
+- Phase 05.1 inserted after Phase 5: Operator Admin Panel — gated /admin in auth app (operational-only; transcripts deferred to Phase 7) (URGENT)
+
 ## Deferred Items
 
 Items acknowledged and carried forward from previous milestone close:
@@ -116,10 +124,10 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-**Resume file:** .planning/phases/05-browser-client-conference-readiness/05-CONTEXT.md
+**Resume file:** .planning/phases/05-browser-client-conference-readiness/05-02-PLAN.md
 
-Last session: 2026-07-06T03:18:37.693Z
-Stopped at: Phase 5 context gathered
+Last session: 2026-07-06T04:48:29.540Z
+Stopped at: Phase 05 Plan 01 executed
 Resume: before executing 04-05-PLAN.md (idle teardown + spoken wind-down), be aware 04-04's `SessionLifecycle.on_warning`/`on_stop`/`on_daily_exhausted` are the named hook points already wired and tested — 04-05 fills their bodies (LLM-context injection at -30s, deterministic goodbye TTS at 0, then the actual transport teardown) rather than restructuring the timer. Also: close the Known Gap flagged above (voice task role IAM needs cross-table read on `kmv-auth-electro`) before any live-traffic verification of the quota gate — locally everything passes against dynamodb-local, but a real deployed `/api/offer` call will fail closed at `read_tier()` today.
 Also live/done this session: 04-03 Task 3 (deploy checkpoint) completed by the orchestrator — `kv smoke` PASS against the live `https://voice.klankermaker.ai` (ICE connected, host+srflx, 244 RTP packets; INFR-03/KV-05 verified live); 04-04 executed (usage.ts + quota.py + session.py — 3 tasks, 10 files, 32 new tests, 134/134 total pass; caught and fixed a test-isolation gap that had leaked 3 stray items into the real `kmv-voice-usage` table, cleaned up before commit).
 Note: git guard is a harmless `rm -f` wrapper in ~/.zshrc (footgun-prevention) — avoid `rm -f`/`-r` in non-interactive shells (use plain `rm`), git itself is fine.

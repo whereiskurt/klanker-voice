@@ -19,10 +19,10 @@
 
 - [ ] **CLNT-01**: User grants mic via a gesture-gated flow with distinct error states (denied / no device / unsupported browser)
 - [ ] **CLNT-02**: User sees a connection state machine with clear messaging for ICE failure / UDP-blocked networks, with auto-retry
-- [ ] **CLNT-03**: User sees live captions for both sides of the conversation
-- [ ] **CLNT-04**: User sees a state-aware orb visualization (listening / thinking / speaking)
+- [x] **CLNT-03**: User sees live captions for both sides of the conversation
+- [x] **CLNT-04**: User sees a state-aware orb visualization (listening / thinking / speaking)
 - [ ] **CLNT-05**: User sees a visible session countdown timer
-- [ ] **CLNT-06**: User can toggle a latency HUD showing per-stage pipeline latency (also serves as the tuning instrument)
+- [x] **CLNT-06**: User can toggle a latency HUD showing per-stage pipeline latency (also serves as the tuning instrument)
 - [ ] **CLNT-07**: User gets a clean session end and one-click reconnect that re-checks quota before reconnecting
 - [ ] **CLNT-08**: User signs in via OIDC redirect to auth.klankermaker.ai before the mic is available
 
@@ -95,10 +95,10 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | PIPE-07 | Phase 1 | Pending |
 | CLNT-01 | Phase 5 | Pending |
 | CLNT-02 | Phase 5 | Pending |
-| CLNT-03 | Phase 5 | Pending |
-| CLNT-04 | Phase 5 | Pending |
+| CLNT-03 | Phase 5 | Complete |
+| CLNT-04 | Phase 5 | Complete |
 | CLNT-05 | Phase 5 | Pending |
-| CLNT-06 | Phase 5 | Pending |
+| CLNT-06 | Phase 5 | Complete |
 | CLNT-07 | Phase 5 | Pending |
 | CLNT-08 | Phase 5 | Pending |
 | AUTH-01 | Phase 3 | Pending |
