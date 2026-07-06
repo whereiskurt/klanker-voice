@@ -42,11 +42,13 @@ jobs:
       TF_VAR_GITHUB_ORG: ${{ github.repository_owner }}
       TF_VAR_SOPS_KMS_KEY_ID: ${{ vars.TF_VAR_SOPS_KMS_KEY_ID }}
       TF_VAR_SSM_KMS_KEY_ARNS: ${{ vars.TF_VAR_SSM_KMS_KEY_ARNS }}
-      # Deploy the immutable image build-voice.yml / build-auth.yml just pushed
-      # (tagged with the commit sha). service.hcl reads TF_VAR_VOICE_IMAGE_TAG via
-      # get_env; without this the terragrunt apply would deploy the hardcoded
-      # fallback tag and orphan the freshly-built :sha image.
-      TF_VAR_VOICE_IMAGE_TAG: ${{ github.sha }}
+      # NOTE: per-service image tags (TF_VAR_VOICE_IMAGE_TAG / TF_VAR_AUTH_IMAGE_TAG)
+      # are resolved at runtime by the "Resolve per-service image tags" step below —
+      # NOT hardcoded here. The ecs-task/ecs-service terragrunt units are shared
+      # across both services, so hardcoding one service's tag to github.sha would
+      # repoint the OTHER service's task to a non-existent image on every deploy
+      # (a voice-vs-auth coupling landmine). The resolver sets the deploying
+      # service to :sha and preserves the other service's currently-running tag.
 
     steps:
       - name: Checkout
@@ -73,6 +75,35 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/kmv-github-deploy
           aws-region: ${{ env.AWS_REGION }}
+
+      # De-couple the shared ecs-task/ecs-service units: the service being deployed
+      # gets the freshly-built :sha image; the OTHER service keeps its currently-
+      # running tag (queried from ECS) so applying the shared unit is a no-op for it.
+      # First-deploy fallbacks: voice 0.1.0, auth 0.0.0 (service.hcl get_env defaults).
+      - name: Resolve per-service image tags (decouple shared ecs units)
+        run: |
+          CLUSTER="app-use1-${{ vars.SITE_LABEL }}"
+          SHA="${{ github.sha }}"
+          SVC="${{ inputs.service }}"
+          current_tag() {
+            local td img
+            td=$(aws ecs describe-services --cluster "$CLUSTER" --services "$1" \
+                   --query 'services[0].taskDefinition' --output text 2>/dev/null || true)
+            if [ -z "$td" ] || [ "$td" = "None" ]; then echo ""; return 0; fi
+            img=$(aws ecs describe-task-definition --task-definition "$td" \
+                    --query 'taskDefinition.containerDefinitions[0].image' --output text 2>/dev/null || true)
+            echo "${img##*:}"
+          }
+          VOICE_CUR="$(current_tag voice-use1)"
+          AUTH_CUR="$(current_tag auth-use1)"
+          case "$SVC" in
+            voice) VTAG="$SHA"; ATAG="${AUTH_CUR:-0.0.0}";;
+            auth)  ATAG="$SHA"; VTAG="${VOICE_CUR:-0.1.0}";;
+            *)     VTAG="$SHA"; ATAG="$SHA";;
+          esac
+          echo "TF_VAR_VOICE_IMAGE_TAG=$VTAG" >> "$GITHUB_ENV"
+          echo "TF_VAR_AUTH_IMAGE_TAG=$ATAG" >> "$GITHUB_ENV"
+          echo "Resolved image tags — voice:$VTAG  auth:$ATAG  (deploying: $SVC)"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
