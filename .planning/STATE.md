@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 05 Plan 07 executed (code-complete; live iPhone + restricted-network checkpoint deferred to post-deploy validation) -- Phase 5 is now code-complete pending that one live pass
-last_updated: "2026-07-06T07:15:11.005Z"
+stopped_at: Phase 5 client CODE-COMPLETE 7/7, verification human_needed (live checks deferred to post-deploy AWS pass); deploy pipeline de-coupled; auth standup + deploys pending user
+last_updated: "2026-07-06T07:26:19.277Z"
 last_activity: 2026-07-06
-last_activity_desc: "Phase 05 Plan 07 executed: mobile/iOS layout + accessibility baseline hardening (shared aria-live announcer, reactive prefers-reduced-motion, fixed a countdown screen-reader-spam bug, Esc-dismiss on gate/mic-error copy) (code-complete; live iPhone + restricted-network checkpoint deferred, 05-07-SUMMARY.md). Phase 5 is now code-complete, 7/7 plans."
+last_activity_desc: "Phase 05 Plan 07 executed: mobile/iOS layout + accessibility baseline hardening (shared aria-live announcer, reactive prefers-reduced-motion, fixed a countdown screen-reader-spam bug, Esc-dismiss on gate/mic-error copy) (code-complete; live checkpoint deferred, 05-07-SUMMARY.md)"
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 33
   completed_plans: 29
-  percent: 88
+  percent: 63
 current_phase: 5
 current_phase_name: Browser Client & Conference Readiness
 ---
@@ -146,10 +146,10 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-**Resume file:** None (Phase 05 is the last code-level plan; phase-level verification/sign-off is next)
+**Resume file:** .planning/phases/05-browser-client-conference-readiness/05-VERIFICATION.md
 
-Last session: 2026-07-06T07:14:54.607Z
-Stopped at: Phase 05 Plan 07 executed (code-complete; live iPhone + restricted-network checkpoint deferred to post-deploy validation) -- Phase 5 is now code-complete pending that one live pass
+Last session: 2026-07-06T07:26:19.268Z
+Stopped at: Phase 5 client CODE-COMPLETE 7/7, verification human_needed (live checks deferred to post-deploy AWS pass); deploy pipeline de-coupled; auth standup + deploys pending user
 Resume: Phase 05 is now CODE-COMPLETE (7/7 plans). The only remaining phase-5 work is the single consolidated LIVE verification pass every 05-0x plan's checkpoint has deferred to: a real iPhone (Safari, normal Wi-Fi/cellular AND a restricted/UDP-blocked conference network) exercising the full attract->sign-in->mic->live-conversation->countdown->session-end flow, mic-error states, the UDP-blocked wall + hotspot recovery, no-access/killswitch gates, and iOS Reduce Motion + VoiceOver -- gate="blocking", NOT self-approved. It remains additionally blocked on the still-open Phase-4 IAM gap (voice task role lacks cross-table read on kmv-auth-electro). Next step is the orchestrator's phase-level verification/sign-off, not another plan.
 Also this session: 05-07 executed (a11y/liveRegions.ts shared announcer + reactive useReducedMotion hook + a11y.test.ts 6 tests; new responsive.css; tokens.css --sz-display mobile clamp; fixed two real bugs -- Countdown's per-second aria-live spam and Callback's total lack of any live region; Esc-dismiss on GateCard/MicError via new useVoiceSession.dismissMicError -- 1 task, 10 files, 85/85 total client-side tests pass, tsc/build clean). Checkpoint (real iPhone + restricted network, VoiceOver, Reduce Motion) deferred to post-deploy validation per orchestrator guidance, not self-approved -- this IS the consolidated pass every prior 05-0x checkpoint (05-03 PKCE round-trip, 05-04 live conversation, 05-05 countdown/HUD, 05-06 hostile-network/gate-copy/reconnect) has been folding into, additionally blocked on the still-open Phase-4 IAM gap (voice task role lacks cross-table read on kmv-auth-electro).
 Note: git guard is a harmless `rm -f` wrapper in ~/.zshrc (footgun-prevention) — avoid `rm -f`/`-r` in non-interactive shells (use plain `rm`), git itself is fine.
