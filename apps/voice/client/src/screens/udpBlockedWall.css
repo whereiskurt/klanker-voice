@@ -1,0 +1,64 @@
+/* Honest failure wall (CLNT-02, D-11): retries exhausted -- STOP, no
+   infinite spinner. Same translucent-card treatment as the no-access gate
+   (secondary-surface overlay over the still-idling orb). */
+.udp-blocked-wall {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--lg);
+}
+
+.udp-blocked-card {
+  max-width: 420px;
+  width: 100%;
+  padding: var(--2xl) var(--lg);
+  border-radius: var(--radius);
+  background: var(--scrim);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--md);
+}
+
+.udp-blocked-heading {
+  font-size: var(--sz-display);
+  font-weight: var(--w-semibold);
+  line-height: var(--lh-tight);
+  color: var(--destructive);
+}
+
+.udp-blocked-body {
+  font-size: var(--sz-body);
+  line-height: var(--lh-prose);
+  color: var(--text-secondary);
+}
+
+.udp-blocked-cta {
+  min-height: var(--hit-min);
+  padding: 0 var(--lg);
+  margin-top: var(--sm);
+  font-size: var(--sz-body);
+  font-weight: var(--w-semibold);
+  color: var(--stage-core);
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: var(--motion-fast);
+}
+
+.udp-blocked-cta:hover {
+  transform: translateY(-1px);
+}
+
+.udp-blocked-cta:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 4px;
+}

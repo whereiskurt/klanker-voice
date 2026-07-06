@@ -1,0 +1,90 @@
+/* Clean session end + reconnect (CLNT-07, D-14) -- same translucent-card
+   treatment as the other gate/wall/gate-card overlays, so every terminal
+   surface reads as one system. */
+.session-end {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--lg);
+}
+
+.session-end-card {
+  max-width: 420px;
+  width: 100%;
+  padding: var(--2xl) var(--lg);
+  border-radius: var(--radius);
+  background: var(--scrim);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--md);
+}
+
+.session-end-heading {
+  font-size: var(--sz-heading);
+  font-weight: var(--w-semibold);
+  line-height: var(--lh-tight);
+  color: var(--text-primary);
+}
+
+.session-end-body {
+  font-size: var(--sz-body);
+  line-height: var(--lh-prose);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The panel's single reserved-accent CTA (UI-SPEC "primary/only CTA in any panel"). */
+.session-end-reconnect {
+  min-height: var(--hit-min);
+  padding: 0 var(--lg);
+  margin-top: var(--sm);
+  font-size: var(--sz-body);
+  font-weight: var(--w-semibold);
+  color: var(--stage-core);
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: var(--motion-fast);
+}
+
+.session-end-reconnect:hover {
+  transform: translateY(-1px);
+}
+
+.session-end-reconnect:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 4px;
+}
+
+/* Secondary action -- neutral, no accent (D-04: low-consequence single tap, no modal). */
+.session-end-signout {
+  min-height: var(--hit-min);
+  padding: 0 var(--md);
+  margin-top: var(--xs);
+  font-size: var(--sz-label);
+  font-weight: var(--w-regular);
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.session-end-signout:hover {
+  color: var(--text-primary);
+}
+
+.session-end-signout:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 4px;
+}

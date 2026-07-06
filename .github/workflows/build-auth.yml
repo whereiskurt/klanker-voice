@@ -26,18 +26,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Inert until Phase 3 adds apps/auth/Dockerfile — this workflow then
-      # lights up unchanged.
+      # Phase 5 deploy: the auth image is the Next.js standalone webapp at
+      # apps/auth/webapp/Dockerfile.webapp (build context = apps/auth/webapp).
       - name: Check for Dockerfile
         id: guard
         run: |
-          if [ -f apps/auth/Dockerfile ]; then
+          if [ -f apps/auth/webapp/Dockerfile.webapp ]; then
             echo "has_dockerfile=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_dockerfile=false" >> "$GITHUB_OUTPUT"
             echo "## Auth Build Skipped" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "No Dockerfile at \`apps/auth/Dockerfile\` yet — build is a no-op until Phase 3 adds the image." >> $GITHUB_STEP_SUMMARY
+            echo "No Dockerfile at \`apps/auth/webapp/Dockerfile.webapp\` — build is a no-op." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Configure AWS Credentials
@@ -57,7 +57,7 @@ jobs:
         env:
           IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.SITE_LABEL }}-auth-app:${{ github.sha }}
         run: |
-          docker build -t "$IMAGE" apps/auth
+          docker build -f apps/auth/webapp/Dockerfile.webapp -t "$IMAGE" apps/auth/webapp
           docker push "$IMAGE"
           echo "## Auth Image Pushed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

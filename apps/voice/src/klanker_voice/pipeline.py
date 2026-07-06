@@ -14,6 +14,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.frameworks.rtvi import RTVIProcessor
 from pipecat.transports.base_transport import BaseTransport
 
 from klanker_voice.config import PipelineConfig
@@ -30,13 +31,16 @@ class BuiltPipeline:
     """Pipeline plus the handles later plans need.
 
     The harness plan (01-03) attaches observers to the PipelineWorker, and
-    barge-in truncation checks need the context handle.
+    barge-in truncation checks need the context handle. ``rtvi`` (05-01,
+    CLNT-03/04/06) is the RTVIProcessor placed in the pipeline, if any — the
+    caller passes it to ``RTVIObserver(...)`` when building the worker.
     """
 
     pipeline: Pipeline
     context: LLMContext
     user_aggregator: object
     assistant_aggregator: object
+    rtvi: RTVIProcessor | None = None
 
 
 def load_persona(cfg: PipelineConfig) -> str:
@@ -44,12 +48,20 @@ def load_persona(cfg: PipelineConfig) -> str:
     return cfg.persona.prompt_path.read_text(encoding="utf-8")
 
 
-def build_pipeline(cfg: PipelineConfig, transport: BaseTransport) -> BuiltPipeline:
+def build_pipeline(
+    cfg: PipelineConfig, transport: BaseTransport, *, rtvi: RTVIProcessor | None = None
+) -> BuiltPipeline:
     """Assemble the canonical cascade pipeline from config.
 
     Persona markdown from ``cfg.persona.prompt_path`` seeds the LLMContext
     system message; the greeting instruction lives inside that prompt so copy
     iterates without code changes (Pattern 6).
+
+    ``rtvi`` (05-01, CLNT-03/04/06): when provided, the RTVIProcessor is
+    placed immediately after ``transport.input()`` — the standard RTVI
+    placement so it observes every upstream/downstream frame in the cascade.
+    Optional so pipelines built without a live browser client (harness,
+    console) are unaffected.
     """
     stt = build_stt(cfg)
     llm = build_llm(cfg)
@@ -62,9 +74,11 @@ def build_pipeline(cfg: PipelineConfig, transport: BaseTransport) -> BuiltPipeli
     )
     user_aggregator, assistant_aggregator = aggregator_pair.user(), aggregator_pair.assistant()
 
-    pipeline = Pipeline(
+    processors = [transport.input()]
+    if rtvi is not None:
+        processors.append(rtvi)
+    processors.extend(
         [
-            transport.input(),
             stt,
             user_aggregator,
             llm,
@@ -73,11 +87,14 @@ def build_pipeline(cfg: PipelineConfig, transport: BaseTransport) -> BuiltPipeli
             assistant_aggregator,
         ]
     )
+
+    pipeline = Pipeline(processors)
     return BuiltPipeline(
         pipeline=pipeline,
         context=context,
         user_aggregator=user_aggregator,
         assistant_aggregator=assistant_aggregator,
+        rtvi=rtvi,
     )
 
 

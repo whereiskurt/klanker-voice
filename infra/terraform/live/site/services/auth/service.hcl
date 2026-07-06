@@ -47,28 +47,95 @@ locals {
     ]
   }
 
-  # Placeholder task definition — unused while site.hcl ecs_tasks.enabled = false.
-  # Phase 3 fills real containers; image tag stays a hardcoded string.
+  # Least-privilege auth task-role IAM (Phase 5 deploy): full CRUD on the two
+  # auth tables (@auth/dynamodb-adapter nextauth table + ElectroDB electro
+  # single-table that oidc-adapter/tiers/access_codes share) and read on the
+  # voice usage table. SES email is sent via SMTP credentials (secrets below),
+  # NOT the task role, so no ses:* is granted here.
+  task_role_iam_statements = [
+    {
+      sid = "AuthTablesCrud"
+      actions = [
+        "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan",
+        "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:ConditionCheckItem"
+      ]
+      resources = [
+        "arn:aws:dynamodb:*:*:table/kmv-auth-authjs",
+        "arn:aws:dynamodb:*:*:table/kmv-auth-authjs/index/*",
+        "arn:aws:dynamodb:*:*:table/kmv-auth-electro",
+        "arn:aws:dynamodb:*:*:table/kmv-auth-electro/index/*"
+      ]
+    },
+    {
+      sid       = "VoiceUsageRead"
+      actions   = ["dynamodb:GetItem", "dynamodb:Query"]
+      resources = [
+        "arn:aws:dynamodb:*:*:table/kmv-voice-usage",
+        "arn:aws:dynamodb:*:*:table/kmv-voice-usage/index/*"
+      ]
+    },
+    {
+      # Magic-link email is sent via the SESv2 SDK using the task role (not SMTP).
+      # Scoped to the verified auth.klankermaker.ai identity in us-east-1.
+      sid       = "SesSendMagicLink"
+      actions   = ["ses:SendEmail", "ses:SendRawEmail"]
+      resources = ["*"]
+    }
+  ]
+
+  # Real task definition (Phase 5 deploy). Image tag is env-driven (deploy.yml
+  # sets TF_VAR_AUTH_IMAGE_TAG to the just-built :sha), same pattern as voice.
   task = {
     name         = "auth"
     regions      = ["us-east-1"]
     cluster_name = "app"
-    task_cpu     = 256
-    task_memory  = 512
+    task_cpu     = 512
+    task_memory  = 1024
+
+    task_role_policy_statements = local.task_role_iam_statements
 
     containers = [
       {
         name      = "auth-app"
-        image     = "auth-app:0.0.0"
-        cpu       = 256
-        memory    = 512
+        image     = "auth-app:${get_env("TF_VAR_AUTH_IMAGE_TAG", "a75939496904e4ed02098a991a9781dd45f799f9")}"
+        cpu       = 512
+        memory    = 1024
         essential = true
 
+        # Next.js standalone (`node server.js`) binds PORT on HOSTNAME — 0.0.0.0
+        # is required for the ALB health check to reach the container. Issuer
+        # resolves from AUTH_PUBLIC_URL as https://auth.<domain>/use1/api/oidc,
+        # which MUST equal the SPA's baked VITE_OIDC_ISSUER and the voice
+        # server's expected issuer. DynamoDB/SES use the task role + SMTP secrets
+        # (no static AUTH_*_ID/SECRET/ENDPOINT -> SDK default chain = task role).
         environment = [
-          {
-            name  = "AUTH_PUBLIC_URL"
-            value = "https://auth.{{SITE_DOMAIN}}"
-          }
+          { name = "NODE_ENV", value = "production" },
+          { name = "HOSTNAME", value = "0.0.0.0" },
+          { name = "PORT", value = "3000" },
+          { name = "AWS_REGION", value = "us-east-1" },
+          { name = "REGION_SHORT", value = "use1" },
+          { name = "SITE_DOMAIN", value = "{{SITE_DOMAIN}}" },
+          { name = "AUTH_PUBLIC_URL", value = "https://auth.{{SITE_DOMAIN}}/use1" },
+          { name = "NEXTAUTH_URL", value = "https://auth.{{SITE_DOMAIN}}/use1" },
+          { name = "AUTH_COOKIE_DOMAIN", value = ".{{SITE_DOMAIN}}" },
+          { name = "AUTH_DYNAMODB_DBNAME", value = "kmv-auth-authjs" },
+          { name = "AUTH_ELECTRO_DBNAME", value = "kmv-auth-electro" },
+          { name = "AUTH_VOICE_USAGE_DBNAME", value = "kmv-voice-usage" },
+          { name = "AUTH_SES_REGION", value = "us-east-1" },
+          { name = "AUTH_SES_SMTP_FROM", value = "no-reply@auth.{{SITE_DOMAIN}}" },
+          { name = "OIDC_VOICE_CLIENT_ID", value = "voice" },
+          { name = "OIDC_VOICE_SECRET", value = "unused-public-pkce-client" }
+        ]
+
+        secrets = [
+          { name = "AUTH_JWT_SECRET", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/jwt/secret" },
+          { name = "OIDC_COOKIE_KEYS", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/cookie_keys" },
+          { name = "OIDC_JWKS", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/jwks" },
+          { name = "ALTCHA_HMAC_KEY", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/altcha/secret" }
+          # NOTE: magic-link email is sent via the SESv2 SDK (nodemailer SES transport),
+          # NOT SMTP — so NO AUTH_SES_ACCESS_KEY_ID/SECRET here (SMTP creds are invalid as
+          # API creds). The SESv2 client uses the task role (ses:SendEmail below).
         ]
 
         port_mappings = [

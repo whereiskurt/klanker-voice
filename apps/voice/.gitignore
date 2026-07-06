@@ -11,3 +11,10 @@ artifacts/
 .venv/
 __pycache__/
 *.pyc
+
+# Client (Vite+TS+React SPA) — D-03: no committed build artifacts; the
+# multi-stage Docker build runs `npm ci && npm run build` and COPYs dist/
+# into the image. node_modules is always reinstalled from package-lock.json.
+client/node_modules/
+client/dist/
+client/*.tsbuildinfo

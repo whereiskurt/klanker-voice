@@ -1,0 +1,60 @@
+/* Persistent corner countdown (CLNT-05, D-10). Top-right desktop, top-center
+   mobile (avoids the notch), safe-area offset -- restrained overlay, never
+   competes with the orb. */
+.countdown-pill {
+  position: absolute;
+  top: max(var(--lg), env(safe-area-inset-top));
+  right: var(--xl);
+  z-index: 10;
+  padding: var(--sm) var(--md);
+  font-family: var(--font-mono);
+  font-size: var(--sz-label);
+  font-weight: var(--w-regular);
+  color: var(--text-secondary);
+  background: var(--scrim);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  backdrop-filter: blur(12px);
+  transition:
+    color var(--motion-fast),
+    border-color var(--motion-fast);
+}
+
+@media (max-width: 640px) {
+  .countdown-pill {
+    left: 0;
+    right: 0;
+    width: fit-content;
+    margin: 0 auto;
+  }
+}
+
+/* Warning: amber at <=30s, synced to the agent's spoken -30s warning. */
+.countdown-pill--warning {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
+}
+
+/* Critical: red at <10s + motion-escalate pulse (reduced-motion drops the
+   pulse below, but keeps the color/text escalation -- UI-SPEC a11y). */
+.countdown-pill--critical {
+  color: var(--destructive);
+  border-color: color-mix(in srgb, var(--destructive) 45%, transparent);
+  animation: countdown-pulse var(--motion-escalate) ease-in-out infinite;
+}
+
+@keyframes countdown-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .countdown-pill--critical {
+    animation: none;
+  }
+}

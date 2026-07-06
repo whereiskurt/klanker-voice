@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getToken } from "next-auth/jwt";
 import { oidc, isSessionNotFound } from "@/config/oidc";
+import { config } from "@/config";
 
 const isDev = process.env.NODE_ENV !== "production";
 const REGION_SHORT = process.env.REGION_SHORT || "use1";
@@ -78,6 +79,16 @@ export default async function handler(
       // Grant all requested scopes
       if (interactionDetails.params.scope) {
         grant.addOIDCScope(interactionDetails.params.scope as string);
+        // AUTH-02 / Plan 03-03: the voice client uses resource-indicator JWT
+        // access tokens (resourceIndicators enabled), so "voice" is a RESOURCE
+        // scope — not an OIDC scope. Without addResourceScope the consent check
+        // `rs_scopes_missing` never clears and the interaction/auth resume loops
+        // forever (ERR_TOO_MANY_REDIRECTS). Grant the requested scope against
+        // the single voice resource indicator.
+        grant.addResourceScope(
+          config.oidc.voiceResource,
+          interactionDetails.params.scope as string
+        );
       }
 
       // Save the grant and return the ID

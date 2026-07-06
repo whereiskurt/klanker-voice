@@ -22,6 +22,16 @@ const VERSION_NGINX = process.env.NEXT_PUBLIC_VERSION_NGINX || readVersion(resol
 const sharedConfig = {
   trailingSlash: true,
   skipTrailingSlashRedirect: true,
+  // Load the AWS SDK from node_modules at runtime instead of bundling it — Next's
+  // standalone bundler otherwise drops the SDK's dynamic credential-provider requires,
+  // breaking the ECS task-role credential chain (see src/entities/client.ts).
+  serverExternalPackages: [
+    '@aws-sdk/client-dynamodb',
+    '@aws-sdk/lib-dynamodb',
+    '@aws-sdk/client-ses',
+    '@aws-sdk/client-sesv2',
+    '@aws-sdk/credential-providers',
+  ],
   env: {
     NEXT_PUBLIC_VERSION_APP: VERSION_APP,
     NEXT_PUBLIC_VERSION_NGINX: VERSION_NGINX,

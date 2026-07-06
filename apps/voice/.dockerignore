@@ -21,3 +21,10 @@ scenarios/
 .git/
 .gitignore
 .DS_Store
+
+# Client (Vite+TS+React SPA) build artifacts — the multi-stage Docker build's
+# `client-build` stage runs `npm ci && npm run build` fresh from source; a
+# stale host-local dist/ or node_modules/ must never leak into either build
+# stage's context (D-03: no committed/carried-over build artifacts).
+client/node_modules/
+client/dist/

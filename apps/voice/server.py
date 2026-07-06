@@ -23,13 +23,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
+from pipecat.processors.frameworks.rtvi import RTVIObserver
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
@@ -50,6 +53,7 @@ from klanker_voice.pipeline import (
     register_greet_first,
     speak_goodbye,
 )
+from klanker_voice.rtvi import build_rtvi_observer_params, build_rtvi_processor
 from klanker_voice.session import SessionLifecycle, TeardownObserver
 from klanker_voice.webrtc import (
     build_ice_servers,
@@ -140,9 +144,15 @@ async def _run_session(connection: SmallWebRTCConnection, lifecycle: SessionLife
     )
     cfg = load_config()
     quota_cfg = load_quota_config()
-    built = build_pipeline(cfg, transport)
+    rtvi = build_rtvi_processor()
+    built = build_pipeline(cfg, transport, rtvi=rtvi)
     worker = build_worker(
-        built.pipeline, observers=[LatencyReportObserver(cfg), TeardownObserver(lifecycle)]
+        built.pipeline,
+        observers=[
+            LatencyReportObserver(cfg),
+            RTVIObserver(rtvi, params=build_rtvi_observer_params()),
+            TeardownObserver(lifecycle),
+        ],
     )
     register_greet_first(transport, worker, built.context)
     runner = WorkerRunner(handle_sigint=False)
@@ -241,6 +251,17 @@ async def _negotiate_webrtc(
     public = gather_public_candidates()
     if answer and public.public_ip:
         answer["sdp"] = inject_public_host_candidate(answer["sdp"], public.public_ip)
+    if answer:
+        # CLNT-05/D-10: the client countdown has no other source for the tier
+        # session cap (the JWT only carries tier_id, not the numeric seconds
+        # -- see 03-03-SUMMARY's claim contract) other than this connect-flow
+        # response, per the plan's own key_link ("tier session_max_seconds
+        # (token claim / offer) + session start -> useCountdown"). Additive
+        # key -- SmallWebRTCTransport only reads sdp/type/pc_id and ignores
+        # unknown fields, so this is backward compatible with the vendor
+        # client's own answer parsing (T-05-05-T: display-only, the server's
+        # own service timer remains the authoritative hard-stop).
+        answer["session_max_seconds"] = gate_result.session_max_seconds
     return answer
 
 
@@ -273,3 +294,47 @@ async def offer(request: Request) -> Any:
         return JSONResponse(status_code=403, content={"error": "rejected", "detail": str(exc)})
 
     return await _negotiate_webrtc(body, identity, gate_result)
+
+
+#: The built client (D-01/02/03): Vite+React SPA source lives at
+#: apps/voice/client/, built to dist/, COPY'd into the Docker image by the
+#: (future) multi-stage build. Resolved relative to this file, never CWD, so
+#: the mount is correct regardless of where the process is launched from
+#: (T-05-01-I).
+CLIENT_DIST_DIR = Path(__file__).resolve().parent / "client" / "dist"
+
+
+def _mount_client_spa(app: FastAPI, dist_dir: Path) -> None:
+    """Mount the built SPA with deep-link fallback (D-01/02/03, CLNT-08).
+
+    Registered AFTER ``/health`` and ``/api/offer`` (module load order) so
+    those routes always win over the mount — Starlette matches routes in
+    registration order, and a root-mounted ``StaticFiles`` prefix-matches
+    every path, so anything declared first still takes priority.
+
+    Mechanism: ``StaticFiles(html=True)`` serves ``GET /`` (index.html) and
+    hashed asset paths directly. A 404 from inside that mount (e.g. the OIDC
+    callback route, or any other client-side deep link) is caught by the
+    404 exception handler below and re-served as ``index.html`` so the SPA's
+    own router receives it — EXCEPT under ``/api``, which 404s normally
+    (T-05-01-I: the fallback must never mask a real API 404).
+
+    Tolerant of a missing ``dist_dir`` (local dev / unit tests, before the
+    client has been built): skips the mount entirely and logs once, rather
+    than raising at import time.
+    """
+    if not dist_dir.is_dir():
+        logger.warning(f"client dist directory not found at {dist_dir}; skipping SPA mount")
+        return
+
+    index_path = dist_dir / "index.html"
+    app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="client-spa")
+
+    @app.exception_handler(404)
+    async def _spa_fallback(request: Request, exc: Exception) -> Any:
+        if request.url.path.startswith("/api"):
+            return JSONResponse(status_code=404, content={"error": "not_found"})
+        return FileResponse(index_path)
+
+
+_mount_client_spa(app, CLIENT_DIST_DIR)

@@ -1,5 +1,39 @@
 # klanker-voice production image (INFR-03).
 #
+# Multi-stage (D-03): a Node build stage compiles the Vite+TS+React client
+# (apps/voice/client/) to static dist/ assets, which are COPY'd into the
+# python:3.12-slim runtime stage below and served by server.py's StaticFiles
+# mount (CLIENT_DIST_DIR = apps/voice/client/dist). One image, one deploy;
+# CI builds both toolchains. No committed build artifacts — dist/ is always
+# produced fresh here from source.
+#
+# Build context is apps/voice/ (see .github/workflows/build-voice.yml:
+# `docker build -t "$IMAGE" apps/voice`), so all COPY paths below are
+# relative to apps/voice/, e.g. `client/` not `apps/voice/client/`.
+FROM node:22-slim AS client-build
+WORKDIR /client
+
+# Public OIDC client config, baked into the built bundle at build time
+# (CLNT-08, D-04, client/.env.example). There is NO secret here — this is a
+# PKCE public client (client/src/config/oidc.ts) — so defaulting these ARGs
+# to the real production values is safe; override via --build-arg for a
+# non-production image (e.g. a staging auth issuer).
+ARG VITE_OIDC_ISSUER=https://auth.klankermaker.ai/use1/api/oidc
+ARG VITE_OIDC_CLIENT_ID=voice
+ARG VITE_OIDC_AUDIENCE=https://voice.klankermaker.ai
+ARG VITE_OIDC_REDIRECT_URI=https://voice.klankermaker.ai/callback
+ENV VITE_OIDC_ISSUER=${VITE_OIDC_ISSUER} \
+    VITE_OIDC_CLIENT_ID=${VITE_OIDC_CLIENT_ID} \
+    VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE} \
+    VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI}
+
+# Dependency layer first (its own cache layer) so app-code edits don't bust
+# the slower npm-install cache — same rationale as the uv sync split below.
+COPY client/package.json client/package-lock.json ./
+RUN npm ci
+COPY client/ ./
+RUN npm run build
+
 # python:3.12-slim, NOT dailyco/pipecat-base (CLAUDE.md: that base image targets
 # Pipecat Cloud's bot.py/process-per-session runtime contract; this is a
 # self-hosted Fargate task with its own FastAPI/uvicorn entrypoint — server.py,
@@ -37,6 +71,10 @@ RUN uv sync --locked --no-install-project --no-dev
 # Now copy the app itself and install the project (editable src/klanker_voice).
 COPY . .
 RUN uv sync --locked --no-dev
+
+# D-03: the built client SPA — server.py's StaticFiles mount expects
+# apps/voice/client/dist (CLIENT_DIST_DIR), i.e. /app/client/dist here.
+COPY --from=client-build /client/dist /app/client/dist
 
 ENV PATH="/app/.venv/bin:${PATH}"
 ENV PYTHONUNBUFFERED=1

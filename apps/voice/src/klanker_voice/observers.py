@@ -32,6 +32,7 @@ from pipecat.observers.user_bot_latency_observer import (
     UserBotLatencyObserver,
 )
 from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 
 from klanker_voice.config import (
     APP_ROOT,
@@ -45,6 +46,30 @@ from klanker_voice.harness.report import Report, TurnRecord, build_anchors
 DEFAULT_ARTIFACTS_DIR = APP_ROOT / "artifacts" / "harness"
 
 FLUX_PROVIDER = "deepgram-flux"
+
+#: RTVI server-message type the Phase 5 latency HUD (D-09, CLNT-06) listens
+#: for. Payload carries only timing numbers — no token, no PII, no prompt
+#: text (T-05-01-I).
+KMV_LATENCY_MESSAGE_TYPE = "kmv-latency"
+
+
+def _build_latency_payload(record: TurnRecord, v2v_p50_ms: float | None) -> dict:
+    """Compose the one-per-turn HUD payload (D-09).
+
+    Reuses ``TurnRecord``'s already-rounded (0.1ms) values verbatim — no new
+    numeric format. A stage that was never observed stays ``None`` (serializes
+    as JSON ``null``; the HUD renders a dash), never raising.
+    """
+    return {
+        "type": KMV_LATENCY_MESSAGE_TYPE,
+        "data": {
+            "stt_ms": record.stt_final_ms,
+            "llm_ttft_ms": record.llm_ttft_ms,
+            "tts_first_audio_ms": record.tts_first_audio_ms,
+            "voice_to_voice_ms": record.voice_to_voice_ms,
+            "v2v_p50_ms": v2v_p50_ms,
+        },
+    }
 
 
 def arm_name(cfg: PipelineConfig) -> str:
@@ -85,6 +110,13 @@ class LatencyReportObserver(UserBotLatencyObserver):
             resolution ``load_config()`` used (env override or the default).
         artifacts_dir: Where the JSON artifact lands; defaults to
             ``apps/voice/artifacts/harness/``.
+
+    Also pushes one ``kmv-latency`` ``RTVIServerMessageFrame`` per finalized
+    turn (05-01, D-09) — additive to the harness JSON artifact above, this is
+    the client latency HUD's live per-turn data source. A no-op until the
+    observer has seen at least one downstream frame push (harness/console
+    runs with no RTVIProcessor in the pipeline never have a client listening
+    anyway, so there is nothing to emit to).
     """
 
     def __init__(
@@ -96,6 +128,16 @@ class LatencyReportObserver(UserBotLatencyObserver):
         **kwargs,
     ):
         super().__init__(**kwargs)
+        # The most recent downstream frame-push destination this observer has
+        # seen (05-01, D-09): observers have no processor of their own to push
+        # a *new* frame from, but any live FrameProcessor in the running
+        # pipeline can push one — every processor's push notifies the same
+        # pipeline-wide observer set, including RTVIObserver, regardless of
+        # which processor originated it. Reusing the last-seen one needs no
+        # extra constructor wiring (no RTVIProcessor reference threaded
+        # through server.py) and is always a live, linked processor by
+        # construction.
+        self._last_downstream_processor: object | None = None
         if config_path is None:
             config_path = os.environ.get(CONFIG_PATH_ENV_VAR) or DEFAULT_CONFIG_PATH
         self._flux = cfg.stt.provider == FLUX_PROVIDER
@@ -144,6 +186,10 @@ class LatencyReportObserver(UserBotLatencyObserver):
         await super().on_push_frame(data)
         if data.direction != FrameDirection.DOWNSTREAM:
             return
+        if data.destination is not None:
+            # D-09: remember a live processor to push the kmv-latency frame
+            # from once a turn finalizes (see class docstring).
+            self._last_downstream_processor = data.destination
         # Flux-native voice-to-voice anchor. Flux owns endpointing server-side
         # and never emits a VADUserStoppedSpeakingFrame, so the parent's anchor
         # never arms and Arm C records zero turns (RESEARCH Open Question 1).
@@ -197,6 +243,27 @@ class LatencyReportObserver(UserBotLatencyObserver):
 
         self._report.add_turn(record)
         self._write_artifact()
+        await self._emit_kmv_latency(record)
+
+    async def _emit_kmv_latency(self, record: TurnRecord) -> None:
+        """Push one ``kmv-latency`` RTVIServerMessageFrame for the HUD (D-09).
+
+        Additive to the harness JSON artifact above — this is the *live*
+        per-turn data source for the client's latency HUD, not a replacement
+        for it. Pushed from the most recently observed downstream processor
+        (see ``__init__``/``on_push_frame``): any live FrameProcessor in the
+        pipeline works, since every processor's push notifies the same
+        pipeline-wide observer set (including the RTVIProcessor's own
+        ``RTVIObserver``) regardless of which processor originated it.
+        No-op before the observer has seen its first downstream frame push
+        (harness/console runs with no live client ever reach this point).
+        """
+        if self._last_downstream_processor is None:
+            return
+        v2v_summary = self._report.summary()["voice_to_voice"]
+        v2v_p50_ms = v2v_summary["p50_ms"] if v2v_summary is not None else None
+        payload = _build_latency_payload(record, v2v_p50_ms)
+        await self._last_downstream_processor.push_frame(RTVIServerMessageFrame(data=payload))
 
     async def _record_first_bot_speech(self, _observer, latency_secs: float):
         # Connect -> first speech (the D-04 greeting). Different anchor than

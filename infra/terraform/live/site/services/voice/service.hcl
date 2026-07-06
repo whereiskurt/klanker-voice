@@ -111,7 +111,7 @@ locals {
         # manual `terragrunt apply` falls back to the last known-good preview tag.
         # (Was a hardcoded string; TF_VAR_VOICE_IMAGE_TAG closes the build/deploy
         # tag mismatch — build-voice.yml pushes :sha but deploy.yml applied :tag.)
-        image     = "voice-app:${get_env("TF_VAR_VOICE_IMAGE_TAG", "0.1.0")}"
+        image     = "voice-app:${get_env("TF_VAR_VOICE_IMAGE_TAG", "a75939496904e4ed02098a991a9781dd45f799f9")}"
         cpu       = 1024
         memory    = 2048
         essential = true

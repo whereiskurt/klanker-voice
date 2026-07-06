@@ -1,0 +1,86 @@
+/*
+ * Mobile/iOS conference-floor hardening (05-07 · UI-SPEC §Spacing Scale
+ * exceptions + §Stage Layout mobile column + §Accessibility Baseline).
+ *
+ * The base `.stage` rule (global.css) already uses `100dvh` + `env(safe-
+ * area-inset-*)` padding, and every gate/wall/CTA surface already enforces
+ * the >=44px / >=96px touch-target tokens (tokens.css --hit-min/--hit-cta).
+ * This file is the mobile-specific LAYER on top of that foundation: it (1)
+ * belt-and-suspenders the `100dvh` floor for WebKit builds that haven't
+ * shipped it, (2) tightens safe-area handling on the narrowest iPhones, and
+ * (3) applies the UI-SPEC's mobile-portrait-only placement deltas (orb
+ * upper-middle framing already comes from the canvas draw math in
+ * OrbFallback.tsx/orbShader.ts -- CSS only owns the DOM-overlay placement
+ * below) plus a global focus-ring safety net.
+ */
+
+/* --- 100dvh floor (belt-and-suspenders) ---------------------------------
+ * `100vh` first as a fallback for engines that predate `100dvh` support,
+ * immediately overridden by `100dvh` where it IS supported -- avoids the
+ * classic iOS Safari bug where a `100vh` stage gets clipped/cut off by the
+ * animating URL bar, which would crop the mic CTA or captions mid-gesture. */
+.stage {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* --- Mobile portrait: countdown pill top-center, notch-safe -------------
+ * Complements timer.css's own `max-width: 640px` centering rule with an
+ * explicit safe-area top offset tuned for the iPhone notch/Dynamic Island
+ * cutout region (a plain `max(var(--lg), env(...))` can still sit under a
+ * shallow notch on some devices; the extra `--sm` margin clears it). */
+@media (max-width: 640px) and (orientation: portrait) {
+  .countdown-pill {
+    top: max(var(--lg), calc(env(safe-area-inset-top) + var(--sm)));
+  }
+}
+
+/* --- Narrowest phones: captions full-width minus 16px, CTA safe margin --
+ * UI-SPEC Stage Layout mobile column: "Captions | Full-width minus 16px". */
+@media (max-width: 420px) {
+  .captions {
+    width: calc(100% - 16px);
+  }
+
+  .attract-cta-wrap {
+    bottom: max(var(--3xl), calc(env(safe-area-inset-bottom) + var(--lg)));
+  }
+
+  /* Translucent overlay cards (gate/wall/no-access/session-end) get a
+   * tighter horizontal inset so the >=44px CTA never crowds the safe-area
+   * edge on a 375px-or-narrower viewport. */
+  .gate-card,
+  .no-access-card,
+  .udp-blocked-card,
+  .session-end-card {
+    padding: var(--2xl) var(--md);
+  }
+}
+
+/* --- Short/landscape phones: reclaim vertical space ---------------------
+ * A locked-down conference Wi-Fi check or a quick landscape glance
+ * shouldn't clip the mic CTA under the keyboard-safe-area/home-indicator
+ * band on short viewports. */
+@media (max-height: 480px) {
+  .attract-cta-wrap {
+    bottom: max(var(--lg), env(safe-area-inset-bottom));
+  }
+
+  .captions {
+    bottom: max(calc(var(--lg) + var(--hit-cta)), env(safe-area-inset-bottom));
+  }
+}
+
+/* --- Global focus-ring safety net ---------------------------------------
+ * Every current interactive control already carries its own
+ * `:focus-visible` rule (attract-cta, hud-toggle, gate/wall/gate-card CTAs,
+ * sign-out links, callback retry). This is a defensive baseline so any
+ * FUTURE control automatically meets the UI-SPEC a11y baseline ("visible
+ * focus rings on CTA, HUD toggle, retry/reconnect") without needing its own
+ * copy-pasted rule; the more specific per-component rules above still win
+ * on specificity where they differ. */
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
