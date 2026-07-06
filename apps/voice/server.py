@@ -30,6 +30,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 
+from pipecat.processors.frameworks.rtvi import RTVIObserver
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
@@ -50,6 +51,7 @@ from klanker_voice.pipeline import (
     register_greet_first,
     speak_goodbye,
 )
+from klanker_voice.rtvi import build_rtvi_observer_params, build_rtvi_processor
 from klanker_voice.session import SessionLifecycle, TeardownObserver
 from klanker_voice.webrtc import (
     build_ice_servers,
@@ -140,9 +142,15 @@ async def _run_session(connection: SmallWebRTCConnection, lifecycle: SessionLife
     )
     cfg = load_config()
     quota_cfg = load_quota_config()
-    built = build_pipeline(cfg, transport)
+    rtvi = build_rtvi_processor()
+    built = build_pipeline(cfg, transport, rtvi=rtvi)
     worker = build_worker(
-        built.pipeline, observers=[LatencyReportObserver(cfg), TeardownObserver(lifecycle)]
+        built.pipeline,
+        observers=[
+            LatencyReportObserver(cfg),
+            RTVIObserver(rtvi, params=build_rtvi_observer_params()),
+            TeardownObserver(lifecycle),
+        ],
     )
     register_greet_first(transport, worker, built.context)
     runner = WorkerRunner(handle_sigint=False)
