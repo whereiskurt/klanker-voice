@@ -144,8 +144,36 @@ None for Tasks 1-2. Task 3 (deferred) requires:
 - **This plan (04-03) is NOT complete.** Do not advance the plan counter or update ROADMAP.md plan-progress for 04-03 until Task 3 finishes.
 
 ---
+
+## Task 3 — Deploy + deployed ICE/RTP smoke (COMPLETE 2026-07-05, orchestrator-driven)
+
+**INFR-03 / KV-05 / ROADMAP SC1 proven live.** `kv smoke --endpoint https://voice.klankermaker.ai` result:
+
+```
+STATUS       PASS
+ICE-STATE    connected
+CANDIDATES   host,srflx        (D-12: self-advertised metadata IP + STUN srflx both gathered)
+RTP-PACKETS  244               (real media from the public-IP Fargate task — not just reachability)
+```
+
+Deploy sequence executed by the orchestrator with live AWS (klanker-terraform SSO):
+1. Built the voice image `linux/amd64` and pushed `kmv-voice-app:0.0.0` to ECR (568 MB).
+2. `terragrunt run --all apply` over the regional units — created `kmv-voice-usage` (11 res), narrowed `webrtc_udp` SG to 20000-20100, and stood up the voice task def + ECS service (`assign_public_ip=true`), ALB target group + host-routing listener rule, and the ActiveSessions autoscaling target/policy (1→4).
+3. Target group went **healthy**; public HTTPS `/health` → `{"status":"ok"}`, valid TLS.
+
+**Four infra gap-fixes required at the deploy checkpoint (04-02 authored the resources but not these runtime bits; all committed):**
+- `feat(04-03): wire voice container secrets` — the task def had no `secrets` block; added SSM `valueFrom` for `DEEPGRAM_API_KEY`, `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY`, and the new `KMV_SMOKE_SERVICE_TOKEN`. (issuer/JWKS/audience/STUN/config-path all default correctly in-app, so no wiring needed.)
+- `fix(04-03): allow ALB->task TCP 7860 on http_only SG` — the container listens on 7860 but the SG only allowed 80/8080/3000/1337; health-check was timing out.
+- `feat(04-03): open public HTTPS 443 on ALB` — Phase 2 left 443 ingress mgmt-only ("TLS deferred to Phase 4"); voice is a public endpoint.
+- Provisioned `KMV_SMOKE_SERVICE_TOKEN` as an SSM SecureString (`/kmv/secrets/use1/voice/smoke_token`, out-of-band like the SOPS-seeded provider keys).
+
+**Documented follow-up gaps (not blocking; noted for a later infra pass):**
+- **DNS records are not terraform-managed.** `voice.klankermaker.ai` (and `auth.klankermaker.ai`) had no A-record → ALB; the site module only does NS delegation. Created `voice.klankermaker.ai` → ALB alias (EvaluateTargetHealth=false) via CLI to unblock. A terraform resource for service→ALB DNS should be added.
+- **STUN-behind-NAT was source-verified only** — now live-verified (srflx candidate present, ICE connected).
+- Deployed latency re-measurement (vs the ~1402ms local baseline) is still open — the media path is proven; the p50/p95 re-measure can ride Phase 5's real-device pass.
+
 *Phase: 04-voice-service-deployed-quota-enforcement*
-*Tasks 1-2 completed: 2026-07-05 (Task 3 deferred to orchestrator)*
+*Tasks 1-2 completed: 2026-07-05; Task 3 (deploy + ICE proof) completed: 2026-07-05*
 
 ## Self-Check: PASSED
 
