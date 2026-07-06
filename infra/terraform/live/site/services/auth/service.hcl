@@ -74,6 +74,13 @@ locals {
         "arn:aws:dynamodb:*:*:table/kmv-voice-usage",
         "arn:aws:dynamodb:*:*:table/kmv-voice-usage/index/*"
       ]
+    },
+    {
+      # Magic-link email is sent via the SESv2 SDK using the task role (not SMTP).
+      # Scoped to the verified auth.klankermaker.ai identity in us-east-1.
+      sid       = "SesSendMagicLink"
+      actions   = ["ses:SendEmail", "ses:SendRawEmail"]
+      resources = ["*"]
     }
   ]
 
@@ -125,9 +132,10 @@ locals {
           { name = "AUTH_JWT_SECRET", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/jwt/secret" },
           { name = "OIDC_COOKIE_KEYS", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/cookie_keys" },
           { name = "OIDC_JWKS", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/jwks" },
-          { name = "ALTCHA_HMAC_KEY", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/altcha/secret" },
-          { name = "AUTH_SES_ACCESS_KEY_ID", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/ses/smtp/default/auth.klankermaker.ai/username" },
-          { name = "AUTH_SES_SECRET_ACCESS_KEY", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/ses/smtp/default/auth.klankermaker.ai/password" }
+          { name = "ALTCHA_HMAC_KEY", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/altcha/secret" }
+          # NOTE: magic-link email is sent via the SESv2 SDK (nodemailer SES transport),
+          # NOT SMTP — so NO AUTH_SES_ACCESS_KEY_ID/SECRET here (SMTP creds are invalid as
+          # API creds). The SESv2 client uses the task role (ses:SendEmail below).
         ]
 
         port_mappings = [

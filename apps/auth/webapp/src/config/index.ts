@@ -6,6 +6,26 @@
  * Email-only, single voice OIDC client (D-08, D-09, D-10, D-11).
  */
 
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
+
+// In prod (ECS Fargate) no static keys are supplied — resolve via an EXPLICIT
+// provider chain so the ECS task role is used. Required because Next.js
+// `output: 'standalone'` bundling drops the SDK's default (dynamic) provider
+// chain; without an explicit import the task-role creds never resolve
+// ("Resolved credential object is not valid"). Static AUTH_*_ID/SECRET still win locally.
+const dynamoCreds =
+  process.env.AUTH_DYNAMODB_ID && process.env.AUTH_DYNAMODB_SECRET
+    ? { accessKeyId: process.env.AUTH_DYNAMODB_ID, secretAccessKey: process.env.AUTH_DYNAMODB_SECRET }
+    : fromNodeProviderChain();
+const sesCreds =
+  process.env.AUTH_SES_ACCESS_KEY_ID && process.env.AUTH_SES_SECRET_ACCESS_KEY
+    ? {
+        accessKeyId: process.env.AUTH_SES_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AUTH_SES_SECRET_ACCESS_KEY,
+        sessionToken: process.env.AUTH_SES_SESSION_TOKEN,
+      }
+    : fromNodeProviderChain();
+
 const isDev = process.env.NODE_ENV !== "production";
 const region = process.env.REGION_SHORT || "use1";
 
@@ -123,24 +143,15 @@ export const config = {
 
   dynamodb: {
     endpoint: process.env.AUTH_DYNAMODB_ENDPOINT,
-    region: process.env.AUTH_DYNAMODB_REGION,
+    region: process.env.AUTH_DYNAMODB_REGION || process.env.AWS_REGION,
     tableName: process.env.AUTH_DYNAMODB_DBNAME,
-    credentials: {
-      accessKeyId: process.env.AUTH_DYNAMODB_ID!,
-      secretAccessKey: process.env.AUTH_DYNAMODB_SECRET!,
-    },
+    credentials: dynamoCreds,
   },
 
   ses: {
     region: process.env.AUTH_SES_REGION || "us-east-1",
     from: process.env.AUTH_SES_SMTP_FROM,
-    credentials: process.env.AUTH_SES_ACCESS_KEY_ID && process.env.AUTH_SES_SECRET_ACCESS_KEY
-      ? {
-          accessKeyId: process.env.AUTH_SES_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AUTH_SES_SECRET_ACCESS_KEY,
-          sessionToken: process.env.AUTH_SES_SESSION_TOKEN,
-        }
-      : undefined,
+    credentials: sesCreds,
   },
 
   cookies: {
