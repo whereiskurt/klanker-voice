@@ -4,8 +4,7 @@ import { getAuthProfile } from "@/entities/auth-profile";
 import { config } from "@/config";
 import { makeLoadExistingGrant } from "./load-existing-grant";
 
-// Local development ports (can be overridden via env vars)
-const LOCAL_AUTH_PORT = process.env.LOCAL_AUTH_PORT || "3002";
+// Local development port (can be overridden via env var)
 const LOCAL_VOICE_PORT = process.env.LOCAL_VOICE_PORT || "7860";
 
 // Site domain from config
@@ -18,36 +17,48 @@ const siteDomain = config.siteDomain;
  * browser client at voice.{siteDomain}. run.auth's four other clients
  * (run.human, cmsStrapi, gpxStudio, flashTool, bib) are dropped entirely.
  *
- * Redirect URIs include both the /use1 basePath and non-prefixed variants,
- * since Auth.js doesn't include the Next.js basePath in callback URLs.
  * SECURITY: Localhost URIs are only included in development mode to prevent
  * local interception attacks.
+ *
+ * Phase-5 Plan 03 correction: this client was originally shaped for a
+ * hypothetical Next.js/next-auth voice app acting as a *confidential*
+ * relying party (client_secret_post + Auth.js-style
+ * `/api/auth/callback/...` redirect URIs). D-01/D-02 pivoted the voice app
+ * to a bespoke static Vite+TS+React SPA (apps/voice/client/) with NO
+ * server-side OIDC consumer at all — it authenticates directly from the
+ * browser via authorization-code + PKCE (D-04), which requires a PUBLIC
+ * client (no secret; `token_endpoint_auth_method: "none"`) and its own
+ * `/callback` redirect route (Callback.tsx), not an Auth.js callback path.
+ * `pkce: { required: () => true }` below already forces PKCE regardless of
+ * auth method, so this is a strict tightening, not a new requirement.
  */
 const clients: ClientMetadata[] = [
   {
     client_id: config.oidc.clients.voice.clientId,
-    client_secret: config.oidc.clients.voice.clientSecret,
+    // Public PKCE client (D-04, T-05-03-I) — the SPA holds no secret; PKCE
+    // S256 + the callback's `state` check are what secure this client.
+    token_endpoint_auth_method: "none",
     redirect_uris: [
-      `https://voice.${siteDomain}/api/auth/callback/voice.${siteDomain}`,
-      `https://voice.${siteDomain}/use1/api/auth/callback/voice.${siteDomain}`,
-      // Local development (only in dev mode)
-      ...(config.isDev ? [
-        `http://localhost:${LOCAL_VOICE_PORT}/api/auth/callback/voice.${siteDomain}`,
-        `http://localhost:${LOCAL_AUTH_PORT}/api/auth/callback/voice.${siteDomain}`,
-      ] : []),
+      `https://voice.${siteDomain}/callback`,
+      // Local development (only in dev mode) — matches Vite's default dev
+      // server port (apps/voice/client/.env.example).
+      ...(config.isDev ? [`http://localhost:5173/callback`] : []),
     ],
     post_logout_redirect_uris: [
       `https://voice.${siteDomain}/`,
-      `https://voice.${siteDomain}/use1`,
       // Local development (only in dev mode)
       ...(config.isDev ? [
         `http://localhost:${LOCAL_VOICE_PORT}/`,
       ] : []),
     ],
-    grant_types: ["authorization_code", "refresh_token"],
+    grant_types: ["authorization_code"],
     response_types: ["code"],
+    // The SPA requests scope "voice" only (no "openid") — a pure OAuth 2.0
+    // resource-indicator token, no ID token/userinfo consumer exists for
+    // this client. Kept broad here for forward-compatibility; unrecognized
+    // request scopes (e.g. "voice") are not enforced against this allowlist
+    // (oidc-provider only checks scopes it recognizes as static claims).
     scope: "openid profile email services",
-    token_endpoint_auth_method: "client_secret_post",
   },
 ];
 
