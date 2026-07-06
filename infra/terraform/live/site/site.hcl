@@ -860,7 +860,10 @@ locals {
                     "ecs:DescribeServices",
                     "ecs:DescribeClusters",
                     "ecs:ListServices",
-                    "ecs:ListClusters"
+                    "ecs:ListClusters",
+                    "ecs:TagResource",
+                    "ecs:UntagResource",
+                    "ecs:ListTagsForResource"
                   ]
                   Resource = "*"
                 }
@@ -884,10 +887,15 @@ locals {
                   ]
                 },
                 {
-                  Sid    = "GetRole"
+                  Sid    = "IAMReadRoles"
                   Effect = "Allow"
                   Action = [
-                    "iam:GetRole"
+                    "iam:GetRole",
+                    "iam:ListRolePolicies",
+                    "iam:GetRolePolicy",
+                    "iam:ListAttachedRolePolicies",
+                    "iam:ListInstanceProfilesForRole",
+                    "iam:ListRoleTags"
                   ]
                   Resource = [
                     "arn:aws:iam::*:role/*-${local.site.label}-*",
