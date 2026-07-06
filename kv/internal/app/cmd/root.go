@@ -101,6 +101,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(NewTierCmd(cfg))
 	root.AddCommand(NewSmokeCmd(cfg))
 	root.AddCommand(NewUsageCmd(cfg))
+	root.AddCommand(NewKillswitchCmd(cfg))
 
 	return root
 }

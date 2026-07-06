@@ -169,6 +169,31 @@ func usageDynamoClient(t *testing.T) *dynamodb.Client {
 	return client
 }
 
+// resetControlItem forces the shared control#/killswitch# item to a known
+// disengaged, reason-free state before and after a test — mirrors
+// apps/voice/tests/test_quota.py's own reset_control_item fixture so this
+// suite never leaks kill-switch state into another test or a stray local
+// run.
+func resetControlItem(t *testing.T, client *dynamodb.Client) {
+	t.Helper()
+	ctx := context.Background()
+	put := func() {
+		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: aws.String(usageRoundTripTable),
+			Item: map[string]types.AttributeValue{
+				"pk":      &types.AttributeValueMemberS{Value: electro.UsageControlPK()},
+				"sk":      &types.AttributeValueMemberS{Value: electro.UsageControlSK()},
+				"engaged": &types.AttributeValueMemberBOOL{Value: false},
+			},
+		})
+		if err != nil {
+			t.Fatalf("resetControlItem: %v", err)
+		}
+	}
+	put()
+	t.Cleanup(put)
+}
+
 // deleteUsageItem is a t.Cleanup helper for daily/rollup test items this
 // suite writes directly (not via kv, to simulate quota.py's own writes).
 func deleteUsageItem(t *testing.T, client *dynamodb.Client, pk, sk string) {
@@ -316,5 +341,107 @@ func TestUsage_History(t *testing.T) {
 	}
 	if records[0].Day != "2099-01-03" || records[1].Day != "2099-01-02" {
 		t.Errorf("records = %+v, want most-recent-first [2099-01-03, 2099-01-02]", records)
+	}
+}
+
+// TestKillswitch_OnThenStatusEngaged: `kv killswitch on` conditionally
+// engages the control item; `status` reflects engaged=true with the given
+// reason.
+func TestKillswitch_OnThenStatusEngaged(t *testing.T) {
+	client := usageDynamoClient(t)
+	resetControlItem(t, client)
+	ctx := context.Background()
+
+	flipped, err := EngageKillswitch(ctx, client, usageRoundTripTable, "verify")
+	if err != nil {
+		t.Fatalf("EngageKillswitch: %v", err)
+	}
+	if !flipped {
+		t.Fatalf("EngageKillswitch: flipped = false, want true (first engage)")
+	}
+
+	status, err := ReadKillswitchStatus(ctx, client, usageRoundTripTable)
+	if err != nil {
+		t.Fatalf("ReadKillswitchStatus: %v", err)
+	}
+	if !status.Engaged {
+		t.Errorf("status.Engaged = false, want true")
+	}
+	if status.Reason != "verify" {
+		t.Errorf("status.Reason = %q, want %q", status.Reason, "verify")
+	}
+}
+
+// TestKillswitch_OffThenStatusDisengaged: after an on, `kv killswitch off`
+// conditionally disengages and clears the reason (D-09 explicit operator
+// reset) — status.Reason must be empty afterward, even after an
+// auto-trip-shaped reason.
+func TestKillswitch_OffThenStatusDisengaged(t *testing.T) {
+	client := usageDynamoClient(t)
+	resetControlItem(t, client)
+	ctx := context.Background()
+
+	if _, err := EngageKillswitch(ctx, client, usageRoundTripTable, "auto-trip"); err != nil {
+		t.Fatalf("EngageKillswitch: %v", err)
+	}
+
+	flipped, err := DisengageKillswitch(ctx, client, usageRoundTripTable)
+	if err != nil {
+		t.Fatalf("DisengageKillswitch: %v", err)
+	}
+	if !flipped {
+		t.Fatalf("DisengageKillswitch: flipped = false, want true (was engaged)")
+	}
+
+	status, err := ReadKillswitchStatus(ctx, client, usageRoundTripTable)
+	if err != nil {
+		t.Fatalf("ReadKillswitchStatus: %v", err)
+	}
+	if status.Engaged {
+		t.Errorf("status.Engaged = true, want false")
+	}
+	if status.Reason != "" {
+		t.Errorf("status.Reason = %q, want empty (D-09 explicit reset must clear the auto-trip reason)", status.Reason)
+	}
+}
+
+// TestKillswitch_RedundantOnNoOp: a second `on` while already engaged is a
+// harmless no-op (flipped=false, no error) — the conditional write's
+// ConditionalCheckFailedException must never surface as a command error.
+func TestKillswitch_RedundantOnNoOp(t *testing.T) {
+	client := usageDynamoClient(t)
+	resetControlItem(t, client)
+	ctx := context.Background()
+
+	first, err := EngageKillswitch(ctx, client, usageRoundTripTable, "operator")
+	if err != nil {
+		t.Fatalf("first EngageKillswitch: %v", err)
+	}
+	if !first {
+		t.Fatalf("first EngageKillswitch: flipped = false, want true")
+	}
+
+	second, err := EngageKillswitch(ctx, client, usageRoundTripTable, "operator")
+	if err != nil {
+		t.Fatalf("redundant EngageKillswitch returned an error, want harmless no-op: %v", err)
+	}
+	if second {
+		t.Errorf("redundant EngageKillswitch: flipped = true, want false (already engaged)")
+	}
+}
+
+// TestKillswitch_RedundantOffNoOp: an `off` while already disengaged (or
+// never engaged) is a harmless no-op.
+func TestKillswitch_RedundantOffNoOp(t *testing.T) {
+	client := usageDynamoClient(t)
+	resetControlItem(t, client)
+	ctx := context.Background()
+
+	flipped, err := DisengageKillswitch(ctx, client, usageRoundTripTable)
+	if err != nil {
+		t.Fatalf("DisengageKillswitch returned an error, want harmless no-op: %v", err)
+	}
+	if flipped {
+		t.Errorf("DisengageKillswitch: flipped = true, want false (already disengaged)")
 	}
 }
