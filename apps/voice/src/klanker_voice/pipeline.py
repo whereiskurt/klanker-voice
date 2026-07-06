@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import LLMRunFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -131,3 +131,24 @@ def register_greet_first(
     @transport.event_handler("on_client_connected")
     async def _on_client_connected(transport, client):  # noqa: ANN001 — pipecat handler shape
         await greet_now(worker, context)
+
+
+async def inject_warning_instruction(worker: PipelineWorker, context: LLMContext, copy: str) -> None:
+    """D-04 spoken wind-down (natural warning): push a high-priority
+    developer instruction into the LLM context and queue an ``LLMRunFrame``
+    so the concierge weaves the time-remaining warning into its very next
+    turn, in its own voice — the warning text is never spoken verbatim by
+    code (mirrors the :func:`greet_now` kick pattern)."""
+    context.add_message({"role": "developer", "content": copy})
+    await worker.queue_frames([LLMRunFrame()])
+
+
+async def speak_goodbye(worker: PipelineWorker, copy: str) -> None:
+    """D-04/D-05 spoken wind-down (deterministic goodbye): send ``copy``
+    straight to the TTS stage via ``TTSSpeakFrame`` — the TTS service
+    recognizes this frame directly regardless of pipeline position, so the
+    goodbye bypasses the LLM entirely (guaranteed stop, no prompt-injection
+    surface through it — T-04-19). ``append_to_context=False``: a
+    hard-close follows immediately after, so there is no future turn that
+    would need this line in context."""
+    await worker.queue_frames([TTSSpeakFrame(text=copy, append_to_context=False)])

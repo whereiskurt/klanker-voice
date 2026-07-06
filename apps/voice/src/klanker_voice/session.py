@@ -1,12 +1,15 @@
 """Per-session lifecycle: the precise in-memory service timer (D-02
 hard-stop), the 15s durability/accounting tick, ActiveSessions CloudWatch
-metric emission, and ECS task-scale-in protection (QUOT-02, D-02, D-10,
-D-13, INFR-06).
+metric emission, ECS task-scale-in protection (QUOT-02, D-02, D-10, D-13,
+INFR-06), and the D-04/D-05 spoken wind-down hooks (QUOT-03).
 
-04-05 fills the ``on_warning``/``on_stop`` callback bodies with the spoken
-wind-down (LLM-context injection at -30s, deterministic goodbye TTS at 0);
-here they default to an immediate hard close so the QUOT-02 hard-stop holds
-even before that ships.
+``on_warning``/``on_stop`` are callback hooks server.py builds once the real
+pipeline (worker/context/transport) exists for a session — this module never
+imports server.py or holds a transport reference itself, keeping the
+coupling one-directional (server.py -> session.py). The D-06/D-07 layered
+idle-teardown (transport disconnect + reconnect grace, user-silence
+watchdog, pipeline stall/error) lands in the very next plan revision on top
+of this same ``stop()`` path.
 
 Every AWS call in this module (CloudWatch, ECS, and — via
 :mod:`klanker_voice.quota` — DynamoDB) runs off the asyncio event loop via
@@ -40,9 +43,6 @@ METRIC_NAME = "ActiveSessions"
 #: task; absent in local/dev (same env var webrtc.py already keys off).
 METADATA_URI_ENV_VAR = "ECS_CONTAINER_METADATA_URI_V4"
 _METADATA_FETCH_TIMEOUT_SECS = 2.0
-
-#: How long before session_max the warning callback fires (D-04/D-05 lead time).
-WARNING_LEAD_SECONDS = 30
 
 Callback = Callable[[], Awaitable[None]]
 
@@ -118,6 +118,7 @@ class SessionLifecycle:
     _last_tick_at: float = field(default=0.0, init=False, repr=False)
     _is_first_tick: bool = field(default=True, init=False, repr=False)
     _stopped: bool = field(default=False, init=False, repr=False)
+    _wind_down_fired: bool = field(default=False, init=False, repr=False)
 
     async def start(self) -> None:
         """Increment the active-session count, emit the metric, acquire
@@ -141,7 +142,12 @@ class SessionLifecycle:
 
     async def stop(self) -> None:
         """Cancel the timer/tick tasks, decrement the count, emit the
-        metric, and release scale-in protection once no sessions remain."""
+        metric, and release scale-in protection once no sessions remain.
+
+        Safe to call concurrently or repeatedly — the guard check-and-set
+        below is synchronous (no ``await`` in between), so only the first of
+        any number of racing callers actually does anything.
+        """
         if self._stopped:
             return
         self._stopped = True
@@ -155,17 +161,28 @@ class SessionLifecycle:
         if is_last:
             await asyncio.to_thread(self._set_scale_in_protection, False)
 
+    async def _fire_wind_down(self) -> None:
+        """Invoke ``on_stop`` exactly once, no matter which trigger reaches
+        it first — the D-02 wall-clock cutoff and D-04's mid-session
+        daily/period-exhaustion hook both route here so the identical spoken
+        wind-down sequence never double-fires (e.g. exhaustion detected on
+        one 15s tick moments before the service timer's own cutoff)."""
+        if self._wind_down_fired:
+            return
+        self._wind_down_fired = True
+        await self.on_stop()
+
     async def _service_timer(self) -> None:
         """D-02: the precise in-memory stop clock — warning at
-        ``session_max - 30s``, stop at ``session_max``, independent of the
-        15s tick's own timing."""
+        ``session_max - winddown_warning_seconds`` (D-04), stop at
+        ``session_max``, independent of the 15s tick's own timing."""
         session_max = self.tier.session_max_seconds
-        warning_at = max(0.0, session_max - WARNING_LEAD_SECONDS)
+        warning_at = max(0.0, session_max - self.quota_config.winddown_warning_seconds)
         try:
             await asyncio.sleep(warning_at)
             await self.on_warning()
             await asyncio.sleep(max(0.0, session_max - warning_at))
-            await self.on_stop()
+            await self._fire_wind_down()
         except asyncio.CancelledError:
             raise
 
@@ -207,7 +224,9 @@ class SessionLifecycle:
             if self.on_daily_exhausted is not None:
                 await self.on_daily_exhausted()
             else:
-                await self.on_stop()
+                # D-04: identical wind-down as the D-02 service-timer cutoff,
+                # guarded so it never fires twice if both triggers race.
+                await self._fire_wind_down()
 
     def _emit_metric(self) -> None:
         try:

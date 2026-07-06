@@ -96,9 +96,21 @@ class PipelineConfig:
     persona: PersonaConfig
 
 
+#: Default D-04 wind-down copy (QUOT-03, 04-05). Lives here — not in a code
+#: comment — so `load_quota_config` can fall back to a real, spoken-ready
+#: string when `pipeline.toml` doesn't override it; the checked-in TOML sets
+#: its own copy so wording iterates without a code change.
+DEFAULT_WARNING_COPY = (
+    "Just a heads up: we're coming up on the time limit for this chat, so let's "
+    "start wrapping up."
+)
+DEFAULT_GOODBYE_COPY = "That's my cue to go — thanks for chatting, take care!"
+
+
 @dataclass(frozen=True)
 class QuotaConfig:
-    """Race-safe quota enforcement knobs (QUOT-01/02/04, D-01..D-03, D-09, D-14).
+    """Race-safe quota enforcement + wind-down/teardown knobs (QUOT-01/02/03/05,
+    D-01..D-03, D-04..D-07, D-09, D-14).
 
     Loaded independently of :class:`PipelineConfig` via :func:`load_quota_config`
     (not a ``PipelineConfig`` field) so existing pipeline-only fixtures/tests
@@ -113,6 +125,13 @@ class QuotaConfig:
     auto_trip_ceiling_seconds: float  # D-09: site-wide daily seconds ceiling
     auto_trip_ceiling_dollars: float  # D-09: site-wide daily est.-cost ceiling
     est_cost_per_second: float  # coarse blended cost estimate (CONTEXT.md: precision deferred)
+    # --- 04-05: spoken wind-down + layered idle teardown (QUOT-03/QUOT-05) ---
+    winddown_warning_seconds: float = 30.0  # D-04: lead time before session_max for the warning
+    goodbye_grace_seconds: float = 5.0  # D-05: cap on letting the goodbye TTS finish before hard-close
+    user_silence_timeout: float = 50.0  # D-06 layer 2: no user speech for this long -> teardown
+    reconnect_grace_seconds: float = 12.0  # D-07: transport-disconnect grace before teardown
+    warning_copy: str = DEFAULT_WARNING_COPY  # D-04: injected as a high-priority LLM instruction
+    goodbye_copy: str = DEFAULT_GOODBYE_COPY  # D-04/D-05: spoken straight to TTS, bypassing the LLM
 
 
 def _reject_credential_fields(data: object, path: str = "") -> None:
@@ -312,6 +331,26 @@ def load_quota_config(path: Path | str | None = None) -> QuotaConfig:
         "quota.est_cost_per_second", quota_table.get("est_cost_per_second", 0.005), 10.0
     )
 
+    # --- 04-05: spoken wind-down + layered idle teardown (QUOT-03/QUOT-05) ---
+    winddown_warning_seconds = _require_positive_under(
+        "quota.winddown_warning_seconds", quota_table.get("winddown_warning_seconds", 30), 600.0
+    )
+    goodbye_grace_seconds = _require_positive_under(
+        "quota.goodbye_grace_seconds", quota_table.get("goodbye_grace_seconds", 5), 60.0
+    )
+    user_silence_timeout = _require_range(
+        "quota.user_silence_timeout", quota_table.get("user_silence_timeout", 50), 10.0, 300.0
+    )
+    reconnect_grace_seconds = _require_range(
+        "quota.reconnect_grace_seconds", quota_table.get("reconnect_grace_seconds", 12), 1.0, 120.0
+    )
+    warning_copy = str(quota_table.get("warning_copy", DEFAULT_WARNING_COPY))
+    goodbye_copy = str(quota_table.get("goodbye_copy", DEFAULT_GOODBYE_COPY))
+    if not warning_copy.strip():
+        raise ConfigError("quota.warning_copy must not be empty")
+    if not goodbye_copy.strip():
+        raise ConfigError("quota.goodbye_copy must not be empty")
+
     return QuotaConfig(
         heartbeat_renew_interval=heartbeat_renew_interval,
         heartbeat_ttl=heartbeat_ttl,
@@ -320,4 +359,10 @@ def load_quota_config(path: Path | str | None = None) -> QuotaConfig:
         auto_trip_ceiling_seconds=auto_trip_ceiling_seconds,
         auto_trip_ceiling_dollars=auto_trip_ceiling_dollars,
         est_cost_per_second=est_cost_per_second,
+        winddown_warning_seconds=winddown_warning_seconds,
+        goodbye_grace_seconds=goodbye_grace_seconds,
+        user_silence_timeout=user_silence_timeout,
+        reconnect_grace_seconds=reconnect_grace_seconds,
+        warning_copy=warning_copy,
+        goodbye_copy=goodbye_copy,
     )

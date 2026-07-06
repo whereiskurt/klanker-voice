@@ -34,7 +34,7 @@ speed = 1.1                     # D-03: slightly above default; ElevenLabs WS ra
 [persona]
 prompt_path = "prompts/concierge.md"
 
-[quota]                            # QUOT-01/02/04, D-01..D-03/D-09/D-14 (04-04)
+[quota]                            # QUOT-01/02/03/04/05, D-01..D-09/D-14 (04-04/04-05)
 heartbeat_renew_interval = 15      # seconds between concurrency-lease renewals + accounting ticks
 heartbeat_ttl = 45                 # seconds; a crashed task's lease self-expires after this (3x renew interval)
 sub_floor_seconds = 30             # D-03: block a new session if remaining daily time is below this
@@ -42,3 +42,11 @@ per_task_max_sessions = 5          # D-14: per-task soft cap (design spec ~5 con
 auto_trip_ceiling_seconds = 7200   # D-09: site-wide daily seconds ceiling (2h aggregate) -> auto-engage kill-switch
 auto_trip_ceiling_dollars = 40     # D-09: site-wide daily est.-cost ceiling (coarse; ~$120-165/mo budget / ~4 active days)
 est_cost_per_second = 0.005        # coarse blended Deepgram+Haiku+ElevenLabs estimate (~$18/hr); precision deferred (CONTEXT.md)
+
+# 04-05: spoken wind-down + layered idle teardown (QUOT-03/QUOT-05, D-04..D-07)
+winddown_warning_seconds = 30      # D-04: lead time before session_max the warning is injected
+goodbye_grace_seconds = 5          # D-05: cap on letting the deterministic goodbye TTS finish before hard-close
+user_silence_timeout = 50          # D-06 layer 2: no user speech for this long (45-60s band) -> teardown
+reconnect_grace_seconds = 12       # D-07: transport-disconnect grace (10-15s band) before teardown
+warning_copy = "Just a heads up: we're coming up on the time limit for this chat, so let's start wrapping up."
+goodbye_copy = "That's my cue to go — thanks for chatting, take care!"
