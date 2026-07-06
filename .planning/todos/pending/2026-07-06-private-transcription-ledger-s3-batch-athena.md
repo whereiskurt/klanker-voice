@@ -27,12 +27,23 @@ posture. Not a blocker — recorded here as the decision.
 
 Capture-and-land pipeline (TBD on exact placement — see Open Questions):
 
-**Record shape (one row per user utterance):**
-- `transcript` — the phrase the user said (final STT text)
+**Record shape (one row per turn — BOTH sides of the conversation):**
+- `role` — "user" or "assistant" (the concierge). **Store both sides** (user decision
+  2026-07-06: "both sides of the text convo").
+- `text` — the utterance text (final STT for the user turn; spoken reply for assistant)
 - `email` — the authenticated user's email (from the JWT / session)
 - `ts` — timestamp / time of day (UTC epoch + local)
-- `code_hash` — hash of the access code used (e.g. SHA-256, NOT the raw code)
-- (candidates) `session_id`, `tier_id`, maybe the agent's reply text
+- `session_id` — groups one conversation together
+- `turn_seq` — monotonic per-session turn index so the back-and-forth reconstructs in
+  the exact order it happened (don't rely on `ts` alone — turns can share a second)
+- `code_hash` — salted hash of the access code used (NOT the raw code)
+- (candidate) `tier_id`
+
+**Primary UX (user, 2026-07-06):** "I want to easily see every back and forth like a
+convo." The point isn't a flat event log — it's to read each session as a threaded
+chat transcript. So the Athena query / admin report MUST group by `session_id` and
+order by `turn_seq` (fallback `ts`), rendering alternating user/assistant bubbles.
+This is the acceptance bar for the report view.
 
 **Backend style (as sketched by user):**
 1. Voice service emits each utterance record as it's transcribed (hook near the STT
@@ -51,16 +62,21 @@ Follows the existing SOPS→SSM / least-privilege task-role conventions.
 **Hashing note:** `code_hash` should be a stable salted hash so the same code groups
 together across rows without storing the plaintext code.
 
+## Resolved (user, 2026-07-06)
+
+1. **Both sides stored** — record user turns AND the concierge's replies (see `role`).
+2. **Format: newline-JSON** — "json is fine, no scaling concerns." No Parquet; ≤25 users.
+3. **Conversation view is the goal** — the report reads like a chat, grouped by session,
+   ordered by turn (see Primary UX above). This is the acceptance bar.
+4. **Placement leaning approved** — its own phase OR fold into Phase 7 (recorded-transcript
+   design already sketched), with the admin-report view as a slice of Phase 05.1. Final
+   pick still made at scheduling time, but the leaning is endorsed.
+
 ## Open Questions
 
-1. **Placement** — does this belong in Phase 7 (KPH Knowledge Base, which already has a
-   recorded-transcript design in 07-DESIGN-NOTES.md), a **new dedicated phase**, or an
-   extension of Phase 05.1's admin report? Leaning: its own phase or fold into Phase 7,
-   with the admin-report view as a slice of Phase 05.1. Decide at planning time.
-2. **Format** — newline-JSON (simplest) vs Parquet (cheaper Athena scans at scale). For
-   ≤25 users, JSON is fine; note the upgrade path.
-3. **Reply text** — store the agent's spoken reply alongside the user utterance, or user
-   phrases only? User asked for "every phrase the user asked" — default to user-only,
-   confirm if the concierge's replies are wanted too.
-4. Relationship to the existing `kmv-voice-usage` DynamoDB table — keep quota there,
-   transcripts in S3 (different access pattern), don't co-mingle.
+- Relationship to the existing `kmv-voice-usage` DynamoDB table — keep quota there,
+  transcripts in S3 (different access pattern), don't co-mingle. (Design detail for
+  planning, not a blocker.)
+- Where in the pipeline to tap both turns: user text from the STT/transcription frame,
+  assistant text from the LLM/TTS output frame — both carry `session_id`. Confirm the
+  exact Pipecat frames/observers at implementation time (`observers.py`).
