@@ -12,6 +12,21 @@
 # relative to apps/voice/, e.g. `client/` not `apps/voice/client/`.
 FROM node:22-slim AS client-build
 WORKDIR /client
+
+# Public OIDC client config, baked into the built bundle at build time
+# (CLNT-08, D-04, client/.env.example). There is NO secret here — this is a
+# PKCE public client (client/src/config/oidc.ts) — so defaulting these ARGs
+# to the real production values is safe; override via --build-arg for a
+# non-production image (e.g. a staging auth issuer).
+ARG VITE_OIDC_ISSUER=https://auth.klankermaker.ai/use1/api/oidc
+ARG VITE_OIDC_CLIENT_ID=voice
+ARG VITE_OIDC_AUDIENCE=https://voice.klankermaker.ai
+ARG VITE_OIDC_REDIRECT_URI=https://voice.klankermaker.ai/callback
+ENV VITE_OIDC_ISSUER=${VITE_OIDC_ISSUER} \
+    VITE_OIDC_CLIENT_ID=${VITE_OIDC_CLIENT_ID} \
+    VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE} \
+    VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI}
+
 # Dependency layer first (its own cache layer) so app-code edits don't bust
 # the slower npm-install cache — same rationale as the uv sync split below.
 COPY client/package.json client/package-lock.json ./
