@@ -33,3 +33,12 @@ speed = 1.1                     # D-03: slightly above default; ElevenLabs WS ra
 
 [persona]
 prompt_path = "prompts/concierge.md"
+
+[quota]                            # QUOT-01/02/04, D-01..D-03/D-09/D-14 (04-04)
+heartbeat_renew_interval = 15      # seconds between concurrency-lease renewals + accounting ticks
+heartbeat_ttl = 45                 # seconds; a crashed task's lease self-expires after this (3x renew interval)
+sub_floor_seconds = 30             # D-03: block a new session if remaining daily time is below this
+per_task_max_sessions = 5          # D-14: per-task soft cap (design spec ~5 concurrent/task) -> retryable reject
+auto_trip_ceiling_seconds = 7200   # D-09: site-wide daily seconds ceiling (2h aggregate) -> auto-engage kill-switch
+auto_trip_ceiling_dollars = 40     # D-09: site-wide daily est.-cost ceiling (coarse; ~$120-165/mo budget / ~4 active days)
+est_cost_per_second = 0.005        # coarse blended Deepgram+Haiku+ElevenLabs estimate (~$18/hr); precision deferred (CONTEXT.md)

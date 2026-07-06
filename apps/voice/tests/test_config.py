@@ -11,10 +11,23 @@ from klanker_voice.config import (
     CONFIG_PATH_ENV_VAR,
     ConfigError,
     PipelineConfig,
+    QuotaConfig,
     load_config,
+    load_quota_config,
 )
 
 REAL_PIPELINE_TOML = APP_ROOT / "pipeline.toml"
+
+VALID_QUOTA_TOML = """
+[quota]
+heartbeat_renew_interval = 15
+heartbeat_ttl = 45
+sub_floor_seconds = 30
+per_task_max_sessions = 5
+auto_trip_ceiling_seconds = 7200
+auto_trip_ceiling_dollars = 40
+est_cost_per_second = 0.005
+"""
 
 
 def test_real_checked_in_pipeline_toml_round_trips():
@@ -110,3 +123,77 @@ def test_explicit_path_beats_env_var(make_config_file, monkeypatch):
     monkeypatch.setenv(CONFIG_PATH_ENV_VAR, "/nonexistent/env-pointed.toml")
     cfg = load_config(make_config_file())
     assert cfg.stt.provider == "deepgram-nova3"
+
+
+# --- [quota] table (QuotaConfig, 04-04) ---
+
+
+def test_real_checked_in_pipeline_toml_quota_table_round_trips():
+    cfg = load_quota_config(REAL_PIPELINE_TOML)
+    assert isinstance(cfg, QuotaConfig)
+    assert cfg.heartbeat_renew_interval == 15
+    assert cfg.heartbeat_ttl == 45
+    assert cfg.per_task_max_sessions == 5
+    assert cfg.auto_trip_ceiling_seconds > 0
+    assert cfg.auto_trip_ceiling_dollars > 0
+    assert cfg.est_cost_per_second > 0
+
+
+def test_minimal_toml_without_quota_table_rejected_by_load_quota_config(make_config_file):
+    # [quota] is required for load_quota_config (unlike PipelineConfig's other
+    # tables) — the fixture's MINIMAL_TOML deliberately omits it.
+    path = make_config_file()
+    with pytest.raises(ConfigError, match="quota"):
+        load_quota_config(path)
+
+
+def test_valid_quota_table_parses(make_config_file):
+    path = make_config_file(append=VALID_QUOTA_TOML)
+    cfg = load_quota_config(path)
+    assert cfg == QuotaConfig(
+        heartbeat_renew_interval=15.0,
+        heartbeat_ttl=45.0,
+        sub_floor_seconds=30.0,
+        per_task_max_sessions=5,
+        auto_trip_ceiling_seconds=7200.0,
+        auto_trip_ceiling_dollars=40.0,
+        est_cost_per_second=0.005,
+    )
+
+
+def test_load_config_ignores_quota_table(make_config_file):
+    """load_config() (PipelineConfig) doesn't require or read [quota] at all —
+    it's a fully independent loader."""
+    path = make_config_file(append=VALID_QUOTA_TOML)
+    cfg = load_config(path)
+    assert isinstance(cfg, PipelineConfig)
+
+
+def test_heartbeat_ttl_must_exceed_renew_interval(make_config_file):
+    path = make_config_file(
+        append=VALID_QUOTA_TOML.replace("heartbeat_ttl = 45", "heartbeat_ttl = 10")
+    )
+    with pytest.raises(ConfigError, match="heartbeat_ttl"):
+        load_quota_config(path)
+
+
+@pytest.mark.parametrize(
+    "old,new,field",
+    [
+        ("sub_floor_seconds = 30", "sub_floor_seconds = -5", "sub_floor_seconds"),
+        ("per_task_max_sessions = 5", "per_task_max_sessions = 0", "per_task_max_sessions"),
+        ("auto_trip_ceiling_seconds = 7200", "auto_trip_ceiling_seconds = -1", "auto_trip_ceiling_seconds"),
+        ("auto_trip_ceiling_dollars = 40", "auto_trip_ceiling_dollars = 0", "auto_trip_ceiling_dollars"),
+        ("est_cost_per_second = 0.005", "est_cost_per_second = -0.001", "est_cost_per_second"),
+    ],
+)
+def test_out_of_range_quota_knobs_rejected(make_config_file, old, new, field):
+    path = make_config_file(append=VALID_QUOTA_TOML.replace(old, new))
+    with pytest.raises(ConfigError, match=field):
+        load_quota_config(path)
+
+
+def test_quota_table_credential_looking_field_rejected(make_config_file):
+    path = make_config_file(append=VALID_QUOTA_TOML + '\napi_key = "sk-oops"\n')
+    with pytest.raises(ConfigError, match="credential"):
+        load_quota_config(path)

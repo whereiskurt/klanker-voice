@@ -96,6 +96,25 @@ class PipelineConfig:
     persona: PersonaConfig
 
 
+@dataclass(frozen=True)
+class QuotaConfig:
+    """Race-safe quota enforcement knobs (QUOT-01/02/04, D-01..D-03, D-09, D-14).
+
+    Loaded independently of :class:`PipelineConfig` via :func:`load_quota_config`
+    (not a ``PipelineConfig`` field) so existing pipeline-only fixtures/tests
+    that omit ``[quota]`` are unaffected — only quota.py/session.py callers
+    need this.
+    """
+
+    heartbeat_renew_interval: float  # seconds between ticks (D-01/D-02)
+    heartbeat_ttl: float  # seconds; a crashed task's lease self-expires after this
+    sub_floor_seconds: float  # D-03: block session start below this much remaining daily time
+    per_task_max_sessions: int  # D-14: per-task soft cap -> retryable at-capacity reject
+    auto_trip_ceiling_seconds: float  # D-09: site-wide daily seconds ceiling
+    auto_trip_ceiling_dollars: float  # D-09: site-wide daily est.-cost ceiling
+    est_cost_per_second: float  # coarse blended cost estimate (CONTEXT.md: precision deferred)
+
+
 def _reject_credential_fields(data: object, path: str = "") -> None:
     """Recursively reject any field whose name suggests credential material."""
     if isinstance(data, dict):
@@ -134,19 +153,21 @@ def _require_table(data: dict, name: str) -> dict:
     return table
 
 
-def load_config(path: Path | str | None = None) -> PipelineConfig:
-    """Parse and validate a pipeline TOML file into a ``PipelineConfig``.
-
-    Resolution order for the config path:
-    1. explicit ``path`` argument,
-    2. ``KLANKER_PIPELINE_CONFIG`` env var,
-    3. ``apps/voice/pipeline.toml``.
-    """
+def _resolve_config_path(path: Path | str | None) -> Path:
+    """Resolution order: explicit ``path`` arg -> ``KLANKER_PIPELINE_CONFIG``
+    env var -> ``apps/voice/pipeline.toml``."""
     if path is None:
         env_path = os.environ.get(CONFIG_PATH_ENV_VAR)
         path = Path(env_path) if env_path else DEFAULT_CONFIG_PATH
-    path = Path(path).expanduser().resolve()
+    return Path(path).expanduser().resolve()
 
+
+def _load_toml_data(path: Path) -> dict:
+    """Parse ``path`` as TOML and reject any credential-looking field (T-1-04).
+
+    Shared by :func:`load_config` and :func:`load_quota_config` so both stay
+    subject to the same "no secrets in TOML" gate on the same file.
+    """
     if not path.is_file():
         raise ConfigError(f"pipeline config not found: {path}")
 
@@ -157,6 +178,19 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
             raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
 
     _reject_credential_fields(data)
+    return data
+
+
+def load_config(path: Path | str | None = None) -> PipelineConfig:
+    """Parse and validate a pipeline TOML file into a ``PipelineConfig``.
+
+    Resolution order for the config path:
+    1. explicit ``path`` argument,
+    2. ``KLANKER_PIPELINE_CONFIG`` env var,
+    3. ``apps/voice/pipeline.toml``.
+    """
+    path = _resolve_config_path(path)
+    data = _load_toml_data(path)
 
     stt_table = _require_table(data, "stt")
     turn_table = _require_table(data, "turn")
@@ -234,3 +268,56 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
     persona = PersonaConfig(prompt_path=prompt_path)
 
     return PipelineConfig(stt=stt, turn=turn, llm=llm, tts=tts, persona=persona)
+
+
+def load_quota_config(path: Path | str | None = None) -> QuotaConfig:
+    """Parse and validate the ``[quota]`` table into a ``QuotaConfig``.
+
+    Same file/path resolution as :func:`load_config`; ``[quota]`` is required
+    (unlike ``PipelineConfig``'s other tables, no quota-consuming caller ever
+    wants silent defaults for budget-guardrail numbers).
+    """
+    path = _resolve_config_path(path)
+    data = _load_toml_data(path)
+    quota_table = _require_table(data, "quota")
+
+    heartbeat_renew_interval = _require_positive_under(
+        "quota.heartbeat_renew_interval", quota_table.get("heartbeat_renew_interval", 15), 300.0
+    )
+    heartbeat_ttl = _require_positive_under(
+        "quota.heartbeat_ttl", quota_table.get("heartbeat_ttl", 45), 600.0
+    )
+    if heartbeat_ttl <= heartbeat_renew_interval:
+        raise ConfigError(
+            "quota.heartbeat_ttl must exceed quota.heartbeat_renew_interval "
+            f"(got ttl={heartbeat_ttl}, renew_interval={heartbeat_renew_interval})"
+        )
+    sub_floor_seconds = _require_range(
+        "quota.sub_floor_seconds", quota_table.get("sub_floor_seconds", 30), 0.0, 600.0
+    )
+    per_task_max_sessions = int(
+        _require_positive_under(
+            "quota.per_task_max_sessions", quota_table.get("per_task_max_sessions", 5), 100.0
+        )
+    )
+    auto_trip_ceiling_seconds = _require_positive_under(
+        "quota.auto_trip_ceiling_seconds",
+        quota_table.get("auto_trip_ceiling_seconds", 7200),
+        86400.0 * 7,
+    )
+    auto_trip_ceiling_dollars = _require_positive_under(
+        "quota.auto_trip_ceiling_dollars", quota_table.get("auto_trip_ceiling_dollars", 40), 10000.0
+    )
+    est_cost_per_second = _require_positive_under(
+        "quota.est_cost_per_second", quota_table.get("est_cost_per_second", 0.005), 10.0
+    )
+
+    return QuotaConfig(
+        heartbeat_renew_interval=heartbeat_renew_interval,
+        heartbeat_ttl=heartbeat_ttl,
+        sub_floor_seconds=sub_floor_seconds,
+        per_task_max_sessions=per_task_max_sessions,
+        auto_trip_ceiling_seconds=auto_trip_ceiling_seconds,
+        auto_trip_ceiling_dollars=auto_trip_ceiling_dollars,
+        est_cost_per_second=est_cost_per_second,
+    )
