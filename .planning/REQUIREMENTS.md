@@ -21,7 +21,7 @@
 - [ ] **CLNT-02**: User sees a connection state machine with clear messaging for ICE failure / UDP-blocked networks, with auto-retry
 - [x] **CLNT-03**: User sees live captions for both sides of the conversation
 - [x] **CLNT-04**: User sees a state-aware orb visualization (listening / thinking / speaking)
-- [ ] **CLNT-05**: User sees a visible session countdown timer
+- [x] **CLNT-05**: User sees a visible session countdown timer
 - [x] **CLNT-06**: User can toggle a latency HUD showing per-stage pipeline latency (also serves as the tuning instrument)
 - [ ] **CLNT-07**: User gets a clean session end and one-click reconnect that re-checks quota before reconnecting
 - [x] **CLNT-08**: User signs in via OIDC redirect to auth.klankermaker.ai before the mic is available
@@ -97,7 +97,7 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | CLNT-02 | Phase 5 | Pending |
 | CLNT-03 | Phase 5 | Complete |
 | CLNT-04 | Phase 5 | Complete |
-| CLNT-05 | Phase 5 | Pending |
+| CLNT-05 | Phase 5 | Complete |
 | CLNT-06 | Phase 5 | Complete |
 | CLNT-07 | Phase 5 | Pending |
 | CLNT-08 | Phase 5 | Complete |
