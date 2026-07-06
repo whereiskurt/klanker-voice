@@ -74,6 +74,21 @@ resource "aws_security_group" "http_only" {
       security_groups  = []
     },
     {
+      # Phase 4 (04-03 deploy checkpoint): public HTTPS on the internet-facing ALB.
+      # Phase 2 left the 443 listener's ingress mgmt-only ("TLS handshake deferred to
+      # Phase 4 by design", STATE.md); voice.klankermaker.ai is a public endpoint, so
+      # 443 must accept the internet. Tasks in this SG listen on 7860, not 443.
+      description      = "HTTPS port to public (ALB 443 listener)"
+      from_port        = 443
+      to_port          = 443
+      protocol         = "tcp"
+      cidr_blocks      = ["0.0.0.0/0"]
+      ipv6_cidr_blocks = []
+      self             = true
+      prefix_list_ids  = []
+      security_groups  = []
+    },
+    {
       description      = "HTTP port 8080 to VPC"
       from_port        = 8080
       to_port          = 8080
