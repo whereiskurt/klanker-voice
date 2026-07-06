@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Local Pipeline & Latency Harness** - Tuned cascaded pipeline runs locally with three API keys; harness proves ≤1.2s and real barge-in
 - [x] **Phase 2: Infra Skeleton** - Terragrunt site "kmv" provisions the AWS foundation; SES production-access request goes out week one
 - [x] **Phase 3: Auth Service & Access Codes** - run.auth port issues JWT access tokens with tier claims; access-code→tier flow and first `kv` commands (completed 2026-07-05)
-- [ ] **Phase 4: Voice Service Deployed & Quota Enforcement** - Quota-gated sessions run on public-IP Fargate with verified ICE/UDP media and the full operator loop
+- [x] **Phase 4: Voice Service Deployed & Quota Enforcement** - Quota-gated sessions run on public-IP Fargate with verified ICE/UDP media and the full operator loop (completed 2026-07-06)
 - [ ] **Phase 5: Browser Client & Conference Readiness** - Public sign-in → mic → conversation experience with captions, orb, timer, and HUD, verified on real devices and networks
 
 ## Phase Details
@@ -115,7 +115,7 @@ Plans:
   4. Site-wide kill-switch gates new sessions, and abandoned sessions are torn down via layered idle detection with a server-side wall-clock outer bound
   5. Voice service autoscales 1→4 tasks with scale-in protection during active sessions, and operator can view today's usage and flip the kill-switch via `kv`
 
-**Plans**: 4/6 plans executed
+**Plans**: 6/6 plans complete
 
 Plans:
 **Wave 1**
@@ -133,8 +133,8 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 04-05-PLAN.md — Spoken wind-down (natural warning + deterministic goodbye) + three-layer idle teardown + reconnect grace (QUOT-03, QUOT-05)
-- [ ] 04-06-PLAN.md — Operator loop: `kv usage` + `kv killswitch` + autoscale verification (QUOT-04, KV-03, KV-04, INFR-06)
+- [x] 04-05-PLAN.md — Spoken wind-down (natural warning + deterministic goodbye) + three-layer idle teardown + reconnect grace (QUOT-03, QUOT-05)
+- [x] 04-06-PLAN.md — Operator loop: `kv usage` + `kv killswitch` + autoscale verification (QUOT-04, KV-03, KV-04, INFR-06)
 
 **Waves:** 1 → {04-01, 04-02}; 2 → {04-03}; 3 → {04-04}; 4 → {04-05, 04-06 parallel}
 
@@ -217,7 +217,7 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 1. Local Pipeline & Latency Harness | 5/5 | ✅ Complete (verified 5/5, amended) | 2026-07-05 |
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 4/4 | ✅ Complete (verified 4/5; #3 guidance→Phase 5, seed done) | 2026-07-05 |
-| 4. Voice Service Deployed & Quota Enforcement | 4/6 | In Progress|  |
+| 4. Voice Service Deployed & Quota Enforcement | 6/6 | Complete   | 2026-07-06 |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
 | 7. KPH Knowledge Base | 0/4 | Planned (4 plans, 3 waves) | - |

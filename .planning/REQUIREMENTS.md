@@ -56,8 +56,8 @@
 
 - [ ] **KV-01**: Operator can create, list, and expire access codes with tier mapping via `kv`
 - [ ] **KV-02**: Operator can define and list tiers (session/daily/concurrency limits) via `kv`
-- [ ] **KV-03**: Operator can view today's usage per user and site-wide via `kv`
-- [ ] **KV-04**: Operator can flip the site-wide kill-switch via `kv`
+- [x] **KV-03**: Operator can view today's usage per user and site-wide via `kv`
+- [x] **KV-04**: Operator can flip the site-wide kill-switch via `kv`
 - [x] **KV-05**: Operator can run a deployed smoke test (offer + ICE reachability) via `kv`
 
 ## v2 Requirements (Deferred)

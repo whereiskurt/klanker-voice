@@ -188,3 +188,13 @@ None for local test execution — dynamodb-local (`kmv-voice-usage`, already liv
 - FOUND: kv/internal/app/cmd/usage_killswitch_test.go
 - FOUND commit: baaafc3 (Task 1)
 - FOUND commit: 4aab425 (Task 2)
+
+---
+## Task 3 — Operator loop live verification (COMPLETE 2026-07-05, orchestrator-driven)
+
+Verified against the live deployed service (image 0.1.0, task def rev 2):
+- `kv killswitch status` → engaged=false; `on --reason "..."` → engaged=true w/ reason; `off` → engaged=false. Control item round-trips through the live `kmv-voice-usage` table (D-08/D-09, **KV-04 verified**).
+- `kv usage today` → `2026-07-06 · 0s · 0 sessions · $0.00` — reads the site-wide rollup item (**KV-03 verified**; 0 because the smoke path bypasses accounting per D-15).
+- `kv smoke` on the redeployed 0.1.0 image → PASS (ICE connected, host+srflx, 244 RTP) — transport intact after redeploy.
+- INFR-06: scalable target min1/max4 registered; TargetTracking policy `custom-metric-voice-use1` on `ActiveSessions` (ns klanker-voice/ecs, target 2.0); scale-in protection wired in session.py + task-role `ecs:UpdateTaskProtection` (**INFR-06 verified**).
+- NOTE: "kill-switch blocks a real user session" and the auto-trip ceiling were NOT exercised end-to-end — the smoke credential bypasses gating by design (D-15), and a real user session needs a JWT via the auth magic-link flow → Phase 5 real-device pass.

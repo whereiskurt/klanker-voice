@@ -164,3 +164,8 @@ None for local test execution — dynamodb-local (already running on `localhost:
 - FOUND: apps/voice/tests/test_teardown.py
 - FOUND commit: f5f3b4e (Task 1)
 - FOUND commit: dc2b64b (Task 2)
+
+---
+## Task 3 — Wind-down/teardown live behavior (DEFERRED to Phase 5 real-device pass)
+
+Code + 151 unit tests complete (hybrid warning + deterministic goodbye, three teardown layers, reconnect grace). The remaining verification is human-sensory — "confirm the goodbye sounds natural" and network-drop teardown/reconnect on a real audio session — which requires the browser client (Phase 5, CLNT-*). This matches the design's own deferral of real-device UX verification to Phase 5. QUOT-03/QUOT-05 logic is unit-verified; live behavioral sign-off rides the Phase-5 device pass.
