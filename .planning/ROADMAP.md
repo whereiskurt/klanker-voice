@@ -115,7 +115,7 @@ Plans:
   4. Site-wide kill-switch gates new sessions, and abandoned sessions are torn down via layered idle detection with a server-side wall-clock outer bound
   5. Voice service autoscales 1→4 tasks with scale-in protection during active sessions, and operator can view today's usage and flip the kill-switch via `kv`
 
-**Plans**: 3/6 plans executed
+**Plans**: 4/6 plans executed
 
 Plans:
 **Wave 1**
@@ -129,7 +129,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 04-04-PLAN.md — Race-safe quota: usage model, start-gate (typed rejects+sub-floor+per-task cap), heartbeat lease, service timer, 15s tick+rollup+auto-trip, hard-stop, ActiveSessions metric+scale-in protection (QUOT-01, QUOT-02, QUOT-04, INFR-06)
+- [x] 04-04-PLAN.md — Race-safe quota: usage model, start-gate (typed rejects+sub-floor+per-task cap), heartbeat lease, service timer, 15s tick+rollup+auto-trip, hard-stop, ActiveSessions metric+scale-in protection (QUOT-01, QUOT-02, QUOT-04, INFR-06)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -217,7 +217,7 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 1. Local Pipeline & Latency Harness | 5/5 | ✅ Complete (verified 5/5, amended) | 2026-07-05 |
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 4/4 | ✅ Complete (verified 4/5; #3 guidance→Phase 5, seed done) | 2026-07-05 |
-| 4. Voice Service Deployed & Quota Enforcement | 3/6 | In Progress|  |
+| 4. Voice Service Deployed & Quota Enforcement | 4/6 | In Progress|  |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
 | 7. KPH Knowledge Base | 0/4 | Planned (4 plans, 3 waves) | - |

@@ -36,10 +36,10 @@
 
 ### Quota Enforcement
 
-- [ ] **QUOT-01**: Session start is blocked when tier session-length, daily, or concurrency limits are exceeded (DynamoDB conditional writes — race-safe)
-- [ ] **QUOT-02**: Usage increments via conditional-write ticks during the session; the session hard-stops at the cap
+- [x] **QUOT-01**: Session start is blocked when tier session-length, daily, or concurrency limits are exceeded (DynamoDB conditional writes — race-safe)
+- [x] **QUOT-02**: Usage increments via conditional-write ticks during the session; the session hard-stops at the cap
 - [ ] **QUOT-03**: Agent speaks a time warning ~30s before cutoff and says a graceful goodbye at zero (also on daily-quota exhaustion mid-session)
-- [ ] **QUOT-04**: Site-wide daily budget kill-switch gates new sessions with a friendly page
+- [x] **QUOT-04**: Site-wide daily budget kill-switch gates new sessions with a friendly page
 - [ ] **QUOT-05**: Abandoned sessions are torn down via layered idle detection with a server-side absolute session wall-clock as the outer bound
 
 ### Infrastructure
@@ -49,7 +49,7 @@
 - [x] **INFR-03**: WebRTC delta works deployed: public-IP Fargate tasks, wide UDP SG range, STUN-advertised srflx candidates — verified by a deployed ICE smoke test
 - [ ] **INFR-04**: SES production access and DKIM for klankermaker.ai (request started week 1)
 - [ ] **INFR-05**: Provider API keys flow SOPS → SSM SecureString → container secrets
-- [ ] **INFR-06**: Voice service autoscales 1→4 tasks with scale-in protection while sessions are active
+- [x] **INFR-06**: Voice service autoscales 1→4 tasks with scale-in protection while sessions are active
 - [x] **INFR-07**: GitHub Actions deploys via OIDC roles (no long-lived AWS keys)
 
 ### kv CLI (Go)
@@ -106,17 +106,17 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | AUTH-03 | Phase 3 | Pending |
 | AUTH-04 | Phase 3 | Pending |
 | AUTH-05 | Phase 3 | Pending |
-| QUOT-01 | Phase 4 | Pending |
-| QUOT-02 | Phase 4 | Pending |
+| QUOT-01 | Phase 4 | Complete |
+| QUOT-02 | Phase 4 | Complete |
 | QUOT-03 | Phase 4 | Pending |
-| QUOT-04 | Phase 4 | Pending |
+| QUOT-04 | Phase 4 | Complete |
 | QUOT-05 | Phase 4 | Pending |
 | INFR-01 | Phase 2 | Complete |
 | INFR-02 | Phase 2 | Pending |
 | INFR-03 | Phase 4 | Complete |
 | INFR-04 | Phase 2 | Pending |
 | INFR-05 | Phase 2 | Pending |
-| INFR-06 | Phase 4 | Pending |
+| INFR-06 | Phase 4 | Complete |
 | INFR-07 | Phase 2 | Complete |
 | KV-01 | Phase 3 | Pending |
 | KV-02 | Phase 3 | Pending |
