@@ -161,7 +161,7 @@ Plans:
 
 **Goal**: Close the gap from the accepted ~1402ms p50 local baseline to ≤1.2s voice-to-voice (aspiration ~800ms), measured on the deployed service
 **Mode:** mvp
-**Depends on**: Phase 1 (pipeline), Phase 4 (deployed measurement baseline); executes after Phase 5 unless schedule slack allows earlier
+**Depends on**: Phase 1 (pipeline), Phase 4 (deployed measurement baseline); executes after Phase 7 (2026-07-05 reorder — Phase 7 runs before Phase 6)
 **Origin**: 01-04 re-escalation decision (user: "accept + scope later phase"); levers recorded in docs/TUNING.md § RE-ESCALATION
 **Success Criteria** (what must be TRUE):
 
@@ -177,7 +177,7 @@ Plans:
 **Scoped**: 2026-07-05
 **Goal**: KPH answers with deep, current knowledge of Kurt's world — klanker-maker, defcon.run, meshtk, and selected repos/scripts — without breaking the voice-latency budget
 **Mode:** mvp
-**Depends on**: Phase 1 (pipeline); complements Phase 6 (ack-masking masks retrieval latency)
+**Depends on**: Phase 1 (pipeline); complements Phase 6 (ack-masking masks retrieval latency). **Execution order: runs BEFORE Phase 6** (2026-07-05 user reorder).
 **Origin**: User at Phase-1 sign-off: "massive RAG or something really smart that can steer... all of the knowledge of my repos, and some scripts and stuff I'd train it on"
 **Success Criteria** (what must be TRUE):
 
@@ -209,7 +209,8 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have no interdependency and may run in parallel)
+Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1 and 2 have no interdependency and may run in parallel).
+**Reorder (2026-07-05, user decision):** after Phase 5, run **Phase 7 (KPH Knowledge Base) before Phase 6 (Latency v2)** — Phase 7 is content/knowledge work depending only on Phase 1, and is the higher priority; Phase 6 latency tuning follows. Phase numbers are unchanged — only the execution order.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
