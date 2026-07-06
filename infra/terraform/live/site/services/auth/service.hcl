@@ -118,7 +118,7 @@ locals {
           { name = "SITE_DOMAIN", value = "{{SITE_DOMAIN}}" },
           { name = "AUTH_PUBLIC_URL", value = "https://auth.{{SITE_DOMAIN}}/use1" },
           { name = "NEXTAUTH_URL", value = "https://auth.{{SITE_DOMAIN}}/use1" },
-          { name = "AUTH_COOKIE_DOMAIN", value = "auth.{{SITE_DOMAIN}}" },
+          { name = "AUTH_COOKIE_DOMAIN", value = ".{{SITE_DOMAIN}}" },
           { name = "AUTH_DYNAMODB_DBNAME", value = "kmv-auth-authjs" },
           { name = "AUTH_ELECTRO_DBNAME", value = "kmv-auth-electro" },
           { name = "AUTH_VOICE_USAGE_DBNAME", value = "kmv-voice-usage" },

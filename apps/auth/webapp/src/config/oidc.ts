@@ -254,6 +254,10 @@ const configuration: Configuration = {
       const grant = new oidc.Grant({ accountId, clientId });
       if (scope) {
         grant.addOIDCScope(scope);
+        // Resource-indicator client (see interaction/[uid].ts): "voice" is a
+        // RESOURCE scope. It must be granted against the voice resource or the
+        // consent check `rs_scopes_missing` loops the warm prompt=none re-auth.
+        grant.addResourceScope(config.oidc.voiceResource, scope);
       }
       const grantId = await grant.save();
       return grantId;
