@@ -106,7 +106,12 @@ locals {
     containers = [
       {
         name      = "voice-app"
-        image     = "voice-app:0.1.0"
+        # Image tag is env-driven so the CI/OIDC deploy path (deploy.yml) can
+        # deploy the immutable ${github.sha} image it just built, while local /
+        # manual `terragrunt apply` falls back to the last known-good preview tag.
+        # (Was a hardcoded string; TF_VAR_VOICE_IMAGE_TAG closes the build/deploy
+        # tag mismatch — build-voice.yml pushes :sha but deploy.yml applied :tag.)
+        image     = "voice-app:${get_env("TF_VAR_VOICE_IMAGE_TAG", "0.1.0")}"
         cpu       = 1024
         memory    = 2048
         essential = true
