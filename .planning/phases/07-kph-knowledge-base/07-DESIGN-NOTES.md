@@ -92,8 +92,66 @@ now serves **THREE uses**: (a) KPHv1 ElevenLabs voice clone, (b) knowledge corpu
   Planner: keep the style layer separate from the per-topic packs; the router prompt +
   style layer are the always-loaded stable prefix, per-topic packs append after.
 
+## Amendment 3 — local retrieval for real depth + per-source corpus prep (2026-07-06, from Kurt: "smart and deep")
+
+Kurt reprioritized Phase 7 to run next, explicitly to make the concierge "smart and deep."
+On review, the planned design (curated per-topic packs, no retrieval) has a hard ceiling:
+depth = one distilled long-form paragraph per system; it CANNOT answer ad-hoc detail from
+the raw repos (km alone is ~1,960 md files). This amendment **deliberately reopens D-10/D-11
+(no-retrieval)** to add a bounded local retrieval path.
+
+**A. Retrieval added — local, keyless.** Engine = **SQLite FTS5 with BM25** (stdlib
+`sqlite3`, in-process, ~tens of ms over thousands of files). No embeddings, **no 4th vendor**
+— respects the three-key constraint (PIPE-07). Full semantic RAG was considered and rejected
+for launch (vendor/infra/latency cost).
+
+**B. Flow — two-tier preserved, retrieval is topic-scoped.** Shallow one-liners still answer
+instantly from the cached hooks in `system[0]` (no retrieval, no ack). When a question engages
+a topic, the router fires the "let me dig in" ack, then the **deep turn** injects into the
+swappable `system[1]` block BOTH the curated pack (framing + Kurt style) AND the **top-k
+retrieved chunks from the classified topic's corpus** (uses the router's existing topic
+classification — retrieval is scoped to that topic, not global). The ack masks the retrieval +
+larger-prompt TTFT.
+
+**C. Injection budget.** Default **top-4 chunks (~1.5k tokens), tunable**. Retrieved chunks go
+in `system[1]` (uncached) ONLY — never `system[0]` (keeps the cache prefix byte-identical,
+Pitfall 3).
+
+**D. Per-source corpus prep (retrieval quality = corpus quality; sources are uneven).**
+- **km** — rich docs + a detailed diagram. Index the docs directly (high signal). Ingest the
+  diagram as **text** (its mermaid/excalidraw source, or a described legend if it's an image)
+  so its structure is searchable.
+- **defcon.run.34 + meshtk** — "really the code." Raw source retrieves noisily for voice. Run
+  an **offline LLM doc-generation pass** (a "grill-me-with-docs"-style pass; the exact tool is
+  swappable) to produce structured explanatory docs FROM the code. Index the **generated docs
+  as the primary corpus**, raw code as a **secondary layer** for exact detail.
+- **klanker-voice (self)** — document knowledge-first as it's built. **Phase 8 (Documentation
+  & Architecture) is the feeder** — its README/architecture docs ARE the concierge's knowledge
+  about klanker-voice. One doc effort, two payoffs.
+
+**E. Scrubber demoted — corpus is all public.** The do-not-say scrubber is **no longer a
+build-blocking security gate** (reverses its D-01/D-02 "foundational control, refuse-on-finding"
+framing). Replaced by a **thin advisory lint**: regexes for AWS account IDs, role ARNs, key
+blocks, and internal/`.local`/Cloud Map hostnames that **FLAG** hits in the offline refresh
+git-diff for human review — never blocks. Rationale: the LLM doc-gen-over-code path can surface
+things that are public-in-repo but shouldn't be volunteered aloud (e.g. account `481723467561`);
+flag for the reviewer, don't gate the build. The git-diff human review (D-09) remains.
+
+**F. Cross-system synthesis is OUT for launch.** Topic-scoped retrieval loads one topic, so
+questions like "how does km relate to defcon.run's infra?" are not a launch target. Future
+lever: multi-topic retrieval or a cross-linked knowledge map.
+
+**G. Offline discipline preserved.** ALL corpus-building — doc-generation, index build, the
+advisory lint — is offline (refresh workflow). Runtime = load index + one BM25 query + inject.
+The ≤1.2s loop is untouched; the deep-turn cost is ack-masked.
+
 ## Status
 
-Not scoped into a plan yet — Phase 7 is still at CONTEXT stage. When Phase 7 is planned,
-the planner should treat this note (both amendments) as a design amendment to 07-CONTEXT.md
-and reconcile D-10/D-11/D-13 accordingly. No code exists for any of this.
+Amendments 1–3 are the **design of record**. Phase 7 was already broken into plans 07-01..04,
+but **those plans predate Amendment 3** (they assume no retrieval + a build-blocking scrubber).
+They must be **regenerated / reconciled** to add: the retrieval subsystem (FTS5 index build in
+`refresh_knowledge.py`; a retrieval step in/beside `KnowledgeRouterProcessor` that injects
+top-k into `system[1]`), the per-source doc-generation step, the scrubber→advisory-lint
+demotion, and evals that measure retrieval DEPTH/coverage (not just a fixed expected-facts
+list). Next action: `/gsd-plan-phase 7` to re-plan against all three amendments. No code exists
+for any of this yet.
