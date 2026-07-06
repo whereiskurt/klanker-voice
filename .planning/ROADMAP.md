@@ -268,3 +268,22 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 5. Browser Client & Conference Readiness | 7/7 | Complete   | 2026-07-06 |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
 | 7. KPH Knowledge Base | 0/4 | Planned (4 plans, 3 waves) | - |
+
+### Phase 8: Documentation & Architecture
+
+**Goal**: A newcomer (or future-KPH) can understand and operate klanker-voice from docs alone — a polished system architecture diagram plus written documentation (README, architecture narrative, deploy/runbook) covering the full AWS -> Pipecat pipeline (VAD -> STT -> LLM -> TTS) -> auth/OIDC -> DynamoDB topology, the operator loop (`kv`, `/admin`), and the quota/kill-switch model
+**Mode:** mvp
+**Depends on**: Phase 7 (documents the whole finished system, including the concierge knowledge base)
+**Design assets**: docs/superpowers/specs/2026-07-04-klanker-voice-design.md (authoritative); starter architecture diagram exported 2026-07-06 (Excalidraw)
+**Success Criteria** (what must be TRUE):
+
+  1. A system architecture diagram exists (committed source, e.g. `.excalidraw` + exported PNG/SVG) showing client -> auth/OIDC/JWT -> Fargate voice service -> Pipecat pipeline -> hosted APIs, plus the AWS data/platform layer
+  2. A top-level README orients a newcomer: what the project is, the app layout (`apps/voice`, `apps/auth`, `kv`, `infra`), and how to run each locally
+  3. An architecture narrative explains the request/session lifecycle, the tier/quota/kill-switch model, and the auth token contract
+  4. A deploy/runbook covers deploying the voice + auth services, rotating secrets, issuing codes, and using the operator surfaces (`kv`, `/admin`)
+
+**Plans**: TBD
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 8 to break down)

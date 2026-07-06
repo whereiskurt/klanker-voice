@@ -4,15 +4,15 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: "OVERNIGHT DONE: Phase 5 client 7/7 code-complete + verified (human_needed=live pass); deploy.yml de-coupled; branch pushed. NEXT (user-awake): auth standup + deploy, then live AWS validation. Phase 7 NOT started — needs km/klanker-maker repo locally (only defcon.run.34+meshtk present) + user knowledge steering."
-last_updated: "2026-07-06T07:29:13.908Z"
+last_updated: "2026-07-06T19:50:46.703Z"
 last_activity: 2026-07-06
 last_activity_desc: Phase 05 execution started
 progress:
-  total_phases: 8
+  total_phases: 9
   completed_phases: 5
   total_plans: 33
   completed_plans: 29
-  percent: 63
+  percent: 56
 current_phase: 5
 current_phase_name: Browser Client & Conference Readiness
 ---
@@ -135,6 +135,7 @@ Recent decisions affecting current work:
 ### Roadmap Evolution
 
 - Phase 05.1 inserted after Phase 5: Operator Admin Panel — gated /admin in auth app (operational-only; transcripts deferred to Phase 7) (URGENT)
+- Phase 8 added: Documentation & Architecture — polished system diagram + README/architecture/runbook (starter Excalidraw diagram exported 2026-07-06)
 
 ## Deferred Items
 
