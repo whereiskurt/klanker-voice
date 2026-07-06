@@ -39,11 +39,12 @@ from pipecat.transports.smallwebrtc.request_handler import (
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
-from klanker_voice import quota
+from klanker_voice import quota, session
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
 from klanker_voice.config import load_config, load_quota_config
 from klanker_voice.observers import LatencyReportObserver
 from klanker_voice.pipeline import build_pipeline, build_worker, register_greet_first
+from klanker_voice.session import SessionLifecycle
 from klanker_voice.webrtc import (
     build_ice_servers,
     gather_public_candidates,
@@ -61,6 +62,7 @@ class SessionRecord:
 
     identity: SessionIdentity
     gate_result: quota.GateResult
+    lifecycle: SessionLifecycle
 
 
 #: Session registry: pc_id -> SessionRecord. A single, well-known seam that
@@ -68,12 +70,6 @@ class SessionRecord:
 #: to — deliberately a plain module-level dict so those plans are additive,
 #: not a restructure.
 SESSIONS: dict[str, SessionRecord] = {}
-
-#: This task's live session count (D-14 per-task cap read; incremented when a
-#: session's WebRTC connection is actually established, decremented when its
-#: pipeline finishes — not merely when the start gate is passed, so a session
-#: that fails to negotiate never leaks a phantom slot).
-_active_session_count = 0
 
 #: One SmallWebRTCRequestHandler for the process lifetime, ICE-server-configured
 #: at import (mirrors the pipecat dev runner's own module-level handler
@@ -84,30 +80,20 @@ _webrtc_handler = SmallWebRTCRequestHandler(ice_servers=build_ice_servers())
 _WEBRTC_TRANSPORT_PARAMS = TransportParams(audio_in_enabled=True, audio_out_enabled=True)
 
 
-def _increment_active_sessions() -> int:
-    global _active_session_count
-    _active_session_count += 1
-    return _active_session_count
-
-
-def _decrement_active_sessions() -> int:
-    global _active_session_count
-    _active_session_count = max(0, _active_session_count - 1)
-    return _active_session_count
-
-
 def start_gate(identity: SessionIdentity) -> quota.GateResult:
     """Start-gate hook: race-safe quota enforcement (04-04, QUOT-01, D-11).
 
     Delegates to :func:`klanker_voice.quota.start_gate`, which raises a
     typed :class:`klanker_voice.quota.QuotaError` on rejection (bypass,
     site-paused, no-access, at-capacity, concurrency-limit, daily-limit —
-    see that module for the enforcement order).
+    see that module for the enforcement order). The per-task cap reads
+    ``session.active_session_count()`` — :mod:`klanker_voice.session` owns
+    the single source of truth for this task's live session count (INFR-06).
     """
     quota_cfg = load_quota_config()
     return quota.start_gate(
         identity,
-        active_session_count=_active_session_count,
+        active_session_count=session.active_session_count(),
         per_task_max_sessions=quota_cfg.per_task_max_sessions,
         heartbeat_ttl_seconds=quota_cfg.heartbeat_ttl,
         sub_floor_seconds=quota_cfg.sub_floor_seconds,
@@ -149,14 +135,23 @@ async def _run_session(connection: SmallWebRTCConnection) -> None:
     await runner.run()
 
 
-async def _run_tracked_session(connection: SmallWebRTCConnection) -> None:
-    """Run the session, always releasing its active-session slot on exit
-    (success, error, or cancellation) — pairs with the increment in
-    ``_connection_callback`` (D-14 per-task cap accuracy)."""
+async def _start_and_run_tracked_session(
+    connection: SmallWebRTCConnection, lifecycle: SessionLifecycle
+) -> None:
+    """Start the session lifecycle (metric + scale-in protection + service
+    timer/tick, QUOT-02/INFR-06), run the pipeline, then always stop the
+    lifecycle on exit (success, error, or cancellation) — this is what
+    releases the heartbeat lease and the active-session slot.
+
+    Started as its own fire-and-forget task (not awaited inline in the
+    connection callback) so a slow AWS call in ``lifecycle.start()`` never
+    delays the SDP answer.
+    """
+    await lifecycle.start()
     try:
         await _run_session(connection)
     finally:
-        _decrement_active_sessions()
+        await lifecycle.stop()
 
 
 async def _negotiate_webrtc(
@@ -166,16 +161,27 @@ async def _negotiate_webrtc(
 
     Isolated from :func:`offer` so unit tests can stub this seam and exercise
     the auth/start_gate flow without doing real aiortc/ICE negotiation
-    (SDP offers require a live browser peer to be meaningful). The active-
-    session count is incremented here (not at gate-pass time) so a session
-    that fails to negotiate never leaks a phantom slot.
+    (SDP offers require a live browser peer to be meaningful). The session's
+    active-session slot is only claimed once the connection actually
+    negotiates (inside ``SessionLifecycle.start()``, called from the
+    fire-and-forget task below) — a session that fails to negotiate never
+    leaks a phantom slot.
     """
     webrtc_request = SmallWebRTCRequest.from_dict(dict(body))
+    quota_cfg = load_quota_config()
 
     async def _connection_callback(connection: SmallWebRTCConnection) -> None:
-        SESSIONS[connection.pc_id] = SessionRecord(identity=identity, gate_result=gate_result)
-        _increment_active_sessions()
-        asyncio.create_task(_run_tracked_session(connection))
+        lifecycle = SessionLifecycle(
+            user_id=identity.sub,
+            session_id=gate_result.session_id,
+            tier=gate_result.tier,
+            quota_config=quota_cfg,
+            bypass_accounting=gate_result.bypass_accounting,
+        )
+        SESSIONS[connection.pc_id] = SessionRecord(
+            identity=identity, gate_result=gate_result, lifecycle=lifecycle
+        )
+        asyncio.create_task(_start_and_run_tracked_session(connection, lifecycle))
 
     answer = await _webrtc_handler.handle_web_request(webrtc_request, _connection_callback)
 

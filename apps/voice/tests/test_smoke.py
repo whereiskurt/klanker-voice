@@ -11,7 +11,7 @@ No AWS/network is required — the deployed ICE/RTP proof itself is 04-03's
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 
 def test_pipecat_version_is_pinned_line():
@@ -60,6 +60,7 @@ def test_offer_negotiates_real_sdp_answer_for_stubbed_identity(monkeypatch):
     from fastapi.testclient import TestClient
 
     import server
+    from klanker_voice import session
     from klanker_voice.auth import NO_ACCESS_TIER_ID, SMOKE_SERVICE_SUB, SessionIdentity
 
     bypass_identity = SessionIdentity(
@@ -70,6 +71,12 @@ def test_offer_negotiates_real_sdp_answer_for_stubbed_identity(monkeypatch):
     monkeypatch.setattr(server._webrtc_handler, "_ice_servers", [])
     # No real Pipecat pipeline/provider construction for this transport-sanity check.
     monkeypatch.setattr(server, "_run_session", AsyncMock())
+    # 04-04: SessionLifecycle.start()/stop() (CloudWatch metric emission) now
+    # fire for every negotiated session, including bypass ones. This dev
+    # environment carries real AWS credentials — never let a transport-only
+    # sanity test make a live CloudWatch call against the real account.
+    monkeypatch.setattr(session, "boto3", MagicMock())
+    monkeypatch.setattr(session, "_task_metadata_ids", lambda: ("", ""))
 
     client = TestClient(server.app)
     offer_sdp, offer_type = asyncio.run(_build_synthetic_offer())

@@ -1,0 +1,238 @@
+"""Per-session lifecycle: the precise in-memory service timer (D-02
+hard-stop), the 15s durability/accounting tick, ActiveSessions CloudWatch
+metric emission, and ECS task-scale-in protection (QUOT-02, D-02, D-10,
+D-13, INFR-06).
+
+04-05 fills the ``on_warning``/``on_stop`` callback bodies with the spoken
+wind-down (LLM-context injection at -30s, deterministic goodbye TTS at 0);
+here they default to an immediate hard close so the QUOT-02 hard-stop holds
+even before that ships.
+
+Every AWS call in this module (CloudWatch, ECS, and — via
+:mod:`klanker_voice.quota` — DynamoDB) runs off the asyncio event loop via
+``asyncio.to_thread``, so a slow API call never blocks the other concurrent
+sessions this task is also running.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import time
+import urllib.request
+from dataclasses import dataclass, field
+from typing import Awaitable, Callable
+from urllib.error import URLError
+
+import boto3
+from loguru import logger
+
+from klanker_voice import quota
+from klanker_voice.config import QuotaConfig
+
+#: CloudWatch namespace/metric matching the deployed autoscaling policy's
+#: custom_metric_target (infra/.../services/voice/service.hcl).
+METRIC_NAMESPACE = "klanker-voice/ecs"
+METRIC_NAME = "ActiveSessions"
+
+#: ECS task-metadata v4 endpoint — set automatically inside every Fargate
+#: task; absent in local/dev (same env var webrtc.py already keys off).
+METADATA_URI_ENV_VAR = "ECS_CONTAINER_METADATA_URI_V4"
+_METADATA_FETCH_TIMEOUT_SECS = 2.0
+
+#: How long before session_max the warning callback fires (D-04/D-05 lead time).
+WARNING_LEAD_SECONDS = 30
+
+Callback = Callable[[], Awaitable[None]]
+
+_active_session_count = 0
+
+
+def active_session_count() -> int:
+    """This task's current active-session count (D-14 per-task cap read)."""
+    return _active_session_count
+
+
+def _increment() -> int:
+    global _active_session_count
+    _active_session_count += 1
+    return _active_session_count
+
+
+def _decrement() -> int:
+    global _active_session_count
+    _active_session_count = max(0, _active_session_count - 1)
+    return _active_session_count
+
+
+async def _default_hard_stop() -> None:
+    """Fallback warning/stop callback — 04-05 replaces this with the spoken
+    wind-down. A no-op here still satisfies QUOT-02: the service timer fires
+    regardless of what the callback does, and SessionLifecycle's caller
+    (server.py) is expected to tear the transport down once ``on_stop``
+    returns (04-05's concern; this plan proves the *timer* fires on time)."""
+    return None
+
+
+def _task_metadata_ids() -> tuple[str, str]:
+    """Return ``(cluster, task_id)`` from ECS task metadata, or ``("", "")``
+    outside ECS (local dev/test) — never raises."""
+    base = os.environ.get(METADATA_URI_ENV_VAR)
+    if not base:
+        return "", ""
+    try:
+        with urllib.request.urlopen(f"{base}/task", timeout=_METADATA_FETCH_TIMEOUT_SECS) as resp:
+            doc = json.loads(resp.read())
+        arn = str(doc.get("TaskARN", ""))
+        cluster = str(doc.get("Cluster", ""))
+        task_id = arn.rsplit("/", 1)[-1] if arn else ""
+        return cluster, task_id
+    except (URLError, TimeoutError, ValueError, OSError) as exc:
+        logger.warning(f"ECS task-metadata fetch failed (session.py): {exc}")
+        return "", ""
+
+
+@dataclass
+class SessionLifecycle:
+    """Owns one session's service timer, accounting tick, metric emission,
+    and scale-in protection. Constructed after a successful
+    ``quota.start_gate`` call; ``start()``/``stop()`` bracket the session."""
+
+    user_id: str
+    session_id: str
+    tier: quota.Tier
+    quota_config: QuotaConfig
+    bypass_accounting: bool = False
+    on_warning: Callback = field(default=_default_hard_stop)
+    on_stop: Callback = field(default=_default_hard_stop)
+    on_daily_exhausted: Callback | None = None
+    clock: Callable[[], float] = field(default=time.time)
+    #: Override for tests only — the real rollup/daily items always use
+    #: today's date; a synthetic day isolates a test's auto-trip state from
+    #: the shared local table's real "today" rollup item.
+    day: str | None = None
+
+    _tick_task: asyncio.Task | None = field(default=None, init=False, repr=False)
+    _timer_task: asyncio.Task | None = field(default=None, init=False, repr=False)
+    _last_tick_at: float = field(default=0.0, init=False, repr=False)
+    _is_first_tick: bool = field(default=True, init=False, repr=False)
+    _stopped: bool = field(default=False, init=False, repr=False)
+
+    async def start(self) -> None:
+        """Increment the active-session count, emit the metric, acquire
+        scale-in protection if this is the task's first session, and start
+        the service timer + (unless bypassing) the accounting tick loop."""
+        self._last_tick_at = self.clock()
+        was_idle = active_session_count() == 0
+        _increment()
+        await asyncio.to_thread(self._emit_metric)
+        if was_idle:
+            await asyncio.to_thread(self._set_scale_in_protection, True)
+
+        if not self.bypass_accounting:
+            # A bypass (smoke/service credential) session has no real tier
+            # bound (D-15 skips accounting entirely) — running the service
+            # timer against a session_max of 0 would hard-stop it instantly.
+            # Metric emission + scale-in protection above still apply: it's
+            # still occupying task capacity.
+            self._tick_task = asyncio.create_task(self._tick_loop())
+            self._timer_task = asyncio.create_task(self._service_timer())
+
+    async def stop(self) -> None:
+        """Cancel the timer/tick tasks, decrement the count, emit the
+        metric, and release scale-in protection once no sessions remain."""
+        if self._stopped:
+            return
+        self._stopped = True
+        for task in (self._tick_task, self._timer_task):
+            if task is not None:
+                task.cancel()
+        is_last = _decrement() == 0
+        if not self.bypass_accounting:
+            await asyncio.to_thread(quota.release_heartbeat, self.user_id, self.session_id)
+        await asyncio.to_thread(self._emit_metric)
+        if is_last:
+            await asyncio.to_thread(self._set_scale_in_protection, False)
+
+    async def _service_timer(self) -> None:
+        """D-02: the precise in-memory stop clock — warning at
+        ``session_max - 30s``, stop at ``session_max``, independent of the
+        15s tick's own timing."""
+        session_max = self.tier.session_max_seconds
+        warning_at = max(0.0, session_max - WARNING_LEAD_SECONDS)
+        try:
+            await asyncio.sleep(warning_at)
+            await self.on_warning()
+            await asyncio.sleep(max(0.0, session_max - warning_at))
+            await self.on_stop()
+        except asyncio.CancelledError:
+            raise
+
+    async def _tick_loop(self) -> None:
+        interval = self.quota_config.heartbeat_renew_interval
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                await self._tick()
+        except asyncio.CancelledError:
+            raise
+
+    async def _tick(self) -> None:
+        now = self.clock()
+        delta = max(0, int(now - self._last_tick_at))
+        self._last_tick_at = now
+        _, task_id = await asyncio.to_thread(_task_metadata_ids)
+
+        result: quota.TickResult = await asyncio.to_thread(
+            quota.record_tick,
+            user_id=self.user_id,
+            session_id=self.session_id,
+            tier=self.tier,
+            delta_seconds=delta,
+            task_id=task_id,
+            heartbeat_ttl_seconds=self.quota_config.heartbeat_ttl,
+            est_cost_per_second=self.quota_config.est_cost_per_second,
+            auto_trip_ceiling_seconds=self.quota_config.auto_trip_ceiling_seconds,
+            auto_trip_ceiling_dollars=self.quota_config.auto_trip_ceiling_dollars,
+            is_first_tick=self._is_first_tick,
+            day=self.day,
+        )
+        self._is_first_tick = False
+
+        if result.site_paused:
+            logger.warning("Site-wide auto-trip ceiling crossed; kill-switch engaged")
+        if result.daily_exhausted:
+            logger.info(f"Mid-session daily exhaustion for user={self.user_id}; invoking wind-down")
+            if self.on_daily_exhausted is not None:
+                await self.on_daily_exhausted()
+            else:
+                await self.on_stop()
+
+    def _emit_metric(self) -> None:
+        try:
+            cloudwatch = boto3.client("cloudwatch")
+            cloudwatch.put_metric_data(
+                Namespace=METRIC_NAMESPACE,
+                MetricData=[
+                    {
+                        "MetricName": METRIC_NAME,
+                        "Value": float(active_session_count()),
+                        "Unit": "Count",
+                        "Dimensions": [{"Name": "Service", "Value": "voice"}],
+                    }
+                ],
+            )
+        except Exception as exc:  # never let metric publish failure break a session
+            logger.warning(f"ActiveSessions metric publish failed: {exc}")
+
+    def _set_scale_in_protection(self, enabled: bool) -> None:
+        cluster, task_id = _task_metadata_ids()
+        if not cluster or not task_id:
+            logger.debug("No ECS task metadata (local dev); skipping scale-in protection call")
+            return
+        try:
+            ecs = boto3.client("ecs")
+            ecs.update_task_protection(cluster=cluster, tasks=[task_id], protectionEnabled=enabled)
+        except Exception as exc:  # never let a protection-API hiccup break a session
+            logger.warning(f"ECS task-scale-in-protection update failed: {exc}")

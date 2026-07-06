@@ -24,8 +24,9 @@ atomic per-user counter item was considered and rejected: it cannot
 self-heal on a crashed task without a reaper, which would violate D-01's
 explicit "no reaper process" requirement.
 
-:func:`start_gate` is the ``/api/offer`` enforcement seam; 04-04 Task 3 adds
-:func:`record_tick` (the 15s durability/accounting/rollup tick).
+:func:`start_gate` is the ``/api/offer`` enforcement seam; :func:`record_tick`
+is the 15s durability/accounting/rollup tick, called by
+:class:`klanker_voice.session.SessionLifecycle`.
 """
 
 from __future__ import annotations
@@ -35,10 +36,12 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 if TYPE_CHECKING:
     from klanker_voice.auth import SessionIdentity
@@ -109,12 +112,28 @@ class Tier:
 
 @dataclass(frozen=True)
 class GateResult:
-    """The outcome of a successful :func:`start_gate` call."""
+    """The outcome of a successful :func:`start_gate` call.
+
+    ``tier`` is the resolved Tier (already read during the gate check) so
+    callers building a :class:`klanker_voice.session.SessionLifecycle` never
+    need a second ``read_tier`` round trip. For a bypass session, ``tier``
+    is a zeroed placeholder — never consulted, since ``bypass_accounting``
+    sessions skip the service timer and tick entirely.
+    """
 
     session_id: str
+    tier: Tier
     session_max_seconds: int
     remaining_daily_seconds: int
     bypass_accounting: bool
+
+
+@dataclass(frozen=True)
+class TickResult:
+    """The outcome of a :func:`record_tick` call — hooks for session.py."""
+
+    daily_exhausted: bool
+    site_paused: bool
 
 
 # --- table/env resolution ---
@@ -310,6 +329,112 @@ def remaining_daily_seconds(user_id: str, tier: Tier, *, day: str | None = None)
     return max(0, tier.period_max_seconds - used)
 
 
+# --- rollup + auto-trip (D-09/D-10) ---
+
+
+def _auto_trip(*, reason: str) -> bool:
+    """Conditionally engage the kill-switch control item.
+
+    Idempotent: a conditional write that only succeeds if the switch isn't
+    already engaged. Returns True iff this call actually flipped it.
+    """
+    try:
+        _usage_table().update_item(
+            Key={"pk": CONTROL_PK, "sk": CONTROL_SK},
+            UpdateExpression="SET engaged = :true, reason = :reason, updatedAt = :now",
+            ConditionExpression="attribute_not_exists(engaged) OR engaged = :false",
+            ExpressionAttributeValues={
+                ":true": True,
+                ":false": False,
+                ":reason": reason,
+                ":now": _now_epoch(),
+            },
+        )
+        return True
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def record_tick(
+    *,
+    user_id: str,
+    session_id: str,
+    tier: Tier,
+    delta_seconds: int,
+    task_id: str,
+    heartbeat_ttl_seconds: float,
+    est_cost_per_second: float,
+    auto_trip_ceiling_seconds: float,
+    auto_trip_ceiling_dollars: float,
+    is_first_tick: bool,
+    day: str | None = None,
+) -> TickResult:
+    """The durability + accounting tick (D-02): renews the heartbeat,
+    conditionally persists ``seconds_used`` to the daily item, adds the
+    delta to the global rollup (D-10), and auto-trips the kill-switch (D-09)
+    if the site-wide ceiling is crossed.
+
+    ``day`` defaults to today (UTC) and exists as a parameter mainly so
+    tests can isolate rollup state per run without polluting the shared
+    "today" rollup item across repeated local test executions.
+    """
+    day = day or _today()
+    renew_heartbeat(user_id, session_id, ttl_seconds=heartbeat_ttl_seconds)
+
+    if delta_seconds > 0:
+        daily_response = _usage_table().update_item(
+            Key={"pk": _daily_pk(user_id), "sk": _daily_sk(day)},
+            UpdateExpression=(
+                "SET secondsUsed = if_not_exists(secondsUsed, :zero) + :delta, updatedAt = :now"
+            ),
+            ExpressionAttributeValues={":delta": delta_seconds, ":zero": 0, ":now": _now_epoch()},
+            ReturnValues="UPDATED_NEW",
+        )
+        seconds_used_today = int(daily_response["Attributes"]["secondsUsed"])
+
+        rollup_expr = (
+            "SET totalSeconds = if_not_exists(totalSeconds, :zero) + :delta, "
+            "estCost = if_not_exists(estCost, :zerof) + :cost, updatedAt = :now"
+        )
+        rollup_values: dict[str, Any] = {
+            ":delta": delta_seconds,
+            ":zero": 0,
+            ":zerof": Decimal("0"),
+            ":cost": Decimal(str(delta_seconds * est_cost_per_second)),
+            ":now": _now_epoch(),
+        }
+        if is_first_tick:
+            rollup_expr += ", sessionCount = if_not_exists(sessionCount, :zero) + :one"
+            rollup_values[":one"] = 1
+        rollup_response = _usage_table().update_item(
+            Key={"pk": ROLLUP_PK, "sk": _rollup_sk(day)},
+            UpdateExpression=rollup_expr,
+            ExpressionAttributeValues=rollup_values,
+            ReturnValues="UPDATED_NEW",
+        )
+        total_seconds_today = int(rollup_response["Attributes"]["totalSeconds"])
+        est_cost_today = float(rollup_response["Attributes"]["estCost"])
+    else:
+        # Sub-interval tick (e.g. a very short test interval or the very
+        # first tick firing before a full period elapsed): still renew the
+        # lease (above), skip accounting entirely for a zero delta.
+        seconds_used_today = _read_daily_seconds_used(user_id, day)
+        rollup_item = _usage_table().get_item(Key={"pk": ROLLUP_PK, "sk": _rollup_sk(day)}).get("Item") or {}
+        total_seconds_today = int(rollup_item.get("totalSeconds", 0))
+        est_cost_today = float(rollup_item.get("estCost", 0))
+
+    site_paused = False
+    if total_seconds_today >= auto_trip_ceiling_seconds or est_cost_today >= auto_trip_ceiling_dollars:
+        site_paused = _auto_trip(reason="auto-trip")
+
+    remaining = max(0, tier.period_max_seconds - seconds_used_today) if tier.period_max_seconds > 0 else 0
+    daily_exhausted = tier.period_max_seconds > 0 and remaining <= 0
+
+    return TickResult(daily_exhausted=daily_exhausted, site_paused=site_paused)
+
+
 # --- start gate (QUOT-01, D-03, D-11) ---
 
 
@@ -339,8 +464,15 @@ def start_gate(
     session_id = str(uuid.uuid4())
 
     if identity.bypass_accounting:
+        placeholder_tier = Tier(
+            tier_id=NO_ACCESS_TIER_ID, session_max_seconds=0, period_max_seconds=0, max_concurrent=0
+        )
         return GateResult(
-            session_id=session_id, session_max_seconds=0, remaining_daily_seconds=0, bypass_accounting=True
+            session_id=session_id,
+            tier=placeholder_tier,
+            session_max_seconds=0,
+            remaining_daily_seconds=0,
+            bypass_accounting=True,
         )
 
     control = read_control_item()
@@ -365,6 +497,7 @@ def start_gate(
 
     return GateResult(
         session_id=session_id,
+        tier=tier,
         session_max_seconds=tier.session_max_seconds,
         remaining_daily_seconds=remaining,
         bypass_accounting=False,
