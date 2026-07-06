@@ -1,0 +1,59 @@
+/*
+ * klanker-voice global reset + font-face + full-bleed stage.
+ * Self-hosted Inter (variable, weight 400-600, latin subset) per UI-SPEC
+ * Design System: "Inter variable, self-hosted (.woff2, font-display: swap)".
+ */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("../assets/fonts/Inter-Variable-latin.woff2") format("woff2");
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-weight: var(--w-regular);
+  color: var(--text-primary);
+  background: var(--stage-edge);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Full-bleed 100dvh immersive stage — the dark, near-full-bleed background
+   every screen renders inside. Orb-centric; nothing here competes with the
+   orb (D-05). Safe-area aware for iOS notch/home-indicator. */
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background: radial-gradient(120% 120% at 50% 42%, var(--stage-core) 0%, var(--stage-edge) 70%);
+  padding: max(var(--lg), env(safe-area-inset-top)) max(var(--lg), env(safe-area-inset-right))
+    max(var(--lg), env(safe-area-inset-bottom)) max(var(--lg), env(safe-area-inset-left));
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+}
