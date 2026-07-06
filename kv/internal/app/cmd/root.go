@@ -20,11 +20,19 @@ import (
 // extra configuration in the common case.
 const defaultTable = "kmv-auth-electro"
 
+// defaultUsageTable matches apps/auth/webapp/src/entities/usage.ts's
+// VOICE_USAGE_TABLE default / apps/voice/src/klanker_voice/quota.py's
+// DEFAULT_USAGE_TABLE — the voice service's own table (kmv-voice-usage),
+// distinct from the auth service's kmv-auth-electro table above. `kv usage`
+// and `kv killswitch` target this table, not --table.
+const defaultUsageTable = "kmv-voice-usage"
+
 // Config carries the flags/env shared by every kv subcommand: which table to
 // operate on, and (for local dev / tests against dynamodb-local) an optional
 // endpoint override.
 type Config struct {
 	Table       string
+	UsageTable  string
 	EndpointURL string
 	Region      string
 	LogLevel    string
@@ -57,6 +65,16 @@ func tableFromEnv() string {
 	return defaultTable
 }
 
+// usageTableFromEnv resolves the voice usage table name from KMV_USAGE_TABLE
+// (matching apps/voice/src/klanker_voice/quota.py's USAGE_TABLE_ENV_VAR),
+// falling back to defaultUsageTable.
+func usageTableFromEnv() string {
+	if v := os.Getenv("KMV_USAGE_TABLE"); v != "" {
+		return v
+	}
+	return defaultUsageTable
+}
+
 // NewRootCmd creates the root "kv" command with global flags and the code/
 // tier subcommand trees attached.
 func NewRootCmd() *cobra.Command {
@@ -72,6 +90,8 @@ func NewRootCmd() *cobra.Command {
 		"Log verbosity level (debug, info, warn, error)")
 	root.PersistentFlags().StringVar(&cfg.Table, "table", tableFromEnv(),
 		"DynamoDB table name (default from AUTH_ELECTRO_DBNAME env)")
+	root.PersistentFlags().StringVar(&cfg.UsageTable, "usage-table", usageTableFromEnv(),
+		"Voice usage DynamoDB table name, for usage/killswitch (default from KMV_USAGE_TABLE env)")
 	root.PersistentFlags().StringVar(&cfg.EndpointURL, "endpoint-url", os.Getenv("AWS_ENDPOINT_URL_DYNAMODB"),
 		"Override DynamoDB endpoint (for dynamodb-local dev/testing)")
 	root.PersistentFlags().StringVar(&cfg.Region, "region", os.Getenv("AWS_REGION"),
@@ -80,6 +100,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(NewCodeCmd(cfg))
 	root.AddCommand(NewTierCmd(cfg))
 	root.AddCommand(NewSmokeCmd(cfg))
+	root.AddCommand(NewUsageCmd(cfg))
 
 	return root
 }
