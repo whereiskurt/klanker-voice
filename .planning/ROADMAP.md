@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Infra Skeleton** - Terragrunt site "kmv" provisions the AWS foundation; SES production-access request goes out week one
 - [x] **Phase 3: Auth Service & Access Codes** - run.auth port issues JWT access tokens with tier claims; access-code→tier flow and first `kv` commands (completed 2026-07-05)
 - [x] **Phase 4: Voice Service Deployed & Quota Enforcement** - Quota-gated sessions run on public-IP Fargate with verified ICE/UDP media and the full operator loop (completed 2026-07-06)
-- [ ] **Phase 5: Browser Client & Conference Readiness** - Public sign-in → mic → conversation experience with captions, orb, timer, and HUD, verified on real devices and networks
+- [x] **Phase 5: Browser Client & Conference Readiness** - Public sign-in → mic → conversation experience with captions, orb, timer, and HUD, verified on real devices and networks (completed 2026-07-06)
 
 ## Phase Details
 
@@ -154,7 +154,7 @@ Plans:
   4. User can toggle a latency HUD showing per-stage pipeline latency
   5. User gets a clean session end and one-click reconnect that re-checks quota before reconnecting
 
-**Plans**: 6/7 plans executed
+**Plans**: 7/7 plans complete
 **UI hint**: yes
 
 Plans:
@@ -181,7 +181,7 @@ Plans:
 
 **Wave 6** *(depends on 05-06)*
 
-- [ ] 05-07-PLAN.md — Mobile/iOS layout + a11y baseline + real-iPhone & restricted-network conference verification (CLNT-01…08)
+- [x] 05-07-PLAN.md — Mobile/iOS layout + a11y baseline + real-iPhone & restricted-network conference verification (CLNT-01…08)
 
 **Waves:** 1 → {05-01, 05-02}; 2 → {05-03}; 3 → {05-04}; 4 → {05-05}; 5 → {05-06}; 6 → {05-07}
 
@@ -265,6 +265,6 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 4/4 | ✅ Complete (verified 4/5; #3 guidance→Phase 5, seed done) | 2026-07-05 |
 | 4. Voice Service Deployed & Quota Enforcement | 6/6 | Complete   | 2026-07-06 |
-| 5. Browser Client & Conference Readiness | 6/7 | In Progress|  |
+| 5. Browser Client & Conference Readiness | 7/7 | Complete   | 2026-07-06 |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
 | 7. KPH Knowledge Base | 0/4 | Planned (4 plans, 3 waves) | - |
