@@ -1,0 +1,15 @@
+/* Hero orb canvases — full-bleed layers within the .stage (App shell). The
+   shader canvas is the base layer; the particle-ring overlay sits above it,
+   transparent, pointer-events disabled so it never blocks the CTA/HUD. */
+.orb-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.orb-canvas--ring {
+  z-index: 1;
+}
