@@ -10,10 +10,9 @@ enforcement seam every session rides through::
 
 Both steps happen before any :class:`SmallWebRTCConnection` is created
 (T-04-01): a forged/expired/wrong-audience/wrong-issuer/unknown-key token
-never reaches a transport. ``start_gate`` defaults to allow; 04-04 replaces
-its body with real quota enforcement (concurrency slot, daily floor,
-kill-switch read) — the function stays a single well-named seam so that plan
-is a body swap, not a restructure.
+never reaches a transport. ``start_gate`` calls ``quota.start_gate`` (04-04):
+real race-safe quota enforcement (concurrency slot, daily floor, kill-switch
+read, per-task cap) — see :mod:`klanker_voice.quota`.
 
 Run with::
 
@@ -23,6 +22,7 @@ Run with::
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import Any
 
 from dotenv import load_dotenv
@@ -39,8 +39,9 @@ from pipecat.transports.smallwebrtc.request_handler import (
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
+from klanker_voice import quota
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
-from klanker_voice.config import load_config
+from klanker_voice.config import load_config, load_quota_config
 from klanker_voice.observers import LatencyReportObserver
 from klanker_voice.pipeline import build_pipeline, build_worker, register_greet_first
 from klanker_voice.webrtc import (
@@ -53,11 +54,26 @@ load_dotenv(override=True)
 
 app = FastAPI(title="klanker-voice")
 
-#: Session registry: pc_id -> SessionIdentity. A single, well-known seam that
+
+@dataclass
+class SessionRecord:
+    """Lifecycle state attached to a negotiated session, keyed by pc_id."""
+
+    identity: SessionIdentity
+    gate_result: quota.GateResult
+
+
+#: Session registry: pc_id -> SessionRecord. A single, well-known seam that
 #: 04-04 (quota enforcement) and 04-05 (idle teardown) attach lifecycle state
 #: to — deliberately a plain module-level dict so those plans are additive,
 #: not a restructure.
-SESSIONS: dict[str, SessionIdentity] = {}
+SESSIONS: dict[str, SessionRecord] = {}
+
+#: This task's live session count (D-14 per-task cap read; incremented when a
+#: session's WebRTC connection is actually established, decremented when its
+#: pipeline finishes — not merely when the start gate is passed, so a session
+#: that fails to negotiate never leaks a phantom slot).
+_active_session_count = 0
 
 #: One SmallWebRTCRequestHandler for the process lifetime, ICE-server-configured
 #: at import (mirrors the pipecat dev runner's own module-level handler
@@ -68,15 +84,34 @@ _webrtc_handler = SmallWebRTCRequestHandler(ice_servers=build_ice_servers())
 _WEBRTC_TRANSPORT_PARAMS = TransportParams(audio_in_enabled=True, audio_out_enabled=True)
 
 
-def start_gate(identity: SessionIdentity) -> None:
-    """Start-gate hook — default allow.
+def _increment_active_sessions() -> int:
+    global _active_session_count
+    _active_session_count += 1
+    return _active_session_count
 
-    04-04 replaces this body with real quota enforcement (no-access reject,
-    concurrency-slot acquisition, daily-floor check, kill-switch read) and
-    raises a typed rejection error (D-11) instead of returning. The default
-    implementation here never rejects a session.
+
+def _decrement_active_sessions() -> int:
+    global _active_session_count
+    _active_session_count = max(0, _active_session_count - 1)
+    return _active_session_count
+
+
+def start_gate(identity: SessionIdentity) -> quota.GateResult:
+    """Start-gate hook: race-safe quota enforcement (04-04, QUOT-01, D-11).
+
+    Delegates to :func:`klanker_voice.quota.start_gate`, which raises a
+    typed :class:`klanker_voice.quota.QuotaError` on rejection (bypass,
+    site-paused, no-access, at-capacity, concurrency-limit, daily-limit —
+    see that module for the enforcement order).
     """
-    return None
+    quota_cfg = load_quota_config()
+    return quota.start_gate(
+        identity,
+        active_session_count=_active_session_count,
+        per_task_max_sessions=quota_cfg.per_task_max_sessions,
+        heartbeat_ttl_seconds=quota_cfg.heartbeat_ttl,
+        sub_floor_seconds=quota_cfg.sub_floor_seconds,
+    )
 
 
 def _extract_bearer_token(request: Request, body: dict[str, Any]) -> str | None:
@@ -114,18 +149,33 @@ async def _run_session(connection: SmallWebRTCConnection) -> None:
     await runner.run()
 
 
-async def _negotiate_webrtc(body: dict[str, Any], identity: SessionIdentity) -> Any:
+async def _run_tracked_session(connection: SmallWebRTCConnection) -> None:
+    """Run the session, always releasing its active-session slot on exit
+    (success, error, or cancellation) — pairs with the increment in
+    ``_connection_callback`` (D-14 per-task cap accuracy)."""
+    try:
+        await _run_session(connection)
+    finally:
+        _decrement_active_sessions()
+
+
+async def _negotiate_webrtc(
+    body: dict[str, Any], identity: SessionIdentity, gate_result: quota.GateResult
+) -> Any:
     """Create/renegotiate the SmallWebRTC connection and return the SDP answer.
 
     Isolated from :func:`offer` so unit tests can stub this seam and exercise
     the auth/start_gate flow without doing real aiortc/ICE negotiation
-    (SDP offers require a live browser peer to be meaningful).
+    (SDP offers require a live browser peer to be meaningful). The active-
+    session count is incremented here (not at gate-pass time) so a session
+    that fails to negotiate never leaks a phantom slot.
     """
     webrtc_request = SmallWebRTCRequest.from_dict(dict(body))
 
     async def _connection_callback(connection: SmallWebRTCConnection) -> None:
-        SESSIONS[connection.pc_id] = identity
-        asyncio.create_task(_run_session(connection))
+        SESSIONS[connection.pc_id] = SessionRecord(identity=identity, gate_result=gate_result)
+        _increment_active_sessions()
+        asyncio.create_task(_run_tracked_session(connection))
 
     answer = await _webrtc_handler.handle_web_request(webrtc_request, _connection_callback)
 
@@ -153,9 +203,14 @@ async def offer(request: Request) -> Any:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     try:
-        start_gate(identity)
-    except Exception as exc:  # 04-04 raises typed QuotaError subclasses here (D-11)
+        gate_result = start_gate(identity)
+    except quota.QuotaError as exc:
+        logger.info(f"/api/offer start_gate rejected sub={identity.sub}: {exc.error_type}")
+        return JSONResponse(
+            status_code=exc.http_status, content={"error": exc.error_type, "message": exc.message}
+        )
+    except Exception as exc:  # defensive: any other start_gate failure still rejects, never 500s
         logger.info(f"/api/offer start_gate rejected sub={identity.sub}: {exc}")
         return JSONResponse(status_code=403, content={"error": "rejected", "detail": str(exc)})
 
-    return await _negotiate_webrtc(body, identity)
+    return await _negotiate_webrtc(body, identity, gate_result)

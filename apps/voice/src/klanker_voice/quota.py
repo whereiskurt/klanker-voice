@@ -24,20 +24,24 @@ atomic per-user counter item was considered and rejected: it cannot
 self-heal on a crashed task without a reaper, which would violate D-01's
 explicit "no reaper process" requirement.
 
-04-04 Task 2 adds :func:`start_gate` (the ``/api/offer`` enforcement seam);
-Task 3 adds :func:`record_tick` (the 15s durability/accounting/rollup tick).
+:func:`start_gate` is the ``/api/offer`` enforcement seam; 04-04 Task 3 adds
+:func:`record_tick` (the 15s durability/accounting/rollup tick).
 """
 
 from __future__ import annotations
 
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import boto3
 from boto3.dynamodb.conditions import Key
+
+if TYPE_CHECKING:
+    from klanker_voice.auth import SessionIdentity
 
 #: Voice service's own usage table (Phase 4). Least-privilege task-role IAM
 #: grants only GetItem/PutItem/UpdateItem/Query on this table.
@@ -101,6 +105,16 @@ class Tier:
     session_max_seconds: int
     period_max_seconds: int
     max_concurrent: int
+
+
+@dataclass(frozen=True)
+class GateResult:
+    """The outcome of a successful :func:`start_gate` call."""
+
+    session_id: str
+    session_max_seconds: int
+    remaining_daily_seconds: int
+    bypass_accounting: bool
 
 
 # --- table/env resolution ---
@@ -294,3 +308,64 @@ def remaining_daily_seconds(user_id: str, tier: Tier, *, day: str | None = None)
     day = day or _today()
     used = _read_daily_seconds_used(user_id, day)
     return max(0, tier.period_max_seconds - used)
+
+
+# --- start gate (QUOT-01, D-03, D-11) ---
+
+
+def start_gate(
+    identity: "SessionIdentity",
+    *,
+    active_session_count: int,
+    per_task_max_sessions: int,
+    heartbeat_ttl_seconds: float,
+    sub_floor_seconds: float,
+    task_id: str = "",
+) -> GateResult:
+    """The ``/api/offer`` enforcement seam.
+
+    Order: bypass short-circuit (D-15) -> site-paused (D-08) -> no-access ->
+    at-capacity (retryable, D-14, per-task) -> concurrency-limit (D-01) ->
+    daily-limit (D-03 sub-floor) -> acquire the heartbeat lease.
+
+    A fresh ``session_id`` is minted here (not the WebRTC ``pc_id``, which
+    doesn't exist until after this gate passes and the connection is
+    negotiated) — the caller threads it through to the eventual
+    ``SessionLifecycle``/heartbeat-tick calls for this session.
+
+    Raises:
+        QuotaError: one of the five typed rejections (D-11).
+    """
+    session_id = str(uuid.uuid4())
+
+    if identity.bypass_accounting:
+        return GateResult(
+            session_id=session_id, session_max_seconds=0, remaining_daily_seconds=0, bypass_accounting=True
+        )
+
+    control = read_control_item()
+    if control["engaged"]:
+        raise QuotaError(ERROR_SITE_PAUSED, "Voice service is temporarily paused by the operator")
+
+    tier = read_tier(identity.tier_id)
+    if tier.session_max_seconds <= 0:
+        raise QuotaError(ERROR_NO_ACCESS, "Your tier does not permit voice sessions")
+
+    if active_session_count >= per_task_max_sessions:
+        raise QuotaError(ERROR_AT_CAPACITY, "This task is at capacity; please retry shortly")
+
+    if count_active_heartbeats(identity.sub) >= tier.max_concurrent:
+        raise QuotaError(ERROR_CONCURRENCY_LIMIT, "You have reached your concurrent session limit")
+
+    remaining = remaining_daily_seconds(identity.sub, tier)
+    if remaining < sub_floor_seconds:
+        raise QuotaError(ERROR_DAILY_LIMIT, "Daily usage limit reached; resets tomorrow")
+
+    acquire_heartbeat(identity.sub, session_id, ttl_seconds=heartbeat_ttl_seconds, task_id=task_id)
+
+    return GateResult(
+        session_id=session_id,
+        session_max_seconds=tier.session_max_seconds,
+        remaining_daily_seconds=remaining,
+        bypass_accounting=False,
+    )

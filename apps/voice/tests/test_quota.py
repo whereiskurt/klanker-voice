@@ -20,6 +20,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from klanker_voice import quota
+from klanker_voice.auth import SessionIdentity
 
 DYNAMODB_LOCAL_ENDPOINT = "http://localhost:8888"
 
@@ -53,6 +54,22 @@ def local_dynamodb_env(monkeypatch):
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     monkeypatch.setenv(quota.USAGE_TABLE_ENV_VAR, "kmv-voice-usage")
     monkeypatch.setenv(quota.TIERS_TABLE_ENV_VAR, "kmv-auth-electro")
+
+
+@pytest.fixture(autouse=True)
+def reset_control_item(local_dynamodb_env):
+    """The kill-switch control item is a single shared row on the local
+    table — force it disengaged before AND after every test so a prior
+    site-paused test (or a stray local run) never poisons an unrelated one."""
+
+    def _disengage():
+        quota._usage_table().put_item(
+            Item={"pk": quota.CONTROL_PK, "sk": quota.CONTROL_SK, "engaged": False}
+        )
+
+    _disengage()
+    yield
+    _disengage()
 
 
 def _user_id() -> str:
@@ -261,3 +278,106 @@ def test_at_capacity_error_is_retryable_with_503():
 def test_quota_error_rejects_unknown_error_type():
     with pytest.raises(ValueError):
         quota.QuotaError("not-a-real-type", "boom")
+
+
+# --- start_gate (QUOT-01, D-03, D-11) ---
+
+_GATE_KWARGS = dict(
+    active_session_count=0,
+    per_task_max_sessions=5,
+    heartbeat_ttl_seconds=45,
+    sub_floor_seconds=30,
+)
+
+
+def _identity(*, tier_id: str, bypass: bool = False, sub: str | None = None) -> SessionIdentity:
+    return SessionIdentity(sub=sub or _user_id(), tier_id=tier_id, group=None, bypass_accounting=bypass)
+
+
+def test_start_gate_bypass_accounting_skips_all_checks():
+    """D-15: the smoke/service credential still negotiates transport but
+    skips every accounting check, even a site-paused/no-access tier."""
+    quota._usage_table().put_item(
+        Item={"pk": quota.CONTROL_PK, "sk": quota.CONTROL_SK, "engaged": True, "reason": "auto-trip"}
+    )
+    identity = _identity(tier_id=quota.NO_ACCESS_TIER_ID, bypass=True)
+
+    result = quota.start_gate(identity, **_GATE_KWARGS)
+
+    assert result.bypass_accounting is True
+    assert result.session_id  # a session id is still minted for lifecycle bookkeeping
+
+
+def test_start_gate_rejects_when_site_paused():
+    quota._usage_table().put_item(
+        Item={"pk": quota.CONTROL_PK, "sk": quota.CONTROL_SK, "engaged": True, "reason": "operator"}
+    )
+    tier_id = f"test-tier-{uuid.uuid4().hex[:8]}"
+    _put_tier(tier_id, session_max=120, period_max=600, max_concurrent=2)
+
+    with pytest.raises(quota.QuotaError) as exc_info:
+        quota.start_gate(_identity(tier_id=tier_id), **_GATE_KWARGS)
+
+    assert exc_info.value.error_type == quota.ERROR_SITE_PAUSED
+    assert exc_info.value.http_status == 403
+
+
+def test_start_gate_rejects_no_access_tier():
+    with pytest.raises(quota.QuotaError) as exc_info:
+        quota.start_gate(_identity(tier_id=quota.NO_ACCESS_TIER_ID), **_GATE_KWARGS)
+
+    assert exc_info.value.error_type == quota.ERROR_NO_ACCESS
+
+
+def test_start_gate_rejects_at_capacity_when_task_is_full():
+    tier_id = f"test-tier-{uuid.uuid4().hex[:8]}"
+    _put_tier(tier_id, session_max=120, period_max=600, max_concurrent=2)
+    kwargs = dict(_GATE_KWARGS, active_session_count=5, per_task_max_sessions=5)
+
+    with pytest.raises(quota.QuotaError) as exc_info:
+        quota.start_gate(_identity(tier_id=tier_id), **kwargs)
+
+    assert exc_info.value.error_type == quota.ERROR_AT_CAPACITY
+    assert exc_info.value.http_status == 503
+    assert exc_info.value.retryable is True
+
+
+def test_start_gate_rejects_concurrency_limit():
+    tier_id = f"test-tier-{uuid.uuid4().hex[:8]}"
+    _put_tier(tier_id, session_max=120, period_max=600, max_concurrent=1)
+    user_id = _user_id()
+    quota.acquire_heartbeat(user_id, _session_id(), ttl_seconds=45)  # already at max_concurrent=1
+
+    with pytest.raises(quota.QuotaError) as exc_info:
+        quota.start_gate(_identity(tier_id=tier_id, sub=user_id), **_GATE_KWARGS)
+
+    assert exc_info.value.error_type == quota.ERROR_CONCURRENCY_LIMIT
+
+
+def test_start_gate_rejects_daily_limit_below_sub_floor():
+    tier_id = f"test-tier-{uuid.uuid4().hex[:8]}"
+    _put_tier(tier_id, session_max=120, period_max=600, max_concurrent=2)
+    user_id = _user_id()
+    quota._usage_table().update_item(
+        Key={"pk": quota._daily_pk(user_id), "sk": quota._daily_sk(quota._today())},
+        UpdateExpression="SET secondsUsed = :used",
+        ExpressionAttributeValues={":used": 590},  # only 10s remain; sub_floor is 30
+    )
+
+    with pytest.raises(quota.QuotaError) as exc_info:
+        quota.start_gate(_identity(tier_id=tier_id, sub=user_id), **_GATE_KWARGS)
+
+    assert exc_info.value.error_type == quota.ERROR_DAILY_LIMIT
+
+
+def test_start_gate_success_acquires_heartbeat_and_returns_gate_result():
+    tier_id = f"test-tier-{uuid.uuid4().hex[:8]}"
+    _put_tier(tier_id, session_max=120, period_max=600, max_concurrent=2)
+    user_id = _user_id()
+
+    result = quota.start_gate(_identity(tier_id=tier_id, sub=user_id), **_GATE_KWARGS)
+
+    assert result.bypass_accounting is False
+    assert result.session_max_seconds == 120
+    assert result.remaining_daily_seconds == 600
+    assert quota.count_active_heartbeats(user_id) == 1
