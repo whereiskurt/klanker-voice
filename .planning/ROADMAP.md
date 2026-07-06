@@ -154,14 +154,14 @@ Plans:
   4. User can toggle a latency HUD showing per-stage pipeline latency
   5. User gets a clean session end and one-click reconnect that re-checks quota before reconnecting
 
-**Plans**: 1/7 plans executed
+**Plans**: 2/7 plans executed
 **UI hint**: yes
 
 Plans:
 **Wave 1** *(parallel: server + client scaffold, no file overlap)*
 
 - [x] 05-01-PLAN.md — Server RTVI wiring (transcripts + bot/user speaking + audio levels) + composed per-turn latency emission + StaticFiles SPA mount (CLNT-03, CLNT-04, CLNT-06 server half)
-- [ ] 05-02-PLAN.md — Vite+TS+React scaffold + UI-SPEC design tokens + hero orb (WebGL2 shader + particle ring, winner A) with 2D fallback + attract landing + D-03 multi-stage Docker (CLNT-04)
+- [x] 05-02-PLAN.md — Vite+TS+React scaffold + UI-SPEC design tokens + hero orb (WebGL2 shader + particle ring, winner A) with 2D fallback + attract landing + D-03 multi-stage Docker (CLNT-04)
 
 **Wave 2** *(depends on 05-02)*
 
@@ -265,6 +265,6 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 4/4 | ✅ Complete (verified 4/5; #3 guidance→Phase 5, seed done) | 2026-07-05 |
 | 4. Voice Service Deployed & Quota Enforcement | 6/6 | Complete   | 2026-07-06 |
-| 5. Browser Client & Conference Readiness | 1/7 | In Progress|  |
+| 5. Browser Client & Conference Readiness | 2/7 | In Progress|  |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
 | 7. KPH Knowledge Base | 0/4 | Planned (4 plans, 3 waves) | - |
