@@ -212,6 +212,18 @@ export function useVoiceSession(): UseVoiceSessionResult {
       dispatch({ type: "MIC_ERROR" });
       return;
     }
+    // `requestMic()` only PROVES permission (and, on iOS, unlocks audio
+    // playback via the same gesture). It must NOT keep the device open:
+    // PipecatClient (`enableMic: true`) does its OWN `getUserMedia` inside
+    // `connect()`, so leaving this probe stream live means two concurrent
+    // captures of the same mic. Confirmed via chrome://webrtc-internals
+    // (two getUserMedia calls, two distinct track ids) — the track actually
+    // attached to the peer connection then delivers no audio and the server
+    // tears the session down with "No audio frame received". Releasing the
+    // probe stream here leaves the client's capture as the sole live one.
+    // Permission persists at the browser level, so the client's capture does
+    // not re-prompt.
+    mic.stream.getTracks().forEach((track) => track.stop());
     dispatch({ type: "MIC_GRANTED" });
     await beginConnect();
   }, [dispatch, beginConnect]);
