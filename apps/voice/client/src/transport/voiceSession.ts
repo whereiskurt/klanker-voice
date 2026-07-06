@@ -116,12 +116,35 @@ export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSes
     webrtcRequestParams: buildConnectParams(getToken()),
   });
 
+  // Bot audio PLAYBACK. SmallWebRTCTransport surfaces the concierge's incoming
+  // audio track via `onTrackStarted` but never plays it — the app must attach
+  // it to an <audio> element itself. Without this the entire pipeline runs
+  // (mic → STT → LLM → TTS, captions + latency HUD all update) yet the user
+  // hears nothing. The element is never added to the DOM (headless playback is
+  // fine) and its lifetime is tied to this session. `.play()` is allowed
+  // because the session only ever starts from the "Tap to talk" user gesture
+  // (which also unlocks iOS audio).
+  const botAudioEl =
+    typeof document !== "undefined" ? document.createElement("audio") : null;
+  if (botAudioEl) botAudioEl.autoplay = true;
+
   const client = new PipecatClient({
     transport,
     enableMic: true,
     enableCam: false,
     callbacks: {
       ...rtvi,
+      onTrackStarted: (track, participant) => {
+        // Only the bot's INCOMING audio track reaches this transport callback
+        // (local mic is an outgoing track and never fires it); play it.
+        if (botAudioEl && track.kind === "audio") {
+          botAudioEl.srcObject = new MediaStream([track]);
+          void botAudioEl.play().catch(() => {
+            /* autoplay blocked (should not happen post-gesture) — non-fatal */
+          });
+        }
+        rtvi?.onTrackStarted?.(track, participant);
+      },
       onBotReady: (data) => {
         onEvent({ type: "CONNECTED" });
         rtvi?.onBotReady?.(data);
@@ -203,6 +226,10 @@ export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSes
 
   async function disconnect(): Promise<void> {
     await client.disconnect();
+    if (botAudioEl) {
+      botAudioEl.pause();
+      botAudioEl.srcObject = null;
+    }
   }
 
   return { client, connect, disconnect };
