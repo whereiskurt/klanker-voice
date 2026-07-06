@@ -14,7 +14,10 @@ export interface CallbackProps {
  * The OIDC authorization-code+PKCE callback route (CLNT-08, D-04): reads
  * `code`+`state` from the query string, validates `state` against the
  * value stashed before the redirect, exchanges the code (no client secret),
- * stores the access token in memory, then routes onward.
+ * stores the access token in memory, then routes onward. `role`/`aria-live`
+ * (05-07 hardening fix -- this screen previously had NO live-region at
+ * all) mirror every other status/error screen's own pattern: `status`/
+ * `polite` while signing in, `alert`/`assertive` once the exchange fails.
  */
 export default function Callback({ onAuthenticated }: CallbackProps) {
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +58,7 @@ export default function Callback({ onAuthenticated }: CallbackProps) {
   }, []);
 
   return (
-    <div className="callback">
+    <div className="callback" role={error ? "alert" : "status"} aria-live={error ? "assertive" : "polite"}>
       <p className="callback-status">{error ?? "Signing you in…"}</p>
       {error ? (
         <button

@@ -3,6 +3,7 @@ import type { OrbState } from "./orbState";
 import { ORB_STATE_VISUALS } from "./orbState";
 import { createOrbShaderProgram } from "./orbShader";
 import { createParticleRing } from "./particleRing";
+import { useReducedMotion } from "../a11y/liveRegions";
 import OrbFallback from "./OrbFallback";
 import "./orb.css";
 
@@ -13,10 +14,6 @@ export interface OrbCanvasProps {
    * Fed 0/ambient here — 05-04 wires real RTVI mic/TTS RMS through this prop.
    */
   amplitude: number;
-}
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function supportsWebGL2(): boolean {
@@ -30,26 +27,33 @@ function supportsWebGL2(): boolean {
 
 /**
  * The hero orb (CLNT-04): WebGL2 shader plasma orb + orbiting particle-ring
- * overlay (sketch 001 winner A). Feature-detects WebGL2 support and
- * `prefers-reduced-motion` and swaps to the calm 2D fallback (`OrbFallback`)
- * when either applies — dropping the ring and the shader's noise churn, per
- * the UI-SPEC's mandatory-fallback requirement.
+ * overlay (sketch 001 winner A). Feature-detects WebGL2 support (one-shot —
+ * it can't change mid-session) and `prefers-reduced-motion` REACTIVELY (via
+ * `useReducedMotion`, 05-07 hardening) and swaps to the calm 2D fallback
+ * (`OrbFallback`) when either applies — dropping the ring and the shader's
+ * noise churn, per the UI-SPEC's mandatory-fallback requirement. The
+ * reactive subscription means toggling iOS "Reduce Motion" mid-session
+ * swaps the orb immediately, no reload needed (the conference-floor
+ * checkpoint exercises exactly this).
  */
 export default function OrbCanvas({ state, amplitude }: OrbCanvasProps) {
-  // Default to the fallback until the effect below resolves feature
+  const reducedMotion = useReducedMotion();
+  // Default to unsupported until the effect below resolves feature
   // detection — safe for the first paint and for non-browser test runners
   // (jsdom has no WebGL2, so tests exercise the same fallback path).
-  const [useFallback, setUseFallback] = useState(true);
+  const [webgl2Supported, setWebgl2Supported] = useState(false);
 
   useEffect(() => {
-    setUseFallback(prefersReducedMotion() || !supportsWebGL2());
+    setWebgl2Supported(supportsWebGL2());
   }, []);
+
+  const useFallback = reducedMotion || !webgl2Supported;
 
   if (useFallback) {
     return <OrbFallback state={state} amplitude={amplitude} />;
   }
 
-  return <ShaderOrb state={state} amplitude={amplitude} onUnsupported={() => setUseFallback(true)} />;
+  return <ShaderOrb state={state} amplitude={amplitude} onUnsupported={() => setWebgl2Supported(false)} />;
 }
 
 interface ShaderOrbProps extends OrbCanvasProps {

@@ -58,6 +58,11 @@ export interface UseVoiceSessionResult {
   /** Dismisses a "rejected" (Task 2 gate) outcome back to idle/attract --
    * used by `GateCard`'s non-retryable actions (sign-out / dismiss). */
   dismissGate: () => void;
+  /** Clears an inline mic-error message back to plain attract, WITHOUT
+   * re-requesting the mic (unlike `MicError`'s own "Try again" button,
+   * which calls `start()`). Wired to `Esc` in `App.tsx` (05-07 hardening:
+   * UI-SPEC a11y baseline "Esc dismisses transient gate copy"). */
+  dismissMicError: () => void;
 }
 
 /**
@@ -233,6 +238,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
     dispatch({ type: "RESET" });
   }, [dispatch]);
 
+  const dismissMicError = useCallback(() => {
+    setMicError(null);
+  }, []);
+
   return {
     outcome,
     micError,
@@ -244,5 +253,6 @@ export function useVoiceSession(): UseVoiceSessionResult {
     stop,
     retryNow,
     dismissGate,
+    dismissMicError,
   };
 }

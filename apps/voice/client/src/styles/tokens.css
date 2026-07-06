@@ -50,9 +50,9 @@
   /* --- Typography: exactly 4 sizes, 2 weights --- */
   --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
-  --sz-display: 32px; /* gate/error/attract headline */
+  --sz-display: clamp(24px, 7vw, 32px); /* gate/error/attract headline -- UI-SPEC "Mobile: Display clamps clamp(24px, 7vw, 32px)"; converges to the fixed 32px desktop value once 7vw exceeds it, so one token serves both */
   --sz-heading: 20px; /* session-end summary title, sub-headlines */
-  --sz-body: 16px; /* captions, gate/error body copy */
+  --sz-body: 16px; /* captions, gate/error body copy -- also the UI-SPEC mobile "16px caption floor" (fixed, never clamped down) */
   --sz-label: 13px; /* HUD rows, countdown pill, speaker chips, status line */
   --w-regular: 400;
   --w-semibold: 600;

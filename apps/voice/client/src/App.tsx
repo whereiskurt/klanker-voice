@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ensureLiveRegions } from "./a11y/liveRegions";
 import Attract from "./screens/Attract";
 import Callback from "./screens/Callback";
 import NoAccessGate from "./screens/NoAccessGate";
@@ -73,6 +74,33 @@ export default function App() {
     auth.signOut();
     voice.dismissGate();
   };
+
+  // Mount the shared aria-live regions as early as possible (05-07
+  // hardening -- see a11y/liveRegions.ts) so the very first Countdown
+  // boundary announcement isn't delayed by lazy DOM-node creation.
+  useEffect(() => {
+    ensureLiveRegions();
+  }, []);
+
+  // Esc dismisses transient gate copy (UI-SPEC a11y baseline: "Esc
+  // dismisses transient gate copy where applicable") -- a typed start-gate
+  // rejection card (GateCard) or an inline mic-error message, both of which
+  // sit as a non-modal overlay the user can back out of without taking the
+  // card's own action. Does NOT apply to the terminal UdpBlockedWall/
+  // SessionEnd screens, which require an explicit choice (retry/reconnect/
+  // sign out), not a silent dismiss.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (voice.outcome.state === "rejected") {
+        voice.dismissGate();
+      } else if (voice.micError) {
+        voice.dismissMicError();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [voice.outcome.state, voice.micError, voice.dismissGate, voice.dismissMicError]);
 
   if (onCallbackRoute) {
     return (
