@@ -91,7 +91,7 @@ locals {
     containers = [
       {
         name      = "auth-app"
-        image     = "auth-app:${get_env("TF_VAR_AUTH_IMAGE_TAG", "0.0.0")}"
+        image     = "auth-app:${get_env("TF_VAR_AUTH_IMAGE_TAG", "a75939496904e4ed02098a991a9781dd45f799f9")}"
         cpu       = 512
         memory    = 1024
         essential = true
