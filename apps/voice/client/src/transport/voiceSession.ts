@@ -135,9 +135,15 @@ export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSes
     callbacks: {
       ...rtvi,
       onTrackStarted: (track, participant) => {
-        // Only the bot's INCOMING audio track reaches this transport callback
-        // (local mic is an outgoing track and never fires it); play it.
-        if (botAudioEl && track.kind === "audio") {
+        // Play ONLY the bot's incoming audio. SmallWebRTCTransport fires this
+        // callback for BOTH the remote bot track (no participant) AND the
+        // LOCAL mic track (participant.local === true) — playing the latter
+        // back is exactly what made the user hear their own voice echoed.
+        if (
+          botAudioEl &&
+          track.kind === "audio" &&
+          participant?.local !== true
+        ) {
           botAudioEl.srcObject = new MediaStream([track]);
           void botAudioEl.play().catch(() => {
             /* autoplay blocked (should not happen post-gesture) — non-fatal */
