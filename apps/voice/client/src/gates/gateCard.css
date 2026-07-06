@@ -1,0 +1,65 @@
+/* Typed start-gate rejection card (D-14): a translucent secondary-surface
+   overlay over the still-alive orb -- same treatment as NoAccessGate.tsx /
+   UdpBlockedWall.tsx so every gate/wall surface reads as one system. */
+.gate-card-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--lg);
+}
+
+.gate-card {
+  max-width: 420px;
+  width: 100%;
+  padding: var(--2xl) var(--lg);
+  border-radius: var(--radius);
+  background: var(--scrim);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--md);
+}
+
+.gate-card-heading {
+  font-size: var(--sz-display);
+  font-weight: var(--w-semibold);
+  line-height: var(--lh-tight);
+  color: var(--text-primary);
+}
+
+.gate-card-body {
+  font-size: var(--sz-body);
+  line-height: var(--lh-prose);
+  color: var(--text-secondary);
+}
+
+/* The panel's single reserved-accent CTA (UI-SPEC "primary/only CTA in any panel"). */
+.gate-card-cta {
+  min-height: var(--hit-min);
+  padding: 0 var(--lg);
+  margin-top: var(--sm);
+  font-size: var(--sz-body);
+  font-weight: var(--w-semibold);
+  color: var(--stage-core);
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: var(--motion-fast);
+}
+
+.gate-card-cta:hover {
+  transform: translateY(-1px);
+}
+
+.gate-card-cta:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 4px;
+}
