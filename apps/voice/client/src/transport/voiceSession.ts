@@ -168,21 +168,6 @@ export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSes
         onEvent({ type: "TRANSPORT_ERROR", message: data?.message });
         rtvi?.onError?.(message);
       },
-      onBotStartedSpeaking: () => {
-        // Half-duplex echo guard (esp. mobile speakerphone). While the bot is
-        // speaking, mute the mic so its loudspeaker output can't loop back into
-        // the mic and make the agent transcribe + reply to its OWN voice
-        // (observed on Apple devices on speaker). Trades barge-in for a clean,
-        // self-loop-free conversation — the right default for a phone on
-        // speaker or a noisy conference floor. `client` is assigned by the time
-        // this runtime callback fires.
-        client.enableMic(false);
-        rtvi?.onBotStartedSpeaking?.();
-      },
-      onBotStoppedSpeaking: () => {
-        client.enableMic(true);
-        rtvi?.onBotStoppedSpeaking?.();
-      },
     },
   });
 
