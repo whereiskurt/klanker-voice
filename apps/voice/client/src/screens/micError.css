@@ -1,0 +1,43 @@
+.mic-error {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(var(--3xl), calc(env(safe-area-inset-bottom) + var(--3xl)));
+  z-index: 12;
+  max-width: 480px;
+  width: calc(100% - var(--md) * 2);
+  text-align: center;
+}
+
+.mic-error-body {
+  margin: 0 0 var(--md);
+  font-size: var(--sz-body);
+  line-height: var(--lh-prose);
+  color: var(--text-primary);
+}
+
+/* Retry affordance — >=44px min hit area per UI-SPEC touch-target rules. */
+.mic-error-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--hit-min);
+  padding: 0 var(--lg);
+  font-size: var(--sz-label);
+  font-weight: var(--w-semibold);
+  color: var(--stage-core);
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: var(--motion-fast);
+}
+
+.mic-error-retry:hover {
+  transform: translateY(-1px);
+}
+
+.mic-error-retry:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 4px;
+}
