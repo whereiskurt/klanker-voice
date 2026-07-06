@@ -2,8 +2,11 @@ import { useState } from "react";
 import Attract from "./screens/Attract";
 import Callback from "./screens/Callback";
 import NoAccessGate from "./screens/NoAccessGate";
+import MicError from "./screens/MicError";
+import Live from "./screens/Live";
 import OrbCanvas from "./orb/OrbCanvas";
 import { useAuth } from "./auth/useAuth";
+import { useVoiceSession } from "./transport/useVoiceSession";
 
 /** Matches auth.py's NO_ACCESS_TIER_ID default — the no-access gate trigger (D-13). */
 const NO_ACCESS_TIER_ID = "no-access";
@@ -19,6 +22,7 @@ const CALLBACK_PATH = "/callback";
 // mic-ready stage) based on the in-memory token (CLNT-08, D-04).
 export default function App() {
   const auth = useAuth();
+  const voice = useVoiceSession();
   const [onCallbackRoute, setOnCallbackRoute] = useState(
     () => window.location.pathname === CALLBACK_PATH,
   );
@@ -28,9 +32,9 @@ export default function App() {
       void auth.beginSignIn();
       return;
     }
-    // Authenticated + has access: mic connect flow is 05-04's job. The
-    // no-access case never reaches this handler (Attract isn't rendered).
-    console.info("klanker-voice: authenticated tap-to-talk — mic/connect wiring lands in 05-04");
+    // Authenticated + has access: gesture-gated mic -> connect (CLNT-01/02).
+    // The no-access case never reaches this handler (Attract isn't rendered).
+    void voice.start();
   };
 
   const handleAuthenticated = () => {
@@ -56,9 +60,21 @@ export default function App() {
     );
   }
 
+  // The live conversation (CLNT-02/03/04): mounted only once the connection
+  // state machine has actually reached "connected" -- no conversation UI
+  // exists before a real bot-ready signal (T-05-04-E).
+  if (voice.outcome.state === "connected" && voice.client) {
+    return (
+      <div className="stage">
+        <Live client={voice.client} />
+      </div>
+    );
+  }
+
   return (
     <div className="stage">
       <Attract onTapToTalk={handleTapToTalk} />
+      {voice.micError ? <MicError error={voice.micError} onRetry={handleTapToTalk} /> : null}
     </div>
   );
 }
