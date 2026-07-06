@@ -105,6 +105,21 @@ resource "aws_security_group" "http_only" {
       self             = true
       prefix_list_ids  = []
       security_groups  = []
+    },
+    {
+      # Phase 4 (04-03 deploy checkpoint): the voice Pipecat container listens on
+      # 7860 for the ALB health check (/health) and /api/offer signaling. The ALB
+      # shares this SG, so a self-referencing 7860 rule lets ALB -> task reach it
+      # (media stays on the separate webrtc-udp SG, 20000-20100).
+      description      = "Voice service port 7860 (ALB -> Pipecat /api/offer + /health)"
+      from_port        = 7860
+      to_port          = 7860
+      protocol         = "tcp"
+      cidr_blocks      = []
+      ipv6_cidr_blocks = []
+      self             = true
+      prefix_list_ids  = []
+      security_groups  = []
     }
   ]
 
