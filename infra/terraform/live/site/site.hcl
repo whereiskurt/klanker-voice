@@ -961,6 +961,93 @@ locals {
             })
           },
           {
+            # ecs-service unit refreshes AWS Cloud Map service-discovery
+            # resources; mirror the release role's read set.
+            name = "service-discovery"
+            policy = jsonencode({
+              Version = "2012-10-17"
+              Statement = [
+                {
+                  Sid    = "ServiceDiscoveryRead"
+                  Effect = "Allow"
+                  Action = [
+                    "servicediscovery:GetService",
+                    "servicediscovery:GetNamespace",
+                    "servicediscovery:ListServices",
+                    "servicediscovery:ListNamespaces",
+                    "servicediscovery:ListTagsForResource"
+                  ]
+                  Resource = "*"
+                }
+              ]
+            })
+          },
+          {
+            # ecs-service unit refreshes ALB target groups/listeners; without
+            # this the deploy's terragrunt apply 403s on DescribeTargetGroups.
+            name = "elb-read"
+            policy = jsonencode({
+              Version = "2012-10-17"
+              Statement = [
+                {
+                  Sid    = "ELBRead"
+                  Effect = "Allow"
+                  Action = [
+                    "elasticloadbalancing:DescribeTargetGroups",
+                    "elasticloadbalancing:DescribeTargetGroupAttributes",
+                    "elasticloadbalancing:DescribeLoadBalancers",
+                    "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                    "elasticloadbalancing:DescribeListeners",
+                    "elasticloadbalancing:DescribeListenerAttributes",
+                    "elasticloadbalancing:DescribeRules",
+                    "elasticloadbalancing:DescribeTargetHealth",
+                    "elasticloadbalancing:DescribeTags"
+                  ]
+                  Resource = "*"
+                }
+              ]
+            })
+          },
+          {
+            # voice service has session-count application-autoscaling; the
+            # ecs-service unit refreshes the scalable target/policies.
+            name = "autoscaling-read"
+            policy = jsonencode({
+              Version = "2012-10-17"
+              Statement = [
+                {
+                  Sid    = "AutoScalingRead"
+                  Effect = "Allow"
+                  Action = [
+                    "application-autoscaling:DescribeScalableTargets",
+                    "application-autoscaling:DescribeScalingPolicies",
+                    "application-autoscaling:DescribeScheduledActions",
+                    "application-autoscaling:ListTagsForResource"
+                  ]
+                  Resource = "*"
+                }
+              ]
+            })
+          },
+          {
+            # autoscaling alarms refreshed alongside the scaling policies.
+            name = "cloudwatch-read"
+            policy = jsonencode({
+              Version = "2012-10-17"
+              Statement = [
+                {
+                  Sid    = "CloudWatchRead"
+                  Effect = "Allow"
+                  Action = [
+                    "cloudwatch:DescribeAlarms",
+                    "cloudwatch:ListTagsForResource"
+                  ]
+                  Resource = "*"
+                }
+              ]
+            })
+          },
+          {
             # See the same-named policy on the readonly role above for the
             # TF_VAR_SSM_KMS_KEY_ARNS extension pattern.
             name = "kms-sops-decrypt"
