@@ -224,7 +224,7 @@ resource "aws_lb_listener" "nlb_listener" {
   port              = each.value.listener.port
   protocol          = each.value.listener.protocol
 
-  ssl_policy      = contains(["TLS", "HTTPS"], each.value.listener.protocol) ? each.value.listener.ssl_policy : null
+  ssl_policy = contains(["TLS", "HTTPS"], each.value.listener.protocol) ? each.value.listener.ssl_policy : null
   certificate_arn = contains(["TLS", "HTTPS"], each.value.listener.protocol) ? (
     each.value.listener.certificate_arn != "" ? each.value.listener.certificate_arn : var.nlb_default_certificate_arn
   ) : null
@@ -325,6 +325,47 @@ resource "aws_appautoscaling_target" "service" {
     Service = each.key
     Region  = var.region.label
     Site    = var.site.label
+  }
+}
+
+# Custom-metric Target Tracking Scaling Policy (D-13)
+# Scales on an arbitrary CloudWatch metric (e.g. session-count) instead of
+# the built-in ECS CPU/Memory target-tracking metrics. disable_scale_in is
+# left false (ECS-managed scale-in enabled); tasks shield themselves from
+# being picked for scale-in via the ECS task-scale-in-protection API
+# (called from the session-lifecycle code, not this policy) while they hold
+# an active session — the policy still governs desired count.
+resource "aws_appautoscaling_policy" "custom_metric_scaling" {
+  for_each = {
+    for name, service in local.services_map :
+    name => service if service.autoscaling.enabled && service.autoscaling.custom_metric_target != null
+  }
+
+  name               = "custom-metric-${aws_ecs_service.service[each.key].name}"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = "ecs"
+  resource_id        = aws_appautoscaling_target.service[each.key].resource_id
+  scalable_dimension = aws_appautoscaling_target.service[each.key].scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = each.value.autoscaling.custom_metric_target.target_value
+    scale_out_cooldown = each.value.autoscaling.custom_metric_target.scale_out_cooldown
+    scale_in_cooldown  = each.value.autoscaling.custom_metric_target.scale_in_cooldown
+    disable_scale_in   = false
+
+    customized_metric_specification {
+      metric_name = each.value.autoscaling.custom_metric_target.metric_name
+      namespace   = each.value.autoscaling.custom_metric_target.namespace
+      statistic   = each.value.autoscaling.custom_metric_target.statistic
+
+      dynamic "dimensions" {
+        for_each = each.value.autoscaling.custom_metric_target.dimensions
+        content {
+          name  = dimensions.key
+          value = dimensions.value
+        }
+      }
+    }
   }
 }
 

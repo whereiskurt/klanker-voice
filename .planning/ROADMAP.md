@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Local Pipeline & Latency Harness** - Tuned cascaded pipeline runs locally with three API keys; harness proves ≤1.2s and real barge-in
 - [x] **Phase 2: Infra Skeleton** - Terragrunt site "kmv" provisions the AWS foundation; SES production-access request goes out week one
 - [x] **Phase 3: Auth Service & Access Codes** - run.auth port issues JWT access tokens with tier claims; access-code→tier flow and first `kv` commands (completed 2026-07-05)
-- [ ] **Phase 4: Voice Service Deployed & Quota Enforcement** - Quota-gated sessions run on public-IP Fargate with verified ICE/UDP media and the full operator loop
+- [x] **Phase 4: Voice Service Deployed & Quota Enforcement** - Quota-gated sessions run on public-IP Fargate with verified ICE/UDP media and the full operator loop (completed 2026-07-06)
 - [ ] **Phase 5: Browser Client & Conference Readiness** - Public sign-in → mic → conversation experience with captions, orb, timer, and HUD, verified on real devices and networks
 
 ## Phase Details
@@ -85,6 +85,7 @@ Plans:
   2. Auth issues JWT access tokens with tier/group claims that a relying service validates offline via the JWKS endpoint
   3. User may enter any access code (or none) at login: known codes map to tiers, unknown/blank yields a no-access tier with guidance
      — NOTE 2026-07-05 (03-VERIFICATION): resolve-to-no-access logic complete + tested; the "with guidance" UI clause (D-07) DEFERRED to Phase 5 client UX by user decision (users are redirected to the voice client, which is where they hit the "need a code" moment — CLNT-01/08). Live-table seed (demo/kphdemo123 + tiers) applied to kmv-auth-electro this session.
+
   4. Operator-defined codes carry expiry and max-redemption limits, and the login form is protected by Altcha captcha
   5. Operator can create, list, and expire access codes and define/list tiers via `kv`
 
@@ -114,7 +115,28 @@ Plans:
   4. Site-wide kill-switch gates new sessions, and abandoned sessions are torn down via layered idle detection with a server-side wall-clock outer bound
   5. Voice service autoscales 1→4 tasks with scale-in protection during active sessions, and operator can view today's usage and flip the kill-switch via `kv`
 
-**Plans**: TBD
+**Plans**: 6/6 plans complete
+
+Plans:
+**Wave 1**
+
+- [x] 04-01-PLAN.md — Production /api/offer + /health FastAPI entrypoint, offline JWT validation, public-IP+STUN ICE candidates, Dockerfile (INFR-03 code)
+- [x] 04-02-PLAN.md — Infra delta: narrow+attach UDP SG (20000-20100), enable public-IP task/service, usage table, task IAM, session-count autoscaling 1→4 (INFR-03, INFR-06)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 04-03-PLAN.md — `kv smoke` synthetic offer→ICE→RTP + deploy + deployed ICE smoke proof (KV-05, INFR-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 04-04-PLAN.md — Race-safe quota: usage model, start-gate (typed rejects+sub-floor+per-task cap), heartbeat lease, service timer, 15s tick+rollup+auto-trip, hard-stop, ActiveSessions metric+scale-in protection (QUOT-01, QUOT-02, QUOT-04, INFR-06)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 04-05-PLAN.md — Spoken wind-down (natural warning + deterministic goodbye) + three-layer idle teardown + reconnect grace (QUOT-03, QUOT-05)
+- [x] 04-06-PLAN.md — Operator loop: `kv usage` + `kv killswitch` + autoscale verification (QUOT-04, KV-03, KV-04, INFR-06)
+
+**Waves:** 1 → {04-01, 04-02}; 2 → {04-03}; 3 → {04-04}; 4 → {04-05, 04-06 parallel}
 
 ### Phase 5: Browser Client & Conference Readiness
 
@@ -126,6 +148,7 @@ Plans:
 
   1. User signs in via OIDC redirect to auth.klankermaker.ai before the mic is available, then grants mic through a gesture-gated flow with distinct error states (denied / no device / unsupported browser)
      — includes the no-access-tier guidance surfaced in-client (moved from Phase 3 / D-07, 2026-07-05): a no-access user is told they cannot start a session and how to get a code
+
   2. User sees a connection state machine with clear ICE-failure/UDP-blocked messaging and auto-retry, verified on a real iPhone and a restricted conference-style network
   3. User sees live captions for both sides, a state-aware orb (listening / thinking / speaking), and a visible session countdown timer
   4. User can toggle a latency HUD showing per-stage pipeline latency
@@ -138,7 +161,7 @@ Plans:
 
 **Goal**: Close the gap from the accepted ~1402ms p50 local baseline to ≤1.2s voice-to-voice (aspiration ~800ms), measured on the deployed service
 **Mode:** mvp
-**Depends on**: Phase 1 (pipeline), Phase 4 (deployed measurement baseline); executes after Phase 5 unless schedule slack allows earlier
+**Depends on**: Phase 1 (pipeline), Phase 4 (deployed measurement baseline); executes after Phase 7 (2026-07-05 reorder — Phase 7 runs before Phase 6)
 **Origin**: 01-04 re-escalation decision (user: "accept + scope later phase"); levers recorded in docs/TUNING.md § RE-ESCALATION
 **Success Criteria** (what must be TRUE):
 
@@ -154,7 +177,7 @@ Plans:
 **Scoped**: 2026-07-05
 **Goal**: KPH answers with deep, current knowledge of Kurt's world — klanker-maker, defcon.run, meshtk, and selected repos/scripts — without breaking the voice-latency budget
 **Mode:** mvp
-**Depends on**: Phase 1 (pipeline); complements Phase 6 (ack-masking masks retrieval latency)
+**Depends on**: Phase 1 (pipeline); complements Phase 6 (ack-masking masks retrieval latency). **Execution order: runs BEFORE Phase 6** (2026-07-05 user reorder).
 **Origin**: User at Phase-1 sign-off: "massive RAG or something really smart that can steer... all of the knowledge of my repos, and some scripts and stuff I'd train it on"
 **Success Criteria** (what must be TRUE):
 
@@ -163,19 +186,38 @@ Plans:
   3. Knowledge refresh is a script run, not a manual edit — regenerating digests from the live repos
   4. KPH answers a benchmark set of Kurt/repo questions correctly, verified by eval scenarios
 
-**Plans**: TBD
+**Reconciliation (planned 2026-07-05):** Built as **router + per-topic deep packs + a stable Kurt-STYLE cached prefix** (CONTEXT D-10/D-11/D-13 ⋈ DESIGN-NOTES Amendments 1+2). Criterion 2's "retrieval path... from full repo content" = a **bounded classify-then-LOAD-a-pack** (router picks a pre-baked per-topic deep pack), NOT open RAG / tool-calling — honors D-11 while satisfying criterion 2.
+
+**Plans**: 4 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 07-01-PLAN.md — Whole loop on ONE topic (km): keyword router + ack + two-block cached prompt (stable prefix + swappable deep pack) + km content + live cache proof (PIPE-10, PIPE-06, PIPE-07)
+
+**Wave 2** *(parallel; both depend on 07-01)*
+
+- [ ] 07-02-PLAN.md — Add defcon.run.34 + meshtk deep packs, multi-topic discrimination, cross-topic cache warmth, per-topic evals (PIPE-10)
+- [ ] 07-03-PLAN.md — `make knowledge` / `kv knowledge refresh` distillation script + do-not-say scrubber (manifest-only, public-refusal, skip-missing) (PIPE-10, PIPE-07)
+
+**Wave 3** *(depends on 07-01 + 07-02)*
+
+- [ ] 07-04-PLAN.md — Adaptive steering + time-aware pacing + honest unknowns + do-not-say boundary + benchmark eval set (PIPE-10, PIPE-06)
+
+**Waves:** 1 → {07-01}; 2 → {07-02, 07-03 parallel}; 3 → {07-04}
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 (Phases 1 and 2 have no interdependency and may run in parallel)
+Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1 and 2 have no interdependency and may run in parallel).
+**Reorder (2026-07-05, user decision):** after Phase 5, run **Phase 7 (KPH Knowledge Base) before Phase 6 (Latency v2)** — Phase 7 is content/knowledge work depending only on Phase 1, and is the higher priority; Phase 6 latency tuning follows. Phase numbers are unchanged — only the execution order.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Local Pipeline & Latency Harness | 5/5 | ✅ Complete (verified 5/5, amended) | 2026-07-05 |
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 4/4 | ✅ Complete (verified 4/5; #3 guidance→Phase 5, seed done) | 2026-07-05 |
-| 4. Voice Service Deployed & Quota Enforcement | 0/TBD | Not started | - |
+| 4. Voice Service Deployed & Quota Enforcement | 6/6 | Complete   | 2026-07-06 |
 | 5. Browser Client & Conference Readiness | 0/TBD | Not started | - |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
-| 7. KPH Knowledge Base | 0/TBD | Not started | - |
+| 7. KPH Knowledge Base | 0/4 | Planned (4 plans, 3 waves) | - |

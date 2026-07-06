@@ -110,6 +110,21 @@ variable "ecs_services" {
         period              = optional(number, 60)
         cooldown            = optional(number, 120)
       }), null)
+
+      # Custom-metric target-tracking scaling (D-13): session-count-style
+      # autoscaling on an arbitrary CloudWatch metric/namespace instead of
+      # the built-in ECS CPU/Memory metrics. Mutually independent of
+      # cpu_target/memory_target — set only this to scale on a custom
+      # metric alone (e.g. ActiveSessions).
+      custom_metric_target = optional(object({
+        metric_name        = string
+        namespace          = string
+        target_value       = number
+        statistic          = optional(string, "Average")
+        dimensions         = optional(map(string), {})
+        scale_out_cooldown = optional(number, 60)
+        scale_in_cooldown  = optional(number, 60)
+      }), null)
     }), { enabled = false })
   }))
   description = "List of ECS service definitions"

@@ -42,6 +42,11 @@ jobs:
       TF_VAR_GITHUB_ORG: ${{ github.repository_owner }}
       TF_VAR_SOPS_KMS_KEY_ID: ${{ vars.TF_VAR_SOPS_KMS_KEY_ID }}
       TF_VAR_SSM_KMS_KEY_ARNS: ${{ vars.TF_VAR_SSM_KMS_KEY_ARNS }}
+      # Deploy the immutable image build-voice.yml / build-auth.yml just pushed
+      # (tagged with the commit sha). service.hcl reads TF_VAR_VOICE_IMAGE_TAG via
+      # get_env; without this the terragrunt apply would deploy the hardcoded
+      # fallback tag and orphan the freshly-built :sha image.
+      TF_VAR_VOICE_IMAGE_TAG: ${{ github.sha }}
 
     steps:
       - name: Checkout

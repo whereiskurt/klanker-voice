@@ -13,16 +13,17 @@ locals {
     [
       for region in task.regions :
       {
-        key                = "${task.name}-${region}"
-        name               = task.name
-        region             = region
-        cluster_name       = task.cluster_name
-        task_cpu           = task.task_cpu
-        task_memory        = task.task_memory
-        network_mode       = task.network_mode
-        task_role_arn      = task.task_role_arn
-        execution_role_arn = task.execution_role_arn
-        containers         = task.containers
+        key                         = "${task.name}-${region}"
+        name                        = task.name
+        region                      = region
+        cluster_name                = task.cluster_name
+        task_cpu                    = task.task_cpu
+        task_memory                 = task.task_memory
+        network_mode                = task.network_mode
+        task_role_arn               = task.task_role_arn
+        execution_role_arn          = task.execution_role_arn
+        task_role_policy_statements = task.task_role_policy_statements
+        containers                  = task.containers
       }
     ]
   ])
@@ -56,14 +57,15 @@ locals {
   tasks_map = {
     for task in local.region_tasks :
     task.name => {
-      name               = task.name
-      cluster_name       = task.cluster_name
-      region             = task.region
-      task_cpu           = task.task_cpu
-      task_memory        = task.task_memory
-      network_mode       = task.network_mode
-      task_role_arn      = task.task_role_arn
-      execution_role_arn = task.execution_role_arn
+      name                        = task.name
+      cluster_name                = task.cluster_name
+      region                      = task.region
+      task_cpu                    = task.task_cpu
+      task_memory                 = task.task_memory
+      network_mode                = task.network_mode
+      task_role_arn               = task.task_role_arn
+      execution_role_arn          = task.execution_role_arn
+      task_role_policy_statements = task.task_role_policy_statements
       # Update container images with full URLs
       containers = [
         for idx, container in task.containers : merge(container, {
@@ -120,6 +122,74 @@ resource "aws_iam_role_policy_attachment" "execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Dedicated least-privilege task role (T-04-13). Only created for tasks that
+# declare task_role_policy_statements — other tasks keep using whatever
+# task_role_arn was passed in (e.g. the shared per-cluster role).
+resource "aws_iam_role" "task_role" {
+  for_each = {
+    for name, task in local.tasks_map :
+    name => task if length(task.task_role_policy_statements) > 0
+  }
+
+  name = "${each.value.family}-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+        Condition = {
+          ArnLike = {
+            "aws:SourceArn" = "arn:aws:ecs:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:*"
+          }
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name     = "${each.value.family}-task-role"
+    TaskName = each.key
+    Region   = var.region.label
+    Site     = var.site.label
+  }
+}
+
+resource "aws_iam_role_policy" "task_role_policy" {
+  for_each = aws_iam_role.task_role
+
+  name = "${each.value.name}-least-privilege"
+  role = each.value.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      for stmt in local.tasks_map[each.key].task_role_policy_statements : merge(
+        {
+          Effect   = "Allow"
+          Action   = stmt.actions
+          Resource = stmt.resources
+        },
+        stmt.sid != null ? { Sid = stmt.sid } : {},
+        stmt.condition != null ? {
+          Condition = {
+            (stmt.condition.test) = {
+              (stmt.condition.variable) = stmt.condition.values
+            }
+          }
+        } : {}
+      )
+    ]
+  })
+}
+
 # Custom policy for SSM Parameter Store access (for secrets)
 resource "aws_iam_role_policy" "ssm_access" {
   for_each = local.tasks_map
@@ -164,7 +234,8 @@ resource "aws_ecs_task_definition" "task" {
   # Ensure IAM roles are fully propagated before creating task definition
   depends_on = [
     aws_iam_role_policy_attachment.execution_role_policy,
-    aws_iam_role_policy.ssm_access
+    aws_iam_role_policy.ssm_access,
+    aws_iam_role_policy.task_role_policy
   ]
 
   family                   = each.value.family
@@ -172,8 +243,15 @@ resource "aws_ecs_task_definition" "task" {
   requires_compatibilities = ["FARGATE"]
   cpu                      = each.value.task_cpu
   memory                   = each.value.task_memory
-  task_role_arn            = each.value.task_role_arn != "" ? each.value.task_role_arn : null
-  execution_role_arn       = each.value.execution_role_arn != "" ? each.value.execution_role_arn : aws_iam_role.execution_role[each.key].arn
+  # Least-privilege dedicated role wins when declared (T-04-13); otherwise
+  # fall back to whatever task_role_arn was passed in (e.g. the shared
+  # per-cluster role injected by the ecs-task terragrunt unit).
+  task_role_arn = length(each.value.task_role_policy_statements) > 0 ? (
+    aws_iam_role.task_role[each.key].arn
+    ) : (
+    each.value.task_role_arn != "" ? each.value.task_role_arn : null
+  )
+  execution_role_arn = each.value.execution_role_arn != "" ? each.value.execution_role_arn : aws_iam_role.execution_role[each.key].arn
 
   container_definitions = jsonencode([
     for container in each.value.containers : {
@@ -197,6 +275,15 @@ resource "aws_ecs_task_definition" "task" {
           }
         ]
       } : null
+
+      # Kernel sysctls (D-12/T-04-06): e.g. pinning aiortc's UDP bind range
+      # to the webrtc_udp security group's narrowed 20000-20100 window.
+      systemControls = length(container.system_controls) > 0 ? [
+        for sc in container.system_controls : {
+          namespace = sc.namespace
+          value     = sc.value
+        }
+      ] : null
 
       # Substitute template variables in environment values
       environment = length(container.environment) > 0 ? [

@@ -137,16 +137,20 @@ locals {
   }
 
   ecs_tasks = {
-    # Disabled until Phase 3/4 flip this on and wire real task definitions.
-    enabled        = false
+    # Phase 4 (04-02): voice task enabled and wired from the voice
+    # service.hcl locals (mirrors the ecr_repositories wiring above) — no
+    # hand-duplicated task data here. Auth's task stays out until its own
+    # deploy plan wires it.
+    enabled        = true
     enable_logging = true
-    tasks          = []
+    tasks          = [local.service_conf.voice.locals.task]
   }
 
   ecs_services = {
-    # Disabled until Phase 3/4 flip this on and wire real services.
-    enabled  = false
-    services = []
+    # Phase 4 (04-02): voice service enabled and wired from the voice
+    # service.hcl locals — same wiring pattern as ecs_tasks above.
+    enabled  = true
+    services = [local.service_conf.voice.locals.service]
   }
 
   # Cross-regional secrets (provider API keys, JWT secrets, etc.)

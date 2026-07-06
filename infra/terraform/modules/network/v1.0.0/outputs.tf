@@ -53,6 +53,14 @@ output "nat_eip_public_ip" {
   value       = var.nat_gateway.enabled ? aws_eip.nat[0].public_ip : null
 }
 
+# WebRTC UDP media security group (D-12/T-04-06): standalone output so
+# consumers can attach it explicitly instead of only via the flat
+# security_group_ids list.
+output "webrtc_udp_security_group_id" {
+  description = "ID of the WebRTC UDP media security group (20000-20100/udp)"
+  value       = aws_security_group.webrtc_udp.id
+}
+
 # Security Group Outputs
 output "security_groups" {
   description = "Map of security group IDs by name"

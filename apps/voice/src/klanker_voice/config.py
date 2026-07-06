@@ -96,6 +96,44 @@ class PipelineConfig:
     persona: PersonaConfig
 
 
+#: Default D-04 wind-down copy (QUOT-03, 04-05). Lives here — not in a code
+#: comment — so `load_quota_config` can fall back to a real, spoken-ready
+#: string when `pipeline.toml` doesn't override it; the checked-in TOML sets
+#: its own copy so wording iterates without a code change.
+DEFAULT_WARNING_COPY = (
+    "Just a heads up: we're coming up on the time limit for this chat, so let's "
+    "start wrapping up."
+)
+DEFAULT_GOODBYE_COPY = "That's my cue to go — thanks for chatting, take care!"
+
+
+@dataclass(frozen=True)
+class QuotaConfig:
+    """Race-safe quota enforcement + wind-down/teardown knobs (QUOT-01/02/03/05,
+    D-01..D-03, D-04..D-07, D-09, D-14).
+
+    Loaded independently of :class:`PipelineConfig` via :func:`load_quota_config`
+    (not a ``PipelineConfig`` field) so existing pipeline-only fixtures/tests
+    that omit ``[quota]`` are unaffected — only quota.py/session.py callers
+    need this.
+    """
+
+    heartbeat_renew_interval: float  # seconds between ticks (D-01/D-02)
+    heartbeat_ttl: float  # seconds; a crashed task's lease self-expires after this
+    sub_floor_seconds: float  # D-03: block session start below this much remaining daily time
+    per_task_max_sessions: int  # D-14: per-task soft cap -> retryable at-capacity reject
+    auto_trip_ceiling_seconds: float  # D-09: site-wide daily seconds ceiling
+    auto_trip_ceiling_dollars: float  # D-09: site-wide daily est.-cost ceiling
+    est_cost_per_second: float  # coarse blended cost estimate (CONTEXT.md: precision deferred)
+    # --- 04-05: spoken wind-down + layered idle teardown (QUOT-03/QUOT-05) ---
+    winddown_warning_seconds: float = 30.0  # D-04: lead time before session_max for the warning
+    goodbye_grace_seconds: float = 5.0  # D-05: cap on letting the goodbye TTS finish before hard-close
+    user_silence_timeout: float = 50.0  # D-06 layer 2: no user speech for this long -> teardown
+    reconnect_grace_seconds: float = 12.0  # D-07: transport-disconnect grace before teardown
+    warning_copy: str = DEFAULT_WARNING_COPY  # D-04: injected as a high-priority LLM instruction
+    goodbye_copy: str = DEFAULT_GOODBYE_COPY  # D-04/D-05: spoken straight to TTS, bypassing the LLM
+
+
 def _reject_credential_fields(data: object, path: str = "") -> None:
     """Recursively reject any field whose name suggests credential material."""
     if isinstance(data, dict):
@@ -134,19 +172,21 @@ def _require_table(data: dict, name: str) -> dict:
     return table
 
 
-def load_config(path: Path | str | None = None) -> PipelineConfig:
-    """Parse and validate a pipeline TOML file into a ``PipelineConfig``.
-
-    Resolution order for the config path:
-    1. explicit ``path`` argument,
-    2. ``KLANKER_PIPELINE_CONFIG`` env var,
-    3. ``apps/voice/pipeline.toml``.
-    """
+def _resolve_config_path(path: Path | str | None) -> Path:
+    """Resolution order: explicit ``path`` arg -> ``KLANKER_PIPELINE_CONFIG``
+    env var -> ``apps/voice/pipeline.toml``."""
     if path is None:
         env_path = os.environ.get(CONFIG_PATH_ENV_VAR)
         path = Path(env_path) if env_path else DEFAULT_CONFIG_PATH
-    path = Path(path).expanduser().resolve()
+    return Path(path).expanduser().resolve()
 
+
+def _load_toml_data(path: Path) -> dict:
+    """Parse ``path`` as TOML and reject any credential-looking field (T-1-04).
+
+    Shared by :func:`load_config` and :func:`load_quota_config` so both stay
+    subject to the same "no secrets in TOML" gate on the same file.
+    """
     if not path.is_file():
         raise ConfigError(f"pipeline config not found: {path}")
 
@@ -157,6 +197,19 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
             raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
 
     _reject_credential_fields(data)
+    return data
+
+
+def load_config(path: Path | str | None = None) -> PipelineConfig:
+    """Parse and validate a pipeline TOML file into a ``PipelineConfig``.
+
+    Resolution order for the config path:
+    1. explicit ``path`` argument,
+    2. ``KLANKER_PIPELINE_CONFIG`` env var,
+    3. ``apps/voice/pipeline.toml``.
+    """
+    path = _resolve_config_path(path)
+    data = _load_toml_data(path)
 
     stt_table = _require_table(data, "stt")
     turn_table = _require_table(data, "turn")
@@ -234,3 +287,82 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
     persona = PersonaConfig(prompt_path=prompt_path)
 
     return PipelineConfig(stt=stt, turn=turn, llm=llm, tts=tts, persona=persona)
+
+
+def load_quota_config(path: Path | str | None = None) -> QuotaConfig:
+    """Parse and validate the ``[quota]`` table into a ``QuotaConfig``.
+
+    Same file/path resolution as :func:`load_config`; ``[quota]`` is required
+    (unlike ``PipelineConfig``'s other tables, no quota-consuming caller ever
+    wants silent defaults for budget-guardrail numbers).
+    """
+    path = _resolve_config_path(path)
+    data = _load_toml_data(path)
+    quota_table = _require_table(data, "quota")
+
+    heartbeat_renew_interval = _require_positive_under(
+        "quota.heartbeat_renew_interval", quota_table.get("heartbeat_renew_interval", 15), 300.0
+    )
+    heartbeat_ttl = _require_positive_under(
+        "quota.heartbeat_ttl", quota_table.get("heartbeat_ttl", 45), 600.0
+    )
+    if heartbeat_ttl <= heartbeat_renew_interval:
+        raise ConfigError(
+            "quota.heartbeat_ttl must exceed quota.heartbeat_renew_interval "
+            f"(got ttl={heartbeat_ttl}, renew_interval={heartbeat_renew_interval})"
+        )
+    sub_floor_seconds = _require_range(
+        "quota.sub_floor_seconds", quota_table.get("sub_floor_seconds", 30), 0.0, 600.0
+    )
+    per_task_max_sessions = int(
+        _require_positive_under(
+            "quota.per_task_max_sessions", quota_table.get("per_task_max_sessions", 5), 100.0
+        )
+    )
+    auto_trip_ceiling_seconds = _require_positive_under(
+        "quota.auto_trip_ceiling_seconds",
+        quota_table.get("auto_trip_ceiling_seconds", 7200),
+        86400.0 * 7,
+    )
+    auto_trip_ceiling_dollars = _require_positive_under(
+        "quota.auto_trip_ceiling_dollars", quota_table.get("auto_trip_ceiling_dollars", 40), 10000.0
+    )
+    est_cost_per_second = _require_positive_under(
+        "quota.est_cost_per_second", quota_table.get("est_cost_per_second", 0.005), 10.0
+    )
+
+    # --- 04-05: spoken wind-down + layered idle teardown (QUOT-03/QUOT-05) ---
+    winddown_warning_seconds = _require_positive_under(
+        "quota.winddown_warning_seconds", quota_table.get("winddown_warning_seconds", 30), 600.0
+    )
+    goodbye_grace_seconds = _require_positive_under(
+        "quota.goodbye_grace_seconds", quota_table.get("goodbye_grace_seconds", 5), 60.0
+    )
+    user_silence_timeout = _require_range(
+        "quota.user_silence_timeout", quota_table.get("user_silence_timeout", 50), 10.0, 300.0
+    )
+    reconnect_grace_seconds = _require_range(
+        "quota.reconnect_grace_seconds", quota_table.get("reconnect_grace_seconds", 12), 1.0, 120.0
+    )
+    warning_copy = str(quota_table.get("warning_copy", DEFAULT_WARNING_COPY))
+    goodbye_copy = str(quota_table.get("goodbye_copy", DEFAULT_GOODBYE_COPY))
+    if not warning_copy.strip():
+        raise ConfigError("quota.warning_copy must not be empty")
+    if not goodbye_copy.strip():
+        raise ConfigError("quota.goodbye_copy must not be empty")
+
+    return QuotaConfig(
+        heartbeat_renew_interval=heartbeat_renew_interval,
+        heartbeat_ttl=heartbeat_ttl,
+        sub_floor_seconds=sub_floor_seconds,
+        per_task_max_sessions=per_task_max_sessions,
+        auto_trip_ceiling_seconds=auto_trip_ceiling_seconds,
+        auto_trip_ceiling_dollars=auto_trip_ceiling_dollars,
+        est_cost_per_second=est_cost_per_second,
+        winddown_warning_seconds=winddown_warning_seconds,
+        goodbye_grace_seconds=goodbye_grace_seconds,
+        user_silence_timeout=user_silence_timeout,
+        reconnect_grace_seconds=reconnect_grace_seconds,
+        warning_copy=warning_copy,
+        goodbye_copy=goodbye_copy,
+    )
