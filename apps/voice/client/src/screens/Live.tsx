@@ -5,6 +5,7 @@ import { useOrbBinding } from "../orb/useOrbBinding";
 import Captions from "../captions/Captions";
 import { captionReducer, INITIAL_CAPTION_STATE } from "../captions/captionReducer";
 import Countdown from "../timer/Countdown";
+import LatencyHud from "../hud/LatencyHud";
 import "./live.css";
 
 export interface LiveProps {
@@ -16,13 +17,14 @@ export interface LiveProps {
 }
 
 /**
- * The live-conversation stage (CLNT-03/04/05): the hero orb now driven by
+ * The live-conversation stage (CLNT-03/04/05/06): the hero orb now driven by
  * real RTVI state/amplitude (`useOrbBinding`) plus the subtitle caption band
- * (`captionReducer` fed by RTVI transcript frames) and the persistent
- * session countdown. Mounted by `App.tsx` only once `connectionState`
- * reaches "connected" — no conversation UI exists before that (T-05-04-E),
- * which also makes THIS component's mount time exactly "the moment the
- * session reaches connected" (D-10's countdown start clock).
+ * (`captionReducer` fed by RTVI transcript frames), the persistent session
+ * countdown, and the off-by-default latency HUD. Mounted by `App.tsx` only
+ * once `connectionState` reaches "connected" — no conversation UI exists
+ * before that (T-05-04-E), which also makes THIS component's mount time
+ * exactly "the moment the session reaches connected" (D-10's countdown
+ * start clock).
  */
 export default function Live({ client, sessionMaxSeconds }: LiveProps) {
   const orb = useOrbBinding(client);
@@ -53,6 +55,7 @@ export default function Live({ client, sessionMaxSeconds }: LiveProps) {
       {sessionMaxSeconds != null && sessionMaxSeconds > 0 ? (
         <Countdown sessionMaxSeconds={sessionMaxSeconds} startedAt={startedAt} />
       ) : null}
+      <LatencyHud client={client} />
     </div>
   );
 }

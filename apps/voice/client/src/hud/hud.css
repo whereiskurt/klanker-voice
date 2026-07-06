@@ -1,0 +1,99 @@
+/* Latency HUD (CLNT-06, D-09 · UI-SPEC §Latency HUD Spec): the toggle
+   affordance is always present, bottom-left; the panel itself is a
+   translucent secondary surface, monospace 13px, right-aligned values --
+   purely informational, escalates nothing. */
+.hud-toggle {
+  position: absolute;
+  left: max(var(--lg), env(safe-area-inset-left));
+  bottom: max(var(--lg), env(safe-area-inset-bottom));
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--xs);
+  min-height: var(--hit-min);
+  padding: var(--xs) var(--sm);
+  font-size: var(--sz-label);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: var(--motion-fast);
+}
+
+.hud-toggle:hover,
+.hud-toggle[aria-pressed="true"] {
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+  background: var(--scrim);
+}
+
+.hud-toggle:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+.hud-toggle-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0 var(--xs);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-interim);
+}
+
+.hud-panel {
+  position: absolute;
+  left: max(var(--lg), env(safe-area-inset-left));
+  bottom: calc(var(--lg) + var(--hit-min) + var(--sm));
+  z-index: 10;
+  min-width: 220px;
+  padding: var(--md);
+  background: var(--scrim);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--sz-label);
+  animation: hud-panel-enter var(--motion-base) forwards;
+}
+
+@keyframes hud-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-panel {
+    animation: none;
+  }
+}
+
+.hud-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--md);
+  padding: var(--xs) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.hud-row:last-child {
+  border-bottom: none;
+}
+
+.hud-label {
+  color: var(--text-secondary);
+}
+
+.hud-value {
+  color: var(--text-primary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
