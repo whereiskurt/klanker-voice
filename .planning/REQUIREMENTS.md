@@ -24,7 +24,7 @@
 - [ ] **CLNT-05**: User sees a visible session countdown timer
 - [x] **CLNT-06**: User can toggle a latency HUD showing per-stage pipeline latency (also serves as the tuning instrument)
 - [ ] **CLNT-07**: User gets a clean session end and one-click reconnect that re-checks quota before reconnecting
-- [ ] **CLNT-08**: User signs in via OIDC redirect to auth.klankermaker.ai before the mic is available
+- [x] **CLNT-08**: User signs in via OIDC redirect to auth.klankermaker.ai before the mic is available
 
 ### Auth & Access Codes
 
@@ -100,7 +100,7 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | CLNT-05 | Phase 5 | Pending |
 | CLNT-06 | Phase 5 | Complete |
 | CLNT-07 | Phase 5 | Pending |
-| CLNT-08 | Phase 5 | Pending |
+| CLNT-08 | Phase 5 | Complete |
 | AUTH-01 | Phase 3 | Pending |
 | AUTH-02 | Phase 3 | Pending |
 | AUTH-03 | Phase 3 | Pending |
