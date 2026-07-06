@@ -36,6 +36,7 @@ from pipecat.processors.frameworks.rtvi import RTVIObserver
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
+    SmallWebRTCPatchRequest,
     SmallWebRTCRequest,
     SmallWebRTCRequestHandler,
 )
@@ -294,6 +295,27 @@ async def offer(request: Request) -> Any:
         return JSONResponse(status_code=403, content={"error": "rejected", "detail": str(exc)})
 
     return await _negotiate_webrtc(body, identity, gate_result)
+
+
+@app.patch("/api/offer")
+async def ice_candidate(request: SmallWebRTCPatchRequest) -> Any:
+    """Trickle-ICE candidate updates for an already-negotiated connection.
+
+    The pipecat SmallWebRTC client POSTs the initial offer (token-gated +
+    quota-gated by :func:`offer` above), then PATCHes trickled ICE candidates
+    to the SAME ``pc_id`` as the media path comes up and whenever it
+    renegotiates/ICE-restarts mid-session. The pipecat dev runner provides
+    this route (``run.py``) but this self-hosted entrypoint had only the POST
+    half — so every candidate PATCH 405'd, the server never received the
+    browser's trickled candidates, and the session dropped shortly after
+    connecting (worked locally only because the dev runner has it).
+
+    No token re-check here (mirrors the runner): a PATCH only adds ICE
+    candidates to an EXISTING connection resolved by its opaque ``pc_id`` —
+    it can neither create a session nor bypass the POST's auth/quota gate.
+    """
+    await _webrtc_handler.handle_patch_request(request)
+    return {"status": "success"}
 
 
 #: The built client (D-01/02/03): Vite+React SPA source lives at
