@@ -21,7 +21,7 @@ on:
         default: 'all'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: deploy-ecs-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
