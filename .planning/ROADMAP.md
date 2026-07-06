@@ -154,7 +154,7 @@ Plans:
   4. User can toggle a latency HUD showing per-stage pipeline latency
   5. User gets a clean session end and one-click reconnect that re-checks quota before reconnecting
 
-**Plans**: 3/7 plans executed
+**Plans**: 4/7 plans executed
 **UI hint**: yes
 
 Plans:
@@ -169,7 +169,7 @@ Plans:
 
 **Wave 3** *(depends on 05-01, 05-02, 05-03)*
 
-- [ ] 05-04-PLAN.md — Gesture-gated mic + distinct errors + SmallWebRTC connect (Bearer) + connection state machine + live orb reactivity + subtitle captions (CLNT-01, CLNT-02, CLNT-03, CLNT-04)
+- [x] 05-04-PLAN.md — Gesture-gated mic + distinct errors + SmallWebRTC connect (Bearer) + connection state machine + live orb reactivity + subtitle captions (CLNT-01, CLNT-02, CLNT-03, CLNT-04)
 
 **Wave 4** *(depends on 05-04)*
 
@@ -265,6 +265,6 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 2. Infra Skeleton | 7/7 | ✅ Complete (verified 5/5) | 2026-07-05 |
 | 3. Auth Service & Access Codes | 4/4 | ✅ Complete (verified 4/5; #3 guidance→Phase 5, seed done) | 2026-07-05 |
 | 4. Voice Service Deployed & Quota Enforcement | 6/6 | Complete   | 2026-07-06 |
-| 5. Browser Client & Conference Readiness | 3/7 | In Progress|  |
+| 5. Browser Client & Conference Readiness | 4/7 | In Progress|  |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
 | 7. KPH Knowledge Base | 0/4 | Planned (4 plans, 3 waves) | - |

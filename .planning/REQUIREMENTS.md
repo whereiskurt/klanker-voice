@@ -17,7 +17,7 @@
 
 ### Browser Client
 
-- [ ] **CLNT-01**: User grants mic via a gesture-gated flow with distinct error states (denied / no device / unsupported browser)
+- [x] **CLNT-01**: User grants mic via a gesture-gated flow with distinct error states (denied / no device / unsupported browser)
 - [ ] **CLNT-02**: User sees a connection state machine with clear messaging for ICE failure / UDP-blocked networks, with auto-retry
 - [x] **CLNT-03**: User sees live captions for both sides of the conversation
 - [x] **CLNT-04**: User sees a state-aware orb visualization (listening / thinking / speaking)
@@ -93,7 +93,7 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | PIPE-05 | Phase 1 | Pending |
 | PIPE-06 | Phase 1 | Pending |
 | PIPE-07 | Phase 1 | Pending |
-| CLNT-01 | Phase 5 | Pending |
+| CLNT-01 | Phase 5 | Complete |
 | CLNT-02 | Phase 5 | Pending |
 | CLNT-03 | Phase 5 | Complete |
 | CLNT-04 | Phase 5 | Complete |
