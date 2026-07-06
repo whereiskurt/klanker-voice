@@ -111,7 +111,7 @@ resource "aws_security_group" "http_only" {
       # 7860 for the ALB health check (/health) and /api/offer signaling. The ALB
       # shares this SG, so a self-referencing 7860 rule lets ALB -> task reach it
       # (media stays on the separate webrtc-udp SG, 20000-20100).
-      description      = "Voice service port 7860 (ALB -> Pipecat /api/offer + /health)"
+      description      = "Voice service port 7860 (ALB to Pipecat /api/offer and /health)"
       from_port        = 7860
       to_port          = 7860
       protocol         = "tcp"
