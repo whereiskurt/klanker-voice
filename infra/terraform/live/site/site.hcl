@@ -137,20 +137,17 @@ locals {
   }
 
   ecs_tasks = {
-    # Phase 4 (04-02): voice task enabled and wired from the voice
-    # service.hcl locals (mirrors the ecr_repositories wiring above) — no
-    # hand-duplicated task data here. Auth's task stays out until its own
-    # deploy plan wires it.
+    # Phase 4 (04-02): voice task. Phase 5 deploy: auth task added — the auth
+    # identity service is stood up so the browser client's OIDC sign-in works.
     enabled        = true
     enable_logging = true
-    tasks          = [local.service_conf.voice.locals.task]
+    tasks          = [local.service_conf.voice.locals.task, local.service_conf.auth.locals.task]
   }
 
   ecs_services = {
-    # Phase 4 (04-02): voice service enabled and wired from the voice
-    # service.hcl locals — same wiring pattern as ecs_tasks above.
+    # Phase 4 (04-02): voice service. Phase 5 deploy: auth service added.
     enabled  = true
-    services = [local.service_conf.voice.locals.service]
+    services = [local.service_conf.voice.locals.service, local.service_conf.auth.locals.service]
   }
 
   # Cross-regional secrets (provider API keys, JWT secrets, etc.)
