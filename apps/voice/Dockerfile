@@ -79,6 +79,14 @@ COPY --from=client-build /client/dist /app/client/dist
 ENV PATH="/app/.venv/bin:${PATH}"
 ENV PYTHONUNBUFFERED=1
 
+# pipecat's ElevenLabs TTS streams by sentence, tokenizing text with NLTK's
+# `punkt_tab`. NLTK 3.9+ ships no data bundled, so at runtime the service
+# raised "Resource 'punkt_tab' not found" on the very first turn and the bot
+# could not speak. Bake the tokenizer into a standard NLTK search path at
+# build time — no flaky runtime download, and the runtime FS is read-only.
+ENV NLTK_DATA=/usr/share/nltk_data
+RUN python -m nltk.downloader -d /usr/share/nltk_data punkt_tab
+
 EXPOSE 7860
 
 # Invoke uvicorn directly from the already-synced .venv (on PATH above) —
