@@ -108,9 +108,9 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | AUTH-05 | Phase 3 | Pending |
 | QUOT-01 | Phase 4 | Complete |
 | QUOT-02 | Phase 4 | Complete |
-| QUOT-03 | Phase 4 | Pending |
+| QUOT-03 | Phase 4 | Code+tests; live audio → Phase 5 |
 | QUOT-04 | Phase 4 | Complete |
-| QUOT-05 | Phase 4 | Pending |
+| QUOT-05 | Phase 4 | Code+tests; live teardown → Phase 5 |
 | INFR-01 | Phase 2 | Complete |
 | INFR-02 | Phase 2 | Pending |
 | INFR-03 | Phase 4 | Complete |
@@ -120,6 +120,6 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | INFR-07 | Phase 2 | Complete |
 | KV-01 | Phase 3 | Pending |
 | KV-02 | Phase 3 | Pending |
-| KV-03 | Phase 4 | Pending |
-| KV-04 | Phase 4 | Pending |
-| KV-05 | Phase 4 | Pending |
+| KV-03 | Phase 4 | Complete |
+| KV-04 | Phase 4 | Complete |
+| KV-05 | Phase 4 | Complete |
