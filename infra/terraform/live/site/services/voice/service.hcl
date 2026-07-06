@@ -52,6 +52,17 @@ locals {
       ]
     },
     {
+      # Phase 4 (04-04/04-06 reconciliation): quota.read_tier() reads tier limits
+      # (session_max / daily / concurrency) from the Phase-3 tiers table at
+      # session start (thin-token design D-01). Read-only, tiers table only.
+      sid     = "TiersTableRead"
+      actions = ["dynamodb:GetItem", "dynamodb:Query"]
+      resources = [
+        "arn:aws:dynamodb:*:*:table/kmv-auth-electro",
+        "arn:aws:dynamodb:*:*:table/kmv-auth-electro/index/*"
+      ]
+    },
+    {
       sid       = "SessionMetricsPublish"
       actions   = ["cloudwatch:PutMetricData"]
       resources = ["*"]
@@ -95,7 +106,7 @@ locals {
     containers = [
       {
         name      = "voice-app"
-        image     = "voice-app:0.0.0"
+        image     = "voice-app:0.1.0"
         cpu       = 1024
         memory    = 2048
         essential = true
