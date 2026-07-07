@@ -19,8 +19,11 @@ post-breakpoint block is appended -- the topic-scoped top-k chunks
 turn. It never touches block0 or block1's text (Amendment 3-C, Pitfall 3);
 empty/None yields exactly the Plan-01 two-block shape.
 
-``remaining_seconds`` (07-05, time-aware pacing) is an accepted-but-unused
-parameter here -- that future plan injects into block1 ONLY as well.
+``remaining_seconds`` (07-05, time-aware pacing, D-06): when supplied, a
+short pacing note is prepended to block1 ONLY (never block0) -- tight
+highlights + a closing pointer when little session time is left, room for
+depth when there's more. ``None`` (the default, and every pre-07-05 caller)
+reproduces the exact block1 text of the Plan-01/02 shape unchanged.
 
 Wiring note (a genuine pipecat gap, not a shortcut): see
 :func:`apply_system_blocks` for why this two-block ``system`` array is set
@@ -42,6 +45,13 @@ from klanker_voice.config import KnowledgeConfig, PipelineConfig
 from klanker_voice.knowledge.retrieval import Chunk
 
 CacheControlBlock = dict[str, Any]
+
+#: D-06 time-aware pacing (07-05) threshold: at or below this many seconds
+#: remaining, KPH should tighten to highlights + a closing pointer rather
+#: than opening up depth. Deliberately a single binary threshold (not a
+#: graduated scale) -- simple enough for the LLM to act on consistently
+#: inside a short pacing note.
+PACING_TIGHT_THRESHOLD_SECONDS = 90.0
 
 
 def _read(path: Path) -> str:
@@ -112,6 +122,29 @@ def load_topic_pack_text(knowledge_cfg: KnowledgeConfig, topic: str) -> str:
     return _read(pack_path)
 
 
+def render_pacing_note(remaining_seconds: float | None) -> str:
+    """Render a short, spoken-friendly pacing note for block1 (07-05, D-06).
+
+    ``None`` (no session-time signal -- e.g. a bypass/smoke session, or any
+    caller that predates this parameter) renders an empty string: no pacing
+    note at all, block1 unchanged from the Plan-01/02 shape.
+    """
+    if remaining_seconds is None:
+        return ""
+    if remaining_seconds <= PACING_TIGHT_THRESHOLD_SECONDS:
+        return (
+            "## Pacing (time check -- only a little session time left)\n"
+            "Keep it tight: land the single strongest highlight, skip "
+            "tangents, and close with a pointer (the repo, or come find "
+            "Kurt) instead of opening up depth.\n\n"
+        )
+    return (
+        "## Pacing (time check -- plenty of session time left)\n"
+        "It's fine to go deeper if the visitor wants it -- offer the long "
+        "version, not just the highlight.\n\n"
+    )
+
+
 def render_retrieved_chunks(chunks: list[Chunk]) -> str:
     """Render retrieved chunks with light source attribution KPH can cite
     from -- narration framing, not a raw code/doc dump (Amendment 5's
@@ -143,19 +176,21 @@ def build_system_blocks(
             with these chunks, alongside (never replacing) the curated
             block1 pack. Empty/None -> the Plan-01 two-block shape,
             unchanged.
-        remaining_seconds: Present-but-unused (07-05 fills time-aware pacing,
-            also into a post-breakpoint block ONLY).
+        remaining_seconds: 07-05 time-aware pacing (D-06) -- when not
+            ``None``, a short pacing note is prepended to block1 (never
+            block0/block2). ``None`` (the default) -> block1 is exactly the
+            topic pack text, unchanged from the Plan-01/02 shape.
 
     Returns:
         ``[block0, block1]`` when no chunks are retrieved (block0 carries
         ``cache_control: ephemeral``, block1 does not); ``[block0, block1,
         block2]`` when chunks are present -- block2 also carries no
-        ``cache_control`` (it is per-turn dynamic, Pitfall 3).
+        ``cache_control`` (it is per-turn dynamic, Pitfall 3). block1 itself
+        never carries ``cache_control`` either way, pacing note or not.
     """
-    del remaining_seconds  # 07-05 seam; unused here
-
     stable_prefix = build_stable_prefix_text(cfg, knowledge_cfg)
     pack_text = load_topic_pack_text(knowledge_cfg, topic)
+    pacing_note = render_pacing_note(remaining_seconds)
 
     blocks: list[CacheControlBlock] = [
         {
@@ -165,7 +200,7 @@ def build_system_blocks(
         },
         {
             "type": "text",
-            "text": pack_text,
+            "text": pacing_note + pack_text,
         },
     ]
 

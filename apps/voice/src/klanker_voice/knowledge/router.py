@@ -24,6 +24,16 @@ topic and passes the returned chunks into
 where the ack is already firing, so its cost is ack-masked -- no new network
 hop before the ack (Amendment 3-G). ``retrieval_index=None`` (the default)
 reproduces Plan 01's behavior unchanged.
+
+07-05 (D-06, time-aware pacing): on that same deep-turn block1 rebuild, this
+processor also calls an optional ``remaining_seconds_fn`` -- a zero-arg
+callable a caller (e.g. server.py, from the session's own
+:class:`klanker_voice.session.SessionLifecycle.remaining_seconds`) supplies
+-- and threads its return value into ``build_system_blocks``'s
+``remaining_seconds``. This is a READ, never a new timer: the callable is
+invoked once, synchronously, at the moment of the switch.
+``remaining_seconds_fn=None`` (the default) reproduces Plan 01/02's behavior
+unchanged (no pacing note).
 """
 
 from __future__ import annotations
@@ -153,6 +163,7 @@ class KnowledgeRouterProcessor(FrameProcessor):
         fallback_classify: FallbackClassifier | None = None,
         ack_template: str = DEFAULT_ACK_TEMPLATE,
         retrieval_index: RetrievalIndex | None = None,
+        remaining_seconds_fn: Callable[[], "float | None"] | None = None,
     ) -> None:
         super().__init__()
         self._cfg = cfg
@@ -163,6 +174,7 @@ class KnowledgeRouterProcessor(FrameProcessor):
         self._fallback_classify = fallback_classify or default_haiku_fallback_classify
         self._ack_template = ack_template
         self._retrieval_index = retrieval_index
+        self._remaining_seconds_fn = remaining_seconds_fn
 
     def _spoken_name(self, topic_id: str) -> str:
         for topic in self._topic_map.get("topics", []):
@@ -212,8 +224,17 @@ class KnowledgeRouterProcessor(FrameProcessor):
                 or None
             )
 
+        # 07-05 (D-06): a synchronous READ of the caller-supplied session
+        # state -- never a new timer/thread. None (the default) reproduces
+        # Plan 01/02's block1 text unchanged.
+        remaining_seconds = self._remaining_seconds_fn() if self._remaining_seconds_fn else None
+
         blocks = build_system_blocks(
-            self._cfg, self._knowledge_cfg, topic_id, retrieved_chunks=retrieved_chunks
+            self._cfg,
+            self._knowledge_cfg,
+            topic_id,
+            retrieved_chunks=retrieved_chunks,
+            remaining_seconds=remaining_seconds,
         )
         apply_system_blocks(self._llm, blocks)
 

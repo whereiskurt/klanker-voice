@@ -132,6 +132,27 @@ class SessionLifecycle:
     _is_first_tick: bool = field(default=True, init=False, repr=False)
     _stopped: bool = field(default=False, init=False, repr=False)
     _wind_down_fired: bool = field(default=False, init=False, repr=False)
+    #: 07-05 (D-06): stamped once, at construction time (via __post_init__),
+    #: off the SAME `clock` this session's D-02 service timer already uses --
+    #: the single source `remaining_seconds()` reads, never a second timer.
+    _started_at: float = field(default=0.0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._started_at = self.clock()
+
+    def remaining_seconds(self) -> float | None:
+        """D-06 time-aware pacing (07-05): seconds left before the D-02 hard
+        stop, computed from this session's OWN existing clock/tier state --
+        a synchronous read at call time, never a new timer or thread.
+
+        Returns ``None`` for a bypass session (D-15: no real tier/session_max
+        bound, never subject to the wall-clock cutoff) -- callers must treat
+        ``None`` as "no pacing signal available", not "no time left".
+        """
+        if self.bypass_accounting:
+            return None
+        elapsed = self.clock() - self._started_at
+        return max(0.0, self.tier.session_max_seconds - elapsed)
 
     async def start(self) -> None:
         """Increment the active-session count, emit the metric, acquire
