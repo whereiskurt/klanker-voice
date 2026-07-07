@@ -155,7 +155,8 @@ async def _run_session(connection: SmallWebRTCConnection, lifecycle: SessionLife
             TeardownObserver(lifecycle),
         ],
     )
-    register_greet_first(transport, worker, built.context)
+    if cfg.persona.greet_first:
+        register_greet_first(transport, worker, built.context)
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
 

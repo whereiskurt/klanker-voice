@@ -85,6 +85,7 @@ class TtsConfig:
 @dataclass(frozen=True)
 class PersonaConfig:
     prompt_path: Path  # resolved absolute path; existence-checked at load
+    greet_first: bool = True  # server plays register_greet_first when true (default: back-compat)
 
 
 @dataclass(frozen=True)
@@ -284,7 +285,10 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
         prompt_path = (path.parent / prompt_path).resolve()
     if not prompt_path.is_file():
         raise ConfigError(f"persona prompt not found: {prompt_path}")
-    persona = PersonaConfig(prompt_path=prompt_path)
+    persona = PersonaConfig(
+        prompt_path=prompt_path,
+        greet_first=bool(persona_table.get("greet_first", True)),
+    )
 
     return PipelineConfig(stt=stt, turn=turn, llm=llm, tts=tts, persona=persona)
 

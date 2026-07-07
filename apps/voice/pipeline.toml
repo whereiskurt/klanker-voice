@@ -33,6 +33,7 @@ speed = 1.1                     # D-03: slightly above default; ElevenLabs WS ra
 
 [persona]
 prompt_path = "prompts/concierge.md"
+greet_first = false   # client plays a pre-rendered greeting on tap (slick-start); server must not greet twice
 
 [quota]                            # QUOT-01/02/03/04/05, D-01..D-09/D-14 (04-04/04-05)
 heartbeat_renew_interval = 15      # seconds between concurrency-lease renewals + accounting ticks
