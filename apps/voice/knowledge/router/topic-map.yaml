@@ -1,0 +1,65 @@
+# Phase 7 router topic-map (RESEARCH Pattern 2, Amendment 1/5). Weighted
+# keyword/alias lists the keyword-first router (klanker_voice.knowledge.
+# router.classify) scores an utterance against. confidence_floor is the
+# minimum summed weight before the router trusts a keyword match; below it,
+# KnowledgeRouterProcessor falls back to a single same-vendor Haiku
+# classification call (PIPE-07: never a 4th vendor) rather than guessing
+# (Pitfall 1).
+#
+# Each keyword entry: {term, weight}. Higher weight = more distinctive
+# (multi-word phrases and the topic's own name); lower weight = common words
+# that only count alongside other matches ("the platform", "sandbox" alone
+# shouldn't confidently commit to a topic).
+#
+# hook: a single spoken-friendly sentence rendered for EVERY topic into the
+# stable-prefix topic-map (block0, prompt_assembly.render_topic_hooks) so KPH
+# can always name what it knows about, even before a deep pack loads.
+
+version: 1
+confidence_floor: 2
+
+topics:
+  - id: klanker-maker
+    spoken_name: "klanker-maker"
+    hook: >-
+      Kurt's AI-agent runtime -- a Go CLI called km that turns a YAML file
+      into a locked-down AWS sandbox where coding agents can run untrusted
+      code safely, with kernel-level network filtering and a hard dollar
+      budget.
+    keywords:
+      - term: "klanker maker"
+        weight: 3
+      - term: "klanker-maker"
+        weight: 3
+      - term: "klankermaker"
+        weight: 3
+      - term: "clanker maker"        # common ASR mis-hearing of "klanker"
+        weight: 3
+      - term: "clanker-maker"
+        weight: 3
+      - term: "klanker"
+        weight: 2
+      - term: "clanker"
+        weight: 1                    # weak alone -- also a generic internet meme word
+      - term: "km cli"
+        weight: 2
+      - term: " km "
+        weight: 1
+      - term: "the platform"
+        weight: 1
+      - term: "sandbox"
+        weight: 1
+      - term: "sandboxes"
+        weight: 1
+      - term: "ebpf"
+        weight: 2
+      - term: "sandboxprofile"
+        weight: 2
+      - term: "budget enforcement"
+        weight: 1
+      - term: "agent runtime"
+        weight: 1
+
+  # defcon-run-34, meshtk: candidate next topics (Amendment 1/5). Appending
+  # a new entry here (id + spoken_name + hook + keywords) plus a matching
+  # manifest.yaml topic is the whole 07-03 job -- this schema does not change.

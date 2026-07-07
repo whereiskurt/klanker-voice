@@ -35,6 +35,13 @@ speed = 1.1                     # D-03: slightly above default; ElevenLabs WS ra
 prompt_path = "prompts/concierge.md"
 greet_first = false   # client plays a pre-rendered greeting on tap (slick-start); server must not greet twice
 
+[knowledge]                                    # Phase 7 router + cached knowledge packs (D-01/D-13)
+manifest = "knowledge/manifest.yaml"           # curated N-topic manifest (D-01), tour priority order (D-05)
+topic_map = "knowledge/router/topic-map.yaml"  # router keywords/aliases + confidence floor
+packs_dir = "knowledge/topics"                 # per-topic deep packs (block1, swappable)
+style_path = "knowledge/style/kurt-voice.md"   # Kurt STYLE layer (block0, stable/cached prefix)
+cache_floor = 4096                             # Haiku 4.5's minimum cacheable system-prefix (D-13)
+
 [quota]                            # QUOT-01/02/03/04/05, D-01..D-09/D-14 (04-04/04-05)
 heartbeat_renew_interval = 15      # seconds between concurrency-lease renewals + accounting ticks
 heartbeat_ttl = 45                 # seconds; a crashed task's lease self-expires after this (3x renew interval)

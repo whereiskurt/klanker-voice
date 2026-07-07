@@ -97,6 +97,25 @@ class PipelineConfig:
     persona: PersonaConfig
 
 
+@dataclass(frozen=True)
+class KnowledgeConfig:
+    """The ``[knowledge]`` table (Phase 7, D-01/D-13): where the router's
+    curated N-topic manifest, keyword topic-map, per-topic packs, and Kurt
+    STYLE layer live, plus the Haiku prompt-caching floor.
+
+    Loaded independently via :func:`load_knowledge_config` -- mirrors the
+    :class:`QuotaConfig` / :func:`load_quota_config` precedent, not a
+    ``PipelineConfig`` field, so the 168+-test suite's fixtures that omit
+    ``[knowledge]`` (many built before this phase) are unaffected.
+    """
+
+    manifest_path: Path  # resolved absolute path; existence-checked at load
+    topic_map_path: Path  # resolved absolute path; existence-checked at load
+    packs_dir: Path  # resolved absolute dir; existence-checked at load
+    style_path: Path  # resolved absolute path; existence-checked at load
+    cache_floor: int = 4096  # D-13: Haiku 4.5's minimum cacheable prefix
+
+
 #: Default D-04 wind-down copy (QUOT-03, 04-05). Lives here — not in a code
 #: comment — so `load_quota_config` can fall back to a real, spoken-ready
 #: string when `pipeline.toml` doesn't override it; the checked-in TOML sets
@@ -291,6 +310,68 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
     )
 
     return PipelineConfig(stt=stt, turn=turn, llm=llm, tts=tts, persona=persona)
+
+
+def _resolve_relative_to(base_dir: Path, raw: str) -> Path:
+    """Resolve ``raw`` relative to ``base_dir`` unless already absolute.
+
+    Mirrors ``PersonaConfig.prompt_path`` resolution (config.py convention).
+    """
+    p = Path(raw)
+    if not p.is_absolute():
+        p = (base_dir / p).resolve()
+    return p
+
+
+def load_knowledge_config(path: Path | str | None = None) -> KnowledgeConfig:
+    """Parse and validate the ``[knowledge]`` table into a ``KnowledgeConfig``.
+
+    Same file/path resolution as :func:`load_config`. ``[knowledge]`` is
+    required (like ``[quota]``, unlike ``PipelineConfig``'s other tables) --
+    no knowledge-consuming caller wants a silent default for the manifest/
+    topic-map/pack paths.
+    """
+    path = _resolve_config_path(path)
+    data = _load_toml_data(path)
+    knowledge_table = _require_table(data, "knowledge")
+
+    manifest_path = _resolve_relative_to(
+        path.parent, str(knowledge_table.get("manifest", "knowledge/manifest.yaml"))
+    )
+    if not manifest_path.is_file():
+        raise ConfigError(f"knowledge manifest not found: {manifest_path}")
+
+    topic_map_path = _resolve_relative_to(
+        path.parent, str(knowledge_table.get("topic_map", "knowledge/router/topic-map.yaml"))
+    )
+    if not topic_map_path.is_file():
+        raise ConfigError(f"knowledge topic_map not found: {topic_map_path}")
+
+    packs_dir = _resolve_relative_to(
+        path.parent, str(knowledge_table.get("packs_dir", "knowledge/topics"))
+    )
+    if not packs_dir.is_dir():
+        raise ConfigError(f"knowledge packs_dir not found: {packs_dir}")
+
+    style_path = _resolve_relative_to(
+        path.parent, str(knowledge_table.get("style_path", "knowledge/style/kurt-voice.md"))
+    )
+    if not style_path.is_file():
+        raise ConfigError(f"knowledge style_path not found: {style_path}")
+
+    cache_floor = int(
+        _require_positive_under(
+            "knowledge.cache_floor", knowledge_table.get("cache_floor", 4096), 200000.0
+        )
+    )
+
+    return KnowledgeConfig(
+        manifest_path=manifest_path,
+        topic_map_path=topic_map_path,
+        packs_dir=packs_dir,
+        style_path=style_path,
+        cache_floor=cache_floor,
+    )
 
 
 def load_quota_config(path: Path | str | None = None) -> QuotaConfig:

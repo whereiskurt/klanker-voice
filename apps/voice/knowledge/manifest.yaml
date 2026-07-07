@@ -1,0 +1,70 @@
+# Phase 7 knowledge manifest (D-01) -- the curated, N-topic source of truth
+# for the router's per-topic deep packs. Auto-discovery of repos is explicitly
+# rejected (D-01/D-02): every source below was hand-picked as public-safe.
+#
+# tour_priority (D-05): the order KPH re-pitches topics in tour mode -- a
+# one-line edit re-orders the whole tour, no code change.
+#
+# Schema is deliberately N-topic-ready (Amendment 1/5): only klanker-maker is
+# populated today, but 07-03 only APPENDS entries here -- it must never need
+# to change this file's shape.
+#
+# Each topic:
+#   id            -- stable slug, matches router/topic-map.yaml's topic id
+#   spoken_name   -- TTS-friendly name (see topic-map.yaml for the same field)
+#   pack          -- filename under [knowledge].packs_dir (config.py)
+#   sources       -- corpus provenance for the offline refresh workflow
+#                     (07-04's `make -C apps/voice knowledge`); kind is one of
+#                     docs | code | transcript | diagram. A source outside
+#                     this repo (e.g. a sibling local checkout) is marked
+#                     skip_if_missing so refresh degrades gracefully when run
+#                     on a machine without that checkout.
+
+version: 1
+
+tour_priority:
+  - klanker-maker
+
+topics:
+  - id: klanker-maker
+    spoken_name: "klanker-maker"
+    pack: klanker-maker.md
+    sources:
+      - path: /Users/khundeck/working/klankrmkr/docs
+        kind: docs
+        skip_if_missing: true
+        note: >-
+          km's own docs/ tree (~1,950 md files repo-wide); primary,
+          high-signal source for the deep pack (Amendment 5).
+      - path: apps/voice/knowledge/diagrams/km-sandbox-aws.md
+        kind: diagram
+        note: km sandbox AWS architecture, ingested as text (Amendment 3-D).
+      - path: apps/voice/knowledge/transcripts/normalized/km-story.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/more.klanker.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/right.literally.the.instance.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/AWS.services.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/irsa.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/github.slack.app.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/checks.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/more.1.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/more.2.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/more.3.clean.md
+        kind: transcript
+      - path: .planning/phases/07-kph-knowledge-base/corpus/km-digest.md
+        kind: docs
+        note: >-
+          Already-curated digest (hook + long version + sample Q->A +
+          do-not-say) promoted directly into the pack -- see 07-01.
+
+  # defcon-run-34, meshtk: candidate next topics (Amendment 1/5). Add entries
+  # here (+ a matching router/topic-map.yaml entry) once their packs land --
+  # this file's shape does not change, only APPEND (07-03).
