@@ -204,14 +204,14 @@ Plans:
 
 **Task 0 (prompt=none feasibility gate): VERIFIED GREEN 2026-07-06** — live issuer returns `303 → /callback?error=login_required` for `prompt=none` with no session (no login-page render); Workstream A is cleared to build.
 
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 
 **Waves:** 1 → {05.2-01, 05.2-02, 05.2-04}; 2 → {05.2-03}
 
 Plans:
 
 - [x] 05.2-01-PLAN.md — Workstream A: single-tap silent SSO (breadcrumb, prompt=none, attemptSilentSso, login_required branch) [CLNT-08]
-- [ ] 05.2-02-PLAN.md — Workstream B: greeting source + render script + drift guard (key-gated render checkpoint) [CLNT-01, CLNT-02]
+- [x] 05.2-02-PLAN.md — Workstream B: greeting source + render script + drift guard (key-gated render checkpoint) [CLNT-01, CLNT-02]
 - [ ] 05.2-03-PLAN.md — Workstream B: greeting player + deferred Live handoff (+ phase full-suite gate) [CLNT-01, CLNT-02]
 - [x] 05.2-04-PLAN.md — Workstream B: server greet_first toggle + persona opening-move tweak [PIPE-02]
 
