@@ -267,12 +267,12 @@ Plans:
 
 **Reconciliation (RE-PLANNED 2026-07-07 for Amendments 3–5):** Built as **router + per-topic curated packs + a stable Kurt-STYLE cached prefix + a bounded LOCAL retrieval path** (CONTEXT D-10/D-11/D-13 ⋈ DESIGN-NOTES Amendments 1–5). **Amendment 3 reopens D-10/D-11** to add keyless in-process retrieval — **SQLite FTS5 + BM25**, topic-scoped, top-k chunks injected into the uncached system[1] block, ack-masked (no 4th vendor, PIPE-07). Criterion 2's "retrieval path... from full repo content" is now literal (bounded local BM25 over the full corpus), not just a pre-baked pack. **Amendment 4:** the style layer is REAL — Kurt's 14 transcribed clips (~82 min, km-heavy) + a humor/personality deck ground a distilled Kurt-STYLE layer in the cached prefix (with a public-mic PG-13 guardrail), and the transcripts + km diagram-as-text feed the facts packs + retrieval corpus. **Amendment 5:** grill-with-docs is **DROPPED** — corpus prep is direct per-source indexing (km docs+diagram+transcripts; defcon.run.34 `infra/terraform/{live,modules,providers}` + `apps/` as code; meshtk README + Go source), with retrieval-quality mitigation (per-topic scoping, curated-pack framing, docs-over-source ranking). The refresh pipeline is re-runnable + manifest-driven so the GROWING corpus (incoming defcon audio, a Google Docs talk) folds in via one manifest edit, no re-plan. The do-not-say scrubber is DEMOTED to a thin advisory lint (flag-not-block, corpus is all-public). Cross-system synthesis and vector/semantic RAG remain OUT for launch. The four pre-Amendment-3 plans were regenerated into five (Amendments 4 & 5 applied 2026-07-07).
 
-**Plans**: 5 plans (regenerated 2026-07-07 for Amendments 4 & 5)
+**Plans**: 1/5 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — km walking slice: keyword router + ack + two-block cached prompt (stable prefix + swappable deep pack) + km curated content + REAL transcript-distilled Kurt-STYLE layer (+ humor deck + PG-13 guardrail) + advisory do-not-say lint + live cache proof (PIPE-10, PIPE-06, PIPE-07)
+- [x] 07-01-PLAN.md — km walking slice: keyword router + ack + two-block cached prompt (stable prefix + swappable deep pack) + km curated content + REAL transcript-distilled Kurt-STYLE layer (+ humor deck + PG-13 guardrail) + advisory do-not-say lint + live cache proof (PIPE-10, PIPE-06, PIPE-07)
 
 **Wave 2** *(parallel; both depend on 07-01)*
 
@@ -300,7 +300,7 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 4. Voice Service Deployed & Quota Enforcement | 6/6 | Complete   | 2026-07-06 |
 | 5. Browser Client & Conference Readiness | 7/7 | Complete   | 2026-07-06 |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
-| 7. KPH Knowledge Base | 0/5 | Planned (5 plans, 3 waves — regenerated 2026-07-07 for Amendments 4 & 5) | - |
+| 7. KPH Knowledge Base | 1/5 | In Progress|  |
 
 ### Phase 8: Documentation & Architecture
 

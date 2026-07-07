@@ -12,8 +12,8 @@
 - [ ] **PIPE-03**: Agent remembers the full conversation within a session (in-context history)
 - [ ] **PIPE-04**: STT/LLM/TTS stages are config-swappable; endpointing A/B (Deepgram Flux vs Nova-3+VAD; SmartTurn) run during tuning with measured verdicts
 - [ ] **PIPE-05**: Latency harness measures per-stage and voice-to-voice ms from recorded audio, locally and against staging
-- [ ] **PIPE-06**: Agent speaks as the KlankerMaker concierge (knows Kurt, klanker platform, defcon.run, repos) via a versioned markdown system prompt
-- [ ] **PIPE-07**: Developer can run the full bot locally with only the three provider API keys
+- [x] **PIPE-06**: Agent speaks as the KlankerMaker concierge (knows Kurt, klanker platform, defcon.run, repos) via a versioned markdown system prompt
+- [x] **PIPE-07**: Developer can run the full bot locally with only the three provider API keys
 
 ### Browser Client
 
@@ -91,8 +91,8 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | PIPE-03 | Phase 1 | Pending |
 | PIPE-04 | Phase 1 | Pending |
 | PIPE-05 | Phase 1 | Pending |
-| PIPE-06 | Phase 1 | Pending |
-| PIPE-07 | Phase 1 | Pending |
+| PIPE-06 | Phase 1 | Complete |
+| PIPE-07 | Phase 1 | Complete |
 | CLNT-01 | Phase 5 | Complete |
 | CLNT-02 | Phase 5 | Complete |
 | CLNT-03 | Phase 5 | Complete |
