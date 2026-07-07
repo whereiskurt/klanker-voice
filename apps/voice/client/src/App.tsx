@@ -9,7 +9,6 @@ import ConnectingRetry from "./screens/ConnectingRetry";
 import UdpBlockedWall from "./screens/UdpBlockedWall";
 import SessionEnd from "./screens/SessionEnd";
 import OrbCanvas from "./orb/OrbCanvas";
-import { markReturningUser } from "./auth/returningStore";
 import { useAuth } from "./auth/useAuth";
 import { useVoiceSession } from "./transport/useVoiceSession";
 import GateCard from "./gates/GateCard";
@@ -46,8 +45,14 @@ export default function App() {
     void voice.start();
   };
 
+  // NOTE: does NOT call markReturningUser() here (T-05.2-gap-1 fix) — Callback
+  // already marks it itself on the successful code-exchange path, right after
+  // setToken(). The login_required/interaction_required safe-degrade path
+  // calls clearReturningUser() and then this same shared callback; if this
+  // handler re-marked the breadcrumb unconditionally, it would undo that
+  // clear in the same tick (05.2-VERIFICATION.md gap #1) and a signed-out
+  // device would re-loop the silent SSO bounce forever.
   const handleAuthenticated = () => {
-    markReturningUser();
     auth.refresh();
     window.history.replaceState({}, "", "/");
     setOnCallbackRoute(false);
