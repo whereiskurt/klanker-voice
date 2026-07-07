@@ -103,7 +103,7 @@ def _knowledge_cfg(tmp_path: Path) -> KnowledgeConfig:
         topic_map_path=topic_map_path,
         packs_dir=tmp_path / "topics",
         style_path=tmp_path / "style.md",
-        cache_min_tokens=10,
+        cache_floor=10,
     )
 
 

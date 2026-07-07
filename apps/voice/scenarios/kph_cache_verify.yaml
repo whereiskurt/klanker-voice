@@ -1,0 +1,58 @@
+# kph_cache_verify: the D-13 caching-engagement scenario (ROADMAP success
+# criterion 1). Two same-topic turns -- the second turn's Anthropic usage
+# should report cache_read_input_tokens > 0 on the cached stable prefix
+# (system[0]).
+#
+# IMPORTANT scope note: pipecat's own eval scenario DSL (pipecat.evals.scenario)
+# has no `expect:` assertion surface for Anthropic usage/cache-token metrics --
+# only event/text_contains/eval/calls (see pipecat/evals/scenario.py's own
+# documented expectation fields). This scenario still drives the two turns
+# end-to-end (so a human/CI run exercises the real router + pipeline path),
+# but the actual cache_read_input_tokens > 0 assertion is captured via the
+# harness usage-surface extension (harness/report.py's TurnRecord.
+# cache_read_input_tokens, populated by an LLM-usage-frame observer) and
+# inspected in the resulting harness JSON artifact after the run -- not a
+# native scenario-YAML assertion. See 07-01-SUMMARY.md for the live
+# cache-engagement proof run directly against build_system_blocks() (the
+# same code path this scenario exercises through the full pipeline).
+
+name: kph_cache_verify
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  # Turn 1: first klanker-maker question -- system[0] (the cached stable
+  # prefix) is written to cache for the first time this session
+  # (cache_creation_input_tokens > 0 expected here, not asserted by this
+  # scenario file -- see the harness JSON artifact).
+  - user: "Tell me about klanker maker's budget enforcement."
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply mentions klanker-maker's per-sandbox dollar
+          budget enforcement (e.g. warnings around 80%, the AI proxy
+          rejecting calls or the sandbox being suspended at 100%). Accept
+          close speech-to-text renderings. Answer no if the reply is
+          unrelated or invents unrelated facts.
+  # Turn 2: same topic, different question -- system[0] must be
+  # byte-identical to turn 1 (Pitfall 3), so this turn's Anthropic call
+  # should report cache_read_input_tokens > 0 (ROADMAP success criterion 1).
+  - user: "And what happens to the compute side specifically, does it get destroyed?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply correctly states that compute exhaustion
+          suspends the sandbox rather than destroying it (and that
+          `km budget add` resumes it). Answer no if it claims the sandbox is
+          destroyed, or answers an unrelated topic.

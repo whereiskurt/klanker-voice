@@ -29,6 +29,7 @@ from klanker_voice.knowledge.prompt_assembly import (
     build_system_blocks,
     load_manifest,
 )
+from klanker_voice.knowledge.router import KnowledgeRouterProcessor
 
 
 @dataclass
@@ -86,6 +87,12 @@ def build_pipeline(
     ``pipeline.toml``'s ``[knowledge]`` table) when not supplied, mirroring
     how ``load_quota_config()`` is called independently elsewhere
     (server.py/bot.py/console.py) — those callers need no change.
+
+    ``KnowledgeRouterProcessor`` (Amendment 1, RESEARCH Pattern 2) is placed
+    between ``stt`` and ``user_aggregator`` — the RESEARCH-stated insertion
+    point, before the transcription reaches ``LLMContextAggregatorPair``. It
+    classifies each finalized transcription, swaps block1 on a genuine topic
+    switch, and fires the "let's dig into it" ack — never touching block0.
     """
     stt = build_stt(cfg)
     llm = build_llm(cfg)
@@ -103,12 +110,20 @@ def build_pipeline(
     )
     user_aggregator, assistant_aggregator = aggregator_pair.user(), aggregator_pair.assistant()
 
+    router = KnowledgeRouterProcessor(
+        cfg=cfg,
+        knowledge_cfg=knowledge_cfg,
+        llm=llm,
+        initial_topic=initial_topic,
+    )
+
     processors = [transport.input()]
     if rtvi is not None:
         processors.append(rtvi)
     processors.extend(
         [
             stt,
+            router,
             user_aggregator,
             llm,
             tts,

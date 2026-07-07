@@ -137,6 +137,35 @@ class TestSchemaStability:
 
 
 # ---------------------------------------------------------------------------
+# cache_read_input_tokens (Phase 7, D-13) -- additive, not a STAGE_NAMES entry
+# ---------------------------------------------------------------------------
+
+
+class TestCacheReadInputTokens:
+    def test_default_is_none_and_stays_additive(self):
+        record = TurnRecord(voice_to_voice_ms=500.0)
+        data = record.to_dict()
+        assert data["cache_read_input_tokens"] is None
+        assert tuple(k for k in data if k != "cache_read_input_tokens") == tuple(
+            f"{s}_ms" for s in STAGE_NAMES
+        )
+
+    def test_round_trips_through_to_dict_from_dict(self):
+        record = TurnRecord(voice_to_voice_ms=500.0, cache_read_input_tokens=1234)
+        restored = TurnRecord.from_dict(record.to_dict())
+        assert restored.cache_read_input_tokens == 1234
+
+    def test_report_serialization_carries_it_per_turn(self):
+        report = Report(config=CONFIG, anchors=NOVA3_ANCHORS, generated_at="2026-07-05T00:00:00Z")
+        report.add_turn(TurnRecord(voice_to_voice_ms=500.0, cache_read_input_tokens=0))
+        report.add_turn(TurnRecord(voice_to_voice_ms=600.0, cache_read_input_tokens=4200))
+        data = report.to_dict()
+        assert data["turns"][0]["cache_read_input_tokens"] == 0
+        assert data["turns"][1]["cache_read_input_tokens"] == 4200
+        json.dumps(data)  # still JSON-serializable (schema stability)
+
+
+# ---------------------------------------------------------------------------
 # Null-stage handling (Flux arm: vad_stop is null, never missing)
 # ---------------------------------------------------------------------------
 

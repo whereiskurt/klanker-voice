@@ -1,0 +1,52 @@
+# kph_knowledge_km: the km walking-slice eval (Phase 7, 07-01). A visitor
+# asks a directed klanker-maker question; the router should classify it to
+# the klanker-maker topic, load its deep pack, and KPH should answer
+# correctly and in Kurt's voice (cadence + dry/self-deprecating humor,
+# PIPE-06/PIPE-10).
+#
+# Same shape as scenarios/memory.yaml: greeting-observe first turn (K greets
+# first per D-04), then a scripted question, judged via the existing
+# judge_factory (klanker_voice.harness.judge) -- no harness code change
+# needed for this scenario.
+
+name: kph_knowledge_km
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  - user: "Hey, tell me about klanker maker. What is it?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply correctly describes klanker-maker (`km`)
+          as Kurt's AI-agent sandbox platform / runtime on AWS -- for
+          example mentioning that it isolates or sandboxes AI coding agents
+          (Claude Code, Codex, etc.) using AWS infrastructure, a YAML
+          profile, and/or security controls like eBPF network filtering or a
+          hard dollar budget. Accept close speech-to-text renderings of
+          "klanker maker" (e.g. "clanker maker", "klanker-maker", "km").
+          Answer no only if the reply is factually wrong about what
+          klanker-maker is, talks about an unrelated topic, or claims not to
+          know what it is.
+  - user: "What stops an agent from escaping the sandbox?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply mentions at least one real containment
+          mechanism from the klanker-maker deep pack -- for example eBPF /
+          kernel-level network filtering, security groups, DNS/HTTP proxy
+          allowlisting, or an AWS Service Control Policy -- as the reason an
+          agent can't break out of the sandbox even running as root. Accept
+          a partial but factually correct answer. Answer no if the reply
+          invents an unrelated mechanism or claims it doesn't know.

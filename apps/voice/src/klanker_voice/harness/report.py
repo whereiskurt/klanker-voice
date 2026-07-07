@@ -150,24 +150,39 @@ def build_anchors(stt_provider: str, turn_strategy: str | None) -> dict[str, str
 
 @dataclass
 class TurnRecord:
-    """Raw per-turn stage measurements in milliseconds (None = not observed)."""
+    """Raw per-turn stage measurements in milliseconds (None = not observed).
+
+    ``cache_read_input_tokens`` (Phase 7, D-13, ROADMAP success criterion 1)
+    is an ADDITIVE field, not one of the five frozen ``STAGE_NAMES`` -- it's
+    the Anthropic usage-report signal that the two-block cached system
+    prompt (``knowledge.prompt_assembly.build_system_blocks``) actually hit
+    the cache on a turn, not a latency stage. Kept separate from the
+    schema-v1 stage contract so existing consumers (Phase 5 HUD/CI, per the
+    module docstring) are unaffected -- it only appears when a caller sets it.
+    """
 
     vad_stop_ms: float | None = None
     stt_final_ms: float | None = None
     llm_ttft_ms: float | None = None
     tts_first_audio_ms: float | None = None
     voice_to_voice_ms: float | None = None
+    cache_read_input_tokens: int | None = None
 
     def stage_value(self, stage: str) -> float | None:
         """Value for one of the five stable stage names, or None."""
         return getattr(self, f"{stage}_ms")
 
     def to_dict(self) -> dict:
-        return {f"{stage}_ms": self.stage_value(stage) for stage in STAGE_NAMES}
+        data = {f"{stage}_ms": self.stage_value(stage) for stage in STAGE_NAMES}
+        data["cache_read_input_tokens"] = self.cache_read_input_tokens
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "TurnRecord":
-        return cls(**{f"{stage}_ms": data.get(f"{stage}_ms") for stage in STAGE_NAMES})
+        return cls(
+            **{f"{stage}_ms": data.get(f"{stage}_ms") for stage in STAGE_NAMES},
+            cache_read_input_tokens=data.get("cache_read_input_tokens"),
+        )
 
 
 class Report:
