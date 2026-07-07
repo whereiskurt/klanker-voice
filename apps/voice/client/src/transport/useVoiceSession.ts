@@ -95,6 +95,16 @@ export function useVoiceSession(): UseVoiceSessionResult {
   /** Wall-clock start of the current "connected" period, for the
    * session-end "{m:ss} spoken" summary (CLNT-07). */
   const connectedAtRef = useRef<number | null>(null);
+  /** Latched once the current attempt has been terminally rejected by the
+   * server start-gate (`OFFER_REJECTED` -- a quota/auth 401/403/429, see
+   * connectionState.ts). A quota rejection is TERMINAL: after it, the vendor
+   * transport is proactively disconnected (voiceSession.ts), and that
+   * teardown -- or a reconnection its `negotiate()` catch block already
+   * scheduled -- can emit a stray `TRANSPORT_ERROR`/`DISCONNECTED`. Those
+   * must NOT (a) stomp the clear "rejected" gate outcome to "failed", nor (b)
+   * feed the transport retry controller, which exists ONLY for genuine
+   * pre-connect ICE/transport failures (D-11). Reset by `start()`/`stop()`. */
+  const rejectedRef = useRef(false);
   /** The currently-playing pre-rendered greeting clip (B-05), if any. */
   const greetingRef = useRef<GreetingHandle | null>(null);
   /** Resolves when the current greeting clip has ended (or immediately if
@@ -127,7 +137,28 @@ export function useVoiceSession(): UseVoiceSessionResult {
         return;
       }
 
+      if (event.type === "OFFER_REJECTED") {
+        // A terminal server start-gate reject (quota/auth). Latch it so any
+        // late transport-teardown noise from voiceSession.ts's proactive
+        // client.disconnect() (or the vendor's own still-scheduled
+        // reconnection) can't convert this clear gate into a "failed"
+        // retry/wall below. Dispatch immediately -- unlike CONNECTED, a
+        // rejection is NOT held behind the greeting handoff, so the GateCard
+        // shows right away even while the greeting clip is still playing.
+        rejectedRef.current = true;
+        dispatch(event);
+        return;
+      }
+
       if (event.type === "DISCONNECTED" || event.type === "TRANSPORT_ERROR") {
+        if (rejectedRef.current) {
+          // This attempt was already terminally rejected by the start-gate --
+          // swallow the trailing transport noise entirely: no "failed" stomp,
+          // and crucially no retryController.reportFailure() (retry is for
+          // pre-connect ICE/transport failures only, never a quota reject).
+          return;
+        }
+
         if (wasConnectedRef.current) {
           // A drop AFTER a live session -- CLNT-07 session-end summary, not
           // Task 1's pre-connect retry/wall flow.
@@ -216,6 +247,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     retryControllerRef.current?.reset();
     wasConnectedRef.current = false;
     connectedAtRef.current = null;
+    rejectedRef.current = false;
     dispatch({ type: "REQUEST_MIC" });
 
     const mic = await requestMic();
@@ -259,6 +291,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     setSessionMaxSeconds(null);
     wasConnectedRef.current = false;
     connectedAtRef.current = null;
+    rejectedRef.current = false;
     dispatch({ type: "RESET" });
   }, [dispatch]);
 
