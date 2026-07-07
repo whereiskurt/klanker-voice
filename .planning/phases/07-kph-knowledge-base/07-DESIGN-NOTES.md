@@ -122,9 +122,11 @@ Pitfall 3).
   diagram as **text** (its mermaid/excalidraw source, or a described legend if it's an image)
   so its structure is searchable.
 - **defcon.run.34 + meshtk** — "really the code." Raw source retrieves noisily for voice. Run
-  an **offline LLM doc-generation pass** (a "grill-me-with-docs"-style pass; the exact tool is
-  swappable) to produce structured explanatory docs FROM the code. Index the **generated docs
-  as the primary corpus**, raw code as a **secondary layer** for exact detail.
+  an **offline LLM doc-generation pass** to produce structured explanatory docs FROM the code,
+  using **Matt Pocock's `grill-with-docs` skill** (install: `npx skills add mattpocock/skills
+  --skill=grill-with-docs` — Kurt installs it before execution; the step stays swappable if a
+  different generator is preferred later). Index the **generated docs as the primary corpus**,
+  raw code as a **secondary layer** for exact detail.
 - **klanker-voice (self)** — document knowledge-first as it's built. **Phase 8 (Documentation
   & Architecture) is the feeder** — its README/architecture docs ARE the concierge's knowledge
   about klanker-voice. One doc effort, two payoffs.
