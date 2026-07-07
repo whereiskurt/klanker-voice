@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PipecatClient } from "@pipecat-ai/client-js";
 import { requestMic, type MicError } from "../media/getMic";
 import { getToken } from "../auth/tokenStore";
+import { playRandomGreeting, type GreetingHandle } from "../greeting/greetingPlayer";
 import {
   connectionReducer,
   INITIAL_CONNECTION_OUTCOME,
@@ -94,6 +95,12 @@ export function useVoiceSession(): UseVoiceSessionResult {
   /** Wall-clock start of the current "connected" period, for the
    * session-end "{m:ss} spoken" summary (CLNT-07). */
   const connectedAtRef = useRef<number | null>(null);
+  /** The currently-playing pre-rendered greeting clip (B-05), if any. */
+  const greetingRef = useRef<GreetingHandle | null>(null);
+  /** Resolves when the current greeting clip has ended (or immediately if
+   * there is no clip this session) -- the CONNECTED branch below waits on
+   * this so the visible Live handoff never overlaps the greeting audio. */
+  const greetingEndedRef = useRef<Promise<void>>(Promise.resolve());
 
   const dispatch = useCallback((event: ConnectionEvent) => {
     setOutcome((current) => connectionReducer(current, event));
@@ -114,7 +121,9 @@ export function useVoiceSession(): UseVoiceSessionResult {
         setSessionSummary(null);
         retryControllerRef.current?.reportSuccess();
         setRetryStatus(IDLE_RETRY_STATUS);
-        dispatch(event);
+        // Hold the visible "connected/Live" state until the greeting clip has
+        // finished -- greeting audio (speaker) and live STT (mic) must not overlap.
+        void greetingEndedRef.current.then(() => dispatch(event));
         return;
       }
 
@@ -138,7 +147,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
         if (event.type === "TRANSPORT_ERROR") {
           // A genuine pre-connect transport/ICE failure -- Task 1's bounded
-          // retry policy owns what happens next.
+          // retry policy owns what happens next. Halt the greeting clip so
+          // it never plays over the retry UI / UdpBlockedWall (B-05).
+          greetingRef.current?.stop();
+          greetingRef.current = null;
           dispatch(event);
           retryControllerRef.current?.reportFailure();
           return;
@@ -225,11 +237,22 @@ export function useVoiceSession(): UseVoiceSessionResult {
     // not re-prompt.
     mic.stream.getTracks().forEach((track) => track.stop());
     dispatch({ type: "MIC_GRANTED" });
+
+    // Instant greeting: play a random pre-rendered clip on this same gesture
+    // (unlocks iOS audio). Runs concurrently with connect; the CONNECTED
+    // handoff above waits for it so the greeting never overlaps live STT.
+    greetingRef.current?.stop();
+    const handle = await playRandomGreeting();
+    greetingRef.current = handle;
+    greetingEndedRef.current = handle ? handle.ended : Promise.resolve();
+
     await beginConnect();
   }, [dispatch, beginConnect]);
 
   const stop = useCallback(async () => {
     retryControllerRef.current?.cancel();
+    greetingRef.current?.stop();
+    greetingRef.current = null;
     await sessionRef.current?.disconnect();
     sessionRef.current = null;
     setClient(null);
