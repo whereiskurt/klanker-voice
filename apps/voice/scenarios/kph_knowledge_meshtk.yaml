@@ -1,0 +1,47 @@
+# kph_knowledge_meshtk: the meshtk eval (Phase 7, 07-03). A visitor asks a
+# directed meshtk question; the router should classify it to the meshtk
+# topic, load its deep pack, and KPH should answer correctly and in Kurt's
+# voice (cadence + dry/self-deprecating humor, PIPE-06/PIPE-10).
+#
+# Same shape as scenarios/kph_knowledge_km.yaml: greeting-observe first turn
+# (K greets first per D-04), then a scripted question, judged via the
+# existing judge_factory (klanker_voice.harness.judge) -- no harness code
+# change needed for this scenario.
+
+name: kph_knowledge_meshtk
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  - user: "Hey, what is mesh T K, the meshtastic toolkit?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply correctly describes meshtk as Kurt's Go
+          toolkit for virtual Meshtastic nodes -- for example mentioning
+          software-only mesh radios, MQTT, running live at DEF CON, or a
+          security/packet-inspecting proxy in front of an MQTT broker. Accept
+          close speech-to-text renderings ("mesh tk", "mesh T K", "meshtastic
+          toolkit"). Answer no only if the reply is factually wrong about
+          what it is, talks about an unrelated topic, or claims not to know.
+  - user: "How does it decide whether to let a connection through?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply mentions at least one real mechanism from
+          the meshtk deep pack -- for example checking a connection against
+          cached registration/credential data, or the proxy's allow/block/
+          kill/slow/rewrite rule set. Accept a partial but factually correct
+          answer. Answer no if the reply invents an unrelated mechanism or
+          claims it doesn't know.

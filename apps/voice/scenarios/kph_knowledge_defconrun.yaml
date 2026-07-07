@@ -1,0 +1,50 @@
+# kph_knowledge_defconrun: the defcon.run.34 eval (Phase 7, 07-03). A visitor
+# asks a directed defcon.run.34 question; the router should classify it to
+# the defcon-run-34 topic, load its deep pack, and KPH should answer
+# correctly and in Kurt's voice (cadence + dry/self-deprecating humor,
+# PIPE-06/PIPE-10).
+#
+# Same shape as scenarios/kph_knowledge_km.yaml: greeting-observe first turn
+# (K greets first per D-04), then a scripted question, judged via the
+# existing judge_factory (klanker_voice.harness.judge) -- no harness code
+# change needed for this scenario.
+
+name: kph_knowledge_defconrun
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  - user: "Hey, what's defcon.run all about?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply correctly describes defcon.run (or
+          "defcon.run.34"/"DEF CON Run") as Kurt's community running/hiking
+          event platform tied to DEF CON in Las Vegas -- for example
+          mentioning signing up, planning routes, GPS check-ins, or flashing
+          a Meshtastic radio from the browser. Accept close speech-to-text
+          renderings ("def con run", "defcon dot run", "defcon run thirty
+          four"). Answer no only if the reply is factually wrong about what
+          it is, talks about an unrelated topic, or claims not to know.
+  - user: "How is the infrastructure built -- what's the architecture like?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply mentions at least one real architectural
+          element from the defcon.run.34 deep pack -- for example
+          multi-region AWS, CloudFront, a web-application firewall, ECS
+          Fargate, DynamoDB, or Terraform/Terragrunt -- as part of how the
+          platform is built. Accept a partial but factually correct answer.
+          Answer no if the reply invents an unrelated architecture or claims
+          it doesn't know.

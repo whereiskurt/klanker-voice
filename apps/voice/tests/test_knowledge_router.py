@@ -53,6 +53,21 @@ TOPIC_MAP = {
                 {"term": "run", "weight": 1},
             ],
         },
+        {
+            "id": "meshtk",
+            "spoken_name": "mesh T K, the meshtastic toolkit",
+            "hook": "Kurt's virtual Meshtastic node toolkit.",
+            "keywords": [
+                {"term": "mesh tk", "weight": 3},
+                {"term": "meshtk", "weight": 3},
+                {"term": "meshtastic toolkit", "weight": 3},
+                {"term": "meshtastic", "weight": 2},
+                {"term": "mesh radio", "weight": 1},
+                # Deliberately NO bare "toolkit" keyword (Pitfall 1, RESEARCH):
+                # it's generic enough to also mean an unrelated dev-tools
+                # question, so keying on it would over-trigger meshtk.
+            ],
+        },
     ],
 }
 
@@ -77,19 +92,25 @@ def _knowledge_cfg(tmp_path: Path) -> KnowledgeConfig:
     (tmp_path / "topics").mkdir(exist_ok=True)
     (tmp_path / "topics" / "klanker-maker.md").write_text("km deep pack.\n", encoding="utf-8")
     (tmp_path / "topics" / "defcon-run-34.md").write_text("defcon deep pack.\n", encoding="utf-8")
+    (tmp_path / "topics" / "meshtk.md").write_text("meshtk deep pack.\n", encoding="utf-8")
     (tmp_path / "style.md").write_text("Dry, punchy style.\n", encoding="utf-8")
     manifest = tmp_path / "manifest.yaml"
     manifest.write_text(
         yaml.safe_dump(
             {
                 "version": 1,
-                "tour_priority": ["klanker-maker", "defcon-run-34"],
+                "tour_priority": ["klanker-maker", "defcon-run-34", "meshtk"],
                 "topics": [
                     {"id": "klanker-maker", "spoken_name": "klanker-maker", "pack": "klanker-maker.md"},
                     {
                         "id": "defcon-run-34",
                         "spoken_name": "DEFCON dot run, thirty-four",
                         "pack": "defcon-run-34.md",
+                    },
+                    {
+                        "id": "meshtk",
+                        "spoken_name": "mesh T K, the meshtastic toolkit",
+                        "pack": "meshtk.md",
                     },
                 ],
             }
@@ -142,6 +163,42 @@ def test_classify_picks_highest_scoring_topic_on_overlap():
 
     topic_id, _ = classify("let's talk about the defcon run community", TOPIC_MAP)
     assert topic_id == "defcon-run-34"
+
+
+# ---------------------------------------------------------------------------
+# Multi-topic discrimination + keyword-overlap guard (07-03 Task 2, Pitfall 1)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_discriminates_all_three_primary_topics_without_collision():
+    """A directed question for each of the three primary topics classifies to
+    that topic and only that topic -- above the confidence floor, no
+    cross-topic collision."""
+    from klanker_voice.knowledge.router import classify
+
+    km_id, km_conf = classify("tell me about klanker maker", TOPIC_MAP)
+    defcon_id, defcon_conf = classify("what is defcon run all about", TOPIC_MAP)
+    meshtk_id, meshtk_conf = classify("how does the meshtastic toolkit work", TOPIC_MAP)
+
+    assert km_id == "klanker-maker"
+    assert defcon_id == "defcon-run-34"
+    assert meshtk_id == "meshtk"
+    for confidence in (km_conf, defcon_conf, meshtk_conf):
+        assert confidence >= TOPIC_MAP["confidence_floor"]
+    # None of the three directed utterances collided with a different topic.
+    assert len({km_id, defcon_id, meshtk_id}) == 3
+
+
+def test_classify_bare_toolkit_overlap_resolves_to_fallback_via_floor():
+    """Pitfall 1 (RESEARCH): the ambiguous "toolkit" keyword alone must never
+    silently commit to meshtk -- it's below the floor and falls back."""
+    from klanker_voice.knowledge.router import classify
+
+    topic_id, confidence = classify(
+        "do you have any toolkit for that kind of thing", TOPIC_MAP
+    )
+    assert topic_id is None
+    assert confidence < TOPIC_MAP["confidence_floor"]
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +366,42 @@ class TestKnowledgeRouterProcessor:
 
         assert any(isinstance(f, UserStartedSpeakingFrame) for f in down)
         assert not any(isinstance(f, TTSSpeakFrame) for f in down)
+
+    async def test_topic_switch_fires_ack_then_same_topic_followup_does_not(self, tmp_path):
+        """07-03 Task 2: starting on km, a directed defcon question flips the
+        active topic AND fires the ack; a second defcon question (same
+        topic) must NOT re-ack -- proves the multi-topic switch/no-reack
+        behavior holds across a real topic change, not just within one."""
+        from klanker_voice.knowledge.router import KnowledgeRouterProcessor
+
+        cfg = _cfg(tmp_path)
+        knowledge_cfg = _knowledge_cfg(tmp_path)
+        llm = _FakeLLM()
+        router = KnowledgeRouterProcessor(
+            cfg=cfg,
+            knowledge_cfg=knowledge_cfg,
+            llm=llm,
+            initial_topic="klanker-maker",
+            fallback_classify=_never_fallback,
+        )
+
+        switch_frame = TranscriptionFrame(
+            text="what is defcon run all about",
+            user_id="u1",
+            timestamp="2026-07-07T00:00:00Z",
+        )
+        down1, _ = await run_test(router, frames_to_send=[switch_frame])
+
+        assert any(isinstance(f, TTSSpeakFrame) for f in down1)
+        assert llm._settings.system_instruction[1]["text"] == "defcon deep pack.\n"
+
+        followup_frame = TranscriptionFrame(
+            text="tell me more about the defcon run community",
+            user_id="u1",
+            timestamp="2026-07-07T00:00:01Z",
+        )
+        down2, _ = await run_test(router, frames_to_send=[followup_frame])
+
+        assert not any(isinstance(f, TTSSpeakFrame) for f in down2)
+        # Pack stays on defcon -- the follow-up never touched the LLM settings.
+        assert llm._settings.system_instruction[1]["text"] == "defcon deep pack.\n"
