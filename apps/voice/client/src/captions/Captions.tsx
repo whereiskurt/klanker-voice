@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { CaptionState } from "./captionReducer";
 import "./captions.css";
 
@@ -15,6 +16,15 @@ export interface CaptionsProps {
  * caption speaker chip for the agent side").
  */
 export default function Captions({ captions }: CaptionsProps) {
+  // 07.1: keep the (scrollable) agent caption pinned to its newest text as the
+  // reply streams in, so a long answer shows its latest line rather than its top.
+  const agentTextRef = useRef<HTMLSpanElement>(null);
+  const agentText = captions.agent?.text;
+  useEffect(() => {
+    const el = agentTextRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [agentText]);
+
   if (!captions.user && !captions.agent) return null;
 
   return (
@@ -22,7 +32,9 @@ export default function Captions({ captions }: CaptionsProps) {
       {captions.agent ? (
         <p className="caption-row">
           <span className="caption-chip caption-chip--agent">KPH</span>
-          <span className="caption-text caption-text--final">{captions.agent.text}</span>
+          <span ref={agentTextRef} className="caption-text caption-text--final caption-text--scroll">
+            {captions.agent.text}
+          </span>
         </p>
       ) : null}
       {captions.user ? (

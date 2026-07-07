@@ -53,6 +53,23 @@
   color: var(--text-primary);
 }
 
+/* 07.1: the agent's reply can run long. Instead of clamping it to 2 lines
+   (which hid everything past the first sentence), let it grow to a few lines
+   then scroll — auto-scrolled to the newest text by Captions.tsx. Overriding
+   `display` cancels the -webkit-box line-clamp above. Kept intentionally simple
+   pending a possible UI revamp. */
+.caption-text--scroll {
+  display: block;
+  -webkit-line-clamp: none;
+  max-height: min(30vh, 8rem);
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox: hide the scrollbar, keep scrollability */
+}
+
+.caption-text--scroll::-webkit-scrollbar {
+  display: none; /* WebKit/Blink: hide the scrollbar chrome */
+}
+
 .caption-text--interim {
   color: var(--text-interim);
 }
