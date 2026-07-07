@@ -147,13 +147,68 @@ lever: multi-topic retrieval or a cross-linked knowledge map.
 advisory lint — is offline (refresh workflow). Runtime = load index + one BM25 query + inject.
 The ≤1.2s loop is untouched; the deep-turn cost is ack-masked.
 
+## Amendment 4 — the transcript arrived: style layer is REAL, both-axes corpus (2026-07-07)
+
+Kurt recorded and delivered **14 clips (~82 min, ~13.8k words)** of himself narrating
+klanker-maker / DEF CON Run 34 / MeshTK. Transcribed via Deepgram nova-3 (diarize + paragraphs +
+**filler_words ON** — cadence preserved as the style ground truth). Raw + proper-noun-normalized
+copies live in `apps/voice/knowledge/transcripts/` (`normalized/` has 120 name fixes:
+Clanker→Klanker, MeshTK, Terragrunt, DEF CON, km, etc.). This **supersedes the earlier
+"transcript-optional v1" framing** — the style layer is no longer a hand-authored stand-in.
+
+- **Both axes from one corpus.** The clips carry real architecture facts AND Kurt's phrasing at
+  once. **WHAT** (facts) → feeds per-topic packs + retrieval corpus. **HOW-IT-SOUNDS** (style) →
+  distilled into the **stable cached prefix** (does not vary per topic; stays cache-warm).
+- **km diagram ingested as text** (Amendment 3-D) → `apps/voice/knowledge/diagrams/km-sandbox-aws.md`,
+  a structured legend of the AWS-services diagram. Cross-validated against the transcripts, no
+  contradictions — diagram + transcripts + repo docs triangulate the km pack.
+- **Coverage is km-heavy** (~9 clips), DEF CON Run 34 (2), MeshTK (1 deep). Style distillation
+  can draw from all 14; facts weight toward km for launch depth.
+- **Humor/personality source added (2026-07-07):** Kurt's `run.defcon.run` talk deck (36 slides)
+  distilled to `apps/voice/knowledge/style/kurt-humor-personality.md` — dry, self-deprecating,
+  meme-fluent, POC‖GTFO hacker voice (strikethrough-correction bit, "vibes only", cost punchlines,
+  rickroll/"hack the planet", emoji beats). Feeds the STYLE layer. **Carries a persona GUARDRAIL:**
+  KPH is a public-mic-to-strangers concierge — capture the wit, but do NOT volunteer crude/edgy
+  bits (the "TTP"/🍆 slide, trolls/lulz) unprompted; default PG-13 + self-deprecating, match-and-
+  escalate only if the visitor brings that energy first. The deck also holds real defcon.run.34 +
+  meshtk FACTS (AWS arch, terraform/terragrunt layout, DKIM/SES, ElectroDB, Meshtastic AES-CCM
+  quirk) — add it as a facts-corpus manifest source too.
+
+## Amendment 5 — corpus prep revised: direct code indexing, grill-with-docs DROPPED (2026-07-07)
+
+Reverses Amendment 3-D's `grill-with-docs` doc-generation step. Kurt's call: index the code
+**directly**, per-source:
+
+- **km** — `docs/` (rich) + the diagram legend + transcripts. Primary, ready, high-signal.
+- **defcon.run.34** (`/Users/khundeck/working/defcon.run.34`) — index **`infra/terraform/`**
+  (`live/` = the deployed "services" Kurt refers to, `modules/` = reusable infra, `providers/`)
+  and **`apps/`**, as **code** (no generated docs for launch). NOTE: there is no top-level
+  `services/` dir — "services" = the live-site terraform deployments under `infra/terraform/live`.
+- **MeshTK** (`/Users/khundeck/working/meshtk`) — **`README.md` primary** + Go source
+  (`cmd/`, `internal/`, `pkg/`, `protos/`).
+- **Google Docs talk** — Kurt has Google Docs of a talk he'll share; ingest as an additional
+  facts/style source when provided (treat like the transcripts: distill per-topic).
+- **Incoming defcon.run.34 audio (~1 hr, ~2026-07-08)** — Kurt will record another hour of
+  defcon.run.34 conversation/detail tomorrow. This deepens defcon on BOTH axes and lands via the
+  same transcribe→normalize→refresh path. **Not a planning dependency:** the refresh pipeline is
+  re-runnable + manifest-driven (D-01/D-07), so the plan must treat the corpus as GROWING —
+  build the machinery now, ship km-deep, and let later `refresh` runs fold in defcon depth +
+  the Google Docs talk without re-planning. Design the manifest so adding a source = one edit.
+
+**Retrieval-quality caveat (planner must handle):** raw code retrieves noisier for a *spoken*
+answer than generated docs would have. Mitigate with (a) strict per-topic scoping, (b) the
+curated pack framing the raw chunks so KPH narrates rather than reads code, (c) preferring
+`README`/`docs`/`.md` chunks over source when both match. If evals show code-chunk answers read
+badly aloud, revisit generated docs for defcon/meshtk as a fast-follow.
+
 ## Status
 
-Amendments 1–3 are the **design of record**. Phase 7 was already broken into plans 07-01..04,
-but **those plans predate Amendment 3** (they assume no retrieval + a build-blocking scrubber).
-They must be **regenerated / reconciled** to add: the retrieval subsystem (FTS5 index build in
-`refresh_knowledge.py`; a retrieval step in/beside `KnowledgeRouterProcessor` that injects
-top-k into `system[1]`), the per-source doc-generation step, the scrubber→advisory-lint
-demotion, and evals that measure retrieval DEPTH/coverage (not just a fixed expected-facts
-list). Next action: `/gsd-plan-phase 7` to re-plan against all three amendments. No code exists
-for any of this yet.
+**Amendments 1–5 are the design of record.** The blocking input (Kurt's corpus) now EXISTS.
+Plans 07-01..04 **predate Amendments 3–5** and must be regenerated to add: the retrieval
+subsystem (FTS5 index build in `refresh_knowledge.py` — does not exist yet; a retrieval step
+in/beside `KnowledgeRouterProcessor` injecting top-k into `system[1]`), **direct per-source
+code indexing** (Amendment 5, replacing the doc-gen step), the **transcript-distilled style
+layer** in the cached prefix (Amendment 4), the scrubber→advisory-lint demotion, and evals
+measuring retrieval DEPTH/coverage. Staged prep on disk: `transcripts/` (+`normalized/`),
+`diagrams/km-sandbox-aws.md`, and scratchpad `transcribe.py`/`normalize.py` (to be promoted
+into the repo during execution). Next action: `/gsd-plan-phase 7`.

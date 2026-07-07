@@ -21,3 +21,6 @@ __pycache__/
 .claude/worktrees/
 .planning/research/.cache/
 .DS_Store
+
+# Phase 7: source audio for transcription lives outside the repo (large binaries)
+apps/voice/knowledge/transcripts/incoming/

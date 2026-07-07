@@ -1,0 +1,21 @@
+# Transcript — AWS.services.m4a
+
+**Speaker 0:** Alright. Maybe just another few more minutes about Klanker-Maker. I'll I'll take a look at, um, a few more aspects that might be interesting. Uh, Yeah. Um, so so Klanker-Maker, the I mentioned it's built on top of AWS and it uses a bunch of the AWS services.
+
+**Speaker 0:** Um, a really important service that it that it uses is the SES, AWS SES, uh, I I would call it. It's just their their simple email service. And every sandbox gets its own set of keys like secure sign in keys and an email address that it can that it can check and send email from. So when it's enabled you can give each of your your sandboxes the ability to send and receive email. That unlocks a whole other property where you can have sandboxes separated and and really only connected over the internet through email.
+
+**Speaker 0:** And through that mechanism they can exchange messages and and do all sorts of and files and do all sorts of neat things. I was interested in exploring how sandboxes and cloud and independent workloads might use or how it might be valuable to have a transport like email used in that way. The value is that every message that goes, have a very good transaction log. The way AWS the way AWS builds out its its system, every email is basically just an object inside of an S3 bucket. So that's super helpful in the sense that it's just a collection of S3 files.
+
+**Speaker 0:** So you know in terms of checking your email it's really just having access to that bucket and, uh, being able to look at it. So the the email component is pretty cool. Um, it allows, uh, you know desperate agents on different systems to find each other over the internet and they can validate signatures and they have some security primitives that are kind of baked in and thought out. That gives the email another way that these folks, these folks, another way that the systems can talk to each other is through the EFS which is the Elastic File System. This is a more expensive AWS's network file system basically, their NFS.
+
+**Speaker 0:** Like quite literally you mount it using NFS tools and stuff like that. So it's just their NFS implementation, highly scalable, elastic. There's no amount, there's no limit to what you can write to it. So it's by region. So you spin up an endpoint, you put it in a region and then your EC2 instances are able to connect to that EFS region.
+
+**Speaker 0:** Sorry I wouldn't say, they don't connect to the region. They connect to the EFS endpoint that is inside of that region. So all of The US East 1 sandboxes can see each other's EFS mounts as long as they're inside of the same region. But yeah, so that's something we're thinking about. These klankers when they come up they have access to EFS and if you enable it they have access to EFS and they can write files and persist across reboots and persist across the region really anywhere.
+
+**Speaker 0:** Any other boxes that are attached to that EFS they could swap files or information with. So that's pretty cool. The last I guess file system worth mentioning is the S3 system which is how their buckets, how they do their scalable storage solution. I think that's what it is. 3 S's scalable storage solution.
+
+**Speaker 0:** Sounds right. But an S3 bucket everybody's used them. Know they traditionally what you do is you have an S3 bucket and then you'd put it behind something like CloudFront. You'd front your bucket and not give people direct public access to the bucket. So that's a pretty common access pattern.
+
+**Speaker 0:** The way these guys are accessing these buckets is internally there's no public access on the bucket. So folks can't get to these buckets period. The only way to access them is through pre signed URLs. And we're, I'm allowing it right now but it's something that we could turn off. But it's kind of handy to be able to post to a Slack message a pre signed URL saying, you know, this is where you can pick up some artifacts and stuff like that.
+
+**Speaker 0:** So definitely worth keeping s3 for now, pretty interesting. So there's some things about the file systems and storages and EBS, EFS, s3 you know, using the SESS email system. Yeah. All this is is used by the EC2 instance that is running the klanker maker.

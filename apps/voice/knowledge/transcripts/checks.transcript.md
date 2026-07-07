@@ -1,0 +1,7 @@
+# Transcript — checks.m4a
+
+**Speaker 0:** Alright. Let's keep it going some more. I'm gonna jump into the specifically jump into the Docs folder because there's a ton of stuff inside the Docs. So let's just let's just click. What's nice if you if you preview this using Chrome on the old internet interwebs into the GitHub repo, it renders the MDs nicely for you so you can really get a sense of, you know, you get a better read of these docs.
+
+**Speaker 0:** It really, it's nice when things are syntax highlighted and made bigger and font changed for you. So, you know, I just did a, I just talked to you a bunch about I just talked to you a bunch about checks and how they work and what they do. So, yeah, if you wanna read about that, there's a file for that called checks runner and you can see there's like great topics in there about a, um, open egress posture for checks, um, which is to say, I mentioned your checks can go out on the internet and do things, so, um, we let them. If you if you publish a check, um, we assume that you've done it in a way that's secure and that it's going to the places that it's supposed to go. And it's not easy to publish 1 of these things and there, you know, there's a whole code control around it.
+
+**Speaker 0:** So once they're there, they're kind of there and they're instantiated and yeah, they're not willy nilly. But yeah, I want I want to just just call out there's there's some great docs there and the checks runner is 1 of them. Okay.
