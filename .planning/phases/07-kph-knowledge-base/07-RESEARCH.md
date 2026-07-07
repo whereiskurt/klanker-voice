@@ -604,6 +604,16 @@ used here has a documented deprecation as of this research date.
 
 ## Open Questions (RESOLVED)
 
+> ⚠️ **SUPERSEDED by DESIGN-NOTES Amendments 3–5 (2026-07-06/07) — the PLANS are authoritative, not the resolutions below.**
+> - **Q1 is REVERSED:** Amendment 3 reopened D-10/D-11 and a real LOCAL retrieval path IS built
+>   (SQLite FTS5/BM25, keyless, topic-scoped → uncached `system[1]`) in 07-02. Criterion 2's
+>   "retrieval path from full repo content" is now literal, not the pre-baked pack. Corpus prep is
+>   DIRECT code indexing (Amendment 5; grill-with-docs dropped), not doc-gen.
+> - **Q3 plan number is STALE:** time-aware pacing now lives in **07-05 Task 1** (plans renumbered
+>   4→5), still prepended to `system[1]` with a `system[0]` byte-identity test — the mechanism is unchanged.
+> - The Test Map above lacks a retrieval-DEPTH row; the authoritative map is `07-VALIDATION.md`
+>   (07-02 `test_knowledge_retrieval.py` + 07-05 `kph_retrieval_depth.yaml`).
+
 1. **Does ROADMAP.md success criterion 2's "retrieval path... from full repo content"
    mean something beyond D-10's pre-baked long-version pack?**
    RESOLVED: 07-01 "Reconciliation note" — criterion 2 is satisfied by a bounded
