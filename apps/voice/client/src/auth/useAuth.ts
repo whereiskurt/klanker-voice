@@ -1,7 +1,11 @@
 import { useCallback, useState } from "react";
 import { getOidcConfig } from "../config/oidc";
+import { navigate } from "./navigate";
 import { buildAuthorizeUrl } from "./oidcClient";
 import { generateCodeVerifier, generateState } from "./pkce";
+import {
+  isReturningUser, markSilentTried, wasSilentTried, markReturningUser, clearReturningUser,
+} from "./returningStore";
 import { clearToken, getClaims, isAuthenticated as tokenIsAuthenticated } from "./tokenStore";
 
 /**
@@ -68,8 +72,26 @@ export function useAuth() {
     window.location.assign(url);
   }, []);
 
+  /**
+   * Guarded silent SSO (Workstream A, slick-start, CLNT-08): a no-op unless
+   * (returning user) AND (not authenticated) AND (not already tried this
+   * load) — otherwise stashes fresh PKCE, marks the per-load guard, and does
+   * a TOP-LEVEL navigation (never an iframe — iOS Safari ITP first-party
+   * cookie, T-05.2-01-T) to the prompt=none authorize URL.
+   */
+  const attemptSilentSso = useCallback(async () => {
+    if (tokenIsAuthenticated() || !isReturningUser() || wasSilentTried()) return;
+    markSilentTried();
+    const verifier = generateCodeVerifier();
+    const state = generateState();
+    stashPkce(verifier, state);
+    const url = await buildAuthorizeUrl(getOidcConfig(), { verifier, state, prompt: "none" });
+    navigate(url); // top-level — iOS-safe first-party cookie
+  }, []);
+
   const signOut = useCallback(() => {
     clearToken();
+    clearReturningUser();
     refresh();
   }, [refresh]);
 
@@ -78,6 +100,9 @@ export function useAuth() {
     tierId: authState.tierId,
     group: authState.group,
     beginSignIn,
+    attemptSilentSso,
+    markReturningUser,
+    clearReturningUser,
     signOut,
     refresh,
   };
