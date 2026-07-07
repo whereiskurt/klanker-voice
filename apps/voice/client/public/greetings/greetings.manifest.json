@@ -3,15 +3,15 @@
   "model": "eleven_flash_v2_5",
   "clips": [
     {
-      "text": "Hey! I'm KPH \u2014 a useful concierge assistant that sounds a lot like Kurt. Let's dig into some of my projects, feel free to interrupt, and just be yourself.",
+      "text": "Hey \u2014 I'm KPH. What's on your mind?",
       "file": "greeting-1.mp3"
     },
     {
-      "text": "Hey! I'm KPH \u2014 a concierge that sounds a lot like Kurt and knows his whole world. Let's dig into some of the projects. Feel free to interrupt me anytime, and just be yourself.",
+      "text": "Hey there \u2014 KPH here. What do you wanna dig into?",
       "file": "greeting-2.mp3"
     },
     {
-      "text": "Hey there \u2014 I'm KPH, your KlankerMaker concierge. Curious about Kurt, the platform, or DEFCON dot run? Just start talking, and cut me off anytime.",
+      "text": "Hey \u2014 KPH here. Let's get into it.",
       "file": "greeting-3.mp3"
     }
   ]
