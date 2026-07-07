@@ -7,6 +7,7 @@ built into the frame path — no custom truncation bookkeeping here (Pattern 5).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from pipecat.frames.frames import LLMRunFrame, TTSSpeakFrame
@@ -61,6 +62,7 @@ def build_pipeline(
     *,
     rtvi: RTVIProcessor | None = None,
     knowledge_cfg: KnowledgeConfig | None = None,
+    remaining_seconds_fn: Callable[[], float | None] | None = None,
 ) -> BuiltPipeline:
     """Assemble the canonical cascade pipeline from config.
 
@@ -126,6 +128,7 @@ def build_pipeline(
         llm=llm,
         initial_topic=initial_topic,
         retrieval_index=retrieval_index,
+        remaining_seconds_fn=remaining_seconds_fn,
     )
 
     processors = [transport.input()]

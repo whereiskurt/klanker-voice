@@ -154,7 +154,13 @@ async def _run_session(connection: SmallWebRTCConnection, lifecycle: SessionLife
     cfg = load_config()
     quota_cfg = load_quota_config()
     rtvi = build_rtvi_processor()
-    built = build_pipeline(cfg, transport, rtvi=rtvi)
+    # 07-05 / D-06 time-aware pacing: source the router's remaining_seconds from
+    # THIS session's live lifecycle (the same instance that owns the service
+    # timer + countdown), so KPH tightens its answers as the session clock runs
+    # down. The dev/eval path (bot.py) supplies nothing -> stays None (no cap).
+    built = build_pipeline(
+        cfg, transport, rtvi=rtvi, remaining_seconds_fn=lifecycle.remaining_seconds
+    )
     worker = build_worker(
         built.pipeline,
         observers=[
