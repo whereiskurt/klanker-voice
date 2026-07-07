@@ -87,13 +87,21 @@ locals {
   }
 
   cloudfront = {
-    # Disabled for this site — block kept present because the root
-    # terragrunt.hcl merges site locals wholesale into the site unit inputs.
-    enabled = false
+    # Full-front CloudFront for voice.<zone>: a single distribution serves the
+    # Vite SPA from a retained private S3 bucket (default behavior) and routes
+    # /api/*,/health to the ALB origin. Durable fix for multi-build asset skew.
+    # See docs/superpowers/specs/2026-07-07-cloudfront-static-assets-design.md.
+    enabled = true
 
-    domains      = []
+    domains      = ["voice"]
     waf_rulesets = {}
-    regions      = []
+
+    # Only us-east-1 is live. ca-central-1 / ap-southeast-1 stay in
+    # site.skip_regions with pre-wired mock asset buckets; lighting one up =
+    # remove it from skip_regions AND add it here.
+    regions = [
+      { label = "use1", full = "us-east-1" }
+    ]
 
     logging = {
       enabled         = false
@@ -543,6 +551,30 @@ locals {
                     "arn:aws:s3:::${local.site.label}-*",
                     "arn:aws:s3:::${local.site.label}-*/*"
                   ]
+                }
+              ]
+            })
+          },
+          {
+            # The CI build job (build-voice.yml, this release role) syncs the
+            # client dist to the cf-assets bucket, then invalidates the no-cache
+            # index.html on the voice CloudFront distribution. Needs list (to
+            # find the distribution by alias) + create-invalidation. Scoped to
+            # "*" because CreateInvalidation/ListDistributions do not support
+            # resource-level permissions.
+            name = "cloudfront-invalidation"
+            policy = jsonencode({
+              Version = "2012-10-17"
+              Statement = [
+                {
+                  Sid    = "CloudFrontInvalidation"
+                  Effect = "Allow"
+                  Action = [
+                    "cloudfront:ListDistributions",
+                    "cloudfront:GetInvalidation",
+                    "cloudfront:CreateInvalidation"
+                  ]
+                  Resource = "*"
                 }
               ]
             })
