@@ -109,6 +109,11 @@ def _build_tts_elevenlabs(cfg: PipelineConfig) -> ElevenLabsTTSService:
             # voice), so fall back to the documented interim premade voice.
             voice=cfg.tts.voice_id or INTERIM_ELEVENLABS_VOICE_ID,
             speed=cfg.tts.speed,
+            # 07.1 tunable energy (must match render_greetings.py so the
+            # pre-rendered welcome clip and the live voice share one character).
+            stability=cfg.tts.stability,
+            similarity_boost=cfg.tts.similarity_boost,
+            style=cfg.tts.style,
         ),
         # 07.1: respell klanker proper nouns for TTS only. pipecat applies
         # text_filters after aggregation / before synthesis, so captions

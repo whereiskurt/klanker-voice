@@ -21,7 +21,6 @@ MANIFEST = GREETINGS_DIR / "greetings.manifest.json"
 API_BASE = "https://api.elevenlabs.io/v1"
 MODEL_ID = "eleven_flash_v2_5"
 OUTPUT_FORMAT = "mp3_44100_128"
-SPEED = 1.1
 
 def voice_id_from_config() -> str:
     data = tomllib.loads(PIPELINE_TOML.read_text())
@@ -30,11 +29,23 @@ def voice_id_from_config() -> str:
         sys.exit("render_greetings: tts.voice_id is empty in pipeline.toml")
     return vid
 
+def voice_settings_from_config() -> dict:
+    """Read the SAME [tts] voice settings the live service uses (07.1), so the
+    pre-rendered welcome clip and the live voice share one identical character."""
+    tts = tomllib.loads(PIPELINE_TOML.read_text()).get("tts", {})
+    return {
+        "speed": float(tts.get("speed", 1.0)),
+        "stability": float(tts.get("stability", 0.4)),
+        "similarity_boost": float(tts.get("similarity_boost", 0.85)),
+        "style": float(tts.get("style", 0.1)),
+    }
+
 def main() -> None:
     key = os.environ.get("ELEVENLABS_API_KEY")
     if not key:
         sys.exit("render_greetings: ELEVENLABS_API_KEY not set (run `make -C apps/voice env`)")
     voice_id = voice_id_from_config()
+    voice_settings = voice_settings_from_config()
     texts = json.loads(SOURCE.read_text())["greetings"]
     GREETINGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -46,7 +57,7 @@ def main() -> None:
             resp = client.post(
                 f"{API_BASE}/text-to-speech/{voice_id}",
                 params={"output_format": OUTPUT_FORMAT},
-                json={"text": text, "model_id": MODEL_ID, "voice_settings": {"speed": SPEED}},
+                json={"text": text, "model_id": MODEL_ID, "voice_settings": voice_settings},
             )
             resp.raise_for_status()
             (GREETINGS_DIR / fname).write_bytes(resp.content)

@@ -80,6 +80,11 @@ class TtsConfig:
     model: str
     voice_id: str
     speed: float
+    # 07.1 tunable voice character; defaults keep direct constructors (tests,
+    # other callers) working and match load_config()'s parse-time fallbacks.
+    stability: float = 0.4
+    similarity_boost: float = 0.85
+    style: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -299,6 +304,12 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
         model=str(tts_table.get("model", "")),
         voice_id=str(tts_table.get("voice_id", "")),
         speed=_require_range("tts.speed", tts_table.get("speed", 1.0), 0.7, 1.2),
+        # 07.1 tunable voice character (ElevenLabs voice_settings, 0.0-1.0).
+        stability=_require_range("tts.stability", tts_table.get("stability", 0.4), 0.0, 1.0),
+        similarity_boost=_require_range(
+            "tts.similarity_boost", tts_table.get("similarity_boost", 0.85), 0.0, 1.0
+        ),
+        style=_require_range("tts.style", tts_table.get("style", 0.1), 0.0, 1.0),
     )
 
     # --- persona ---
