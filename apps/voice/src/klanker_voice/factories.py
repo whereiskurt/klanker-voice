@@ -41,6 +41,7 @@ from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import (
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from klanker_voice.config import PipelineConfig
+from klanker_voice.pronunciation import PronunciationTextFilter
 
 FLUX_PROVIDER = "deepgram-flux"
 
@@ -109,6 +110,10 @@ def _build_tts_elevenlabs(cfg: PipelineConfig) -> ElevenLabsTTSService:
             voice=cfg.tts.voice_id or INTERIM_ELEVENLABS_VOICE_ID,
             speed=cfg.tts.speed,
         ),
+        # 07.1: respell klanker proper nouns for TTS only. pipecat applies
+        # text_filters after aggregation / before synthesis, so captions
+        # (built from the upstream LLMTextFrame) keep the natural spelling.
+        text_filters=[PronunciationTextFilter()],
     )
 
 
