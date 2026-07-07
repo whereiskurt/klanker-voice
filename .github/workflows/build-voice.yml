@@ -63,6 +63,66 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`$IMAGE\`" >> $GITHUB_STEP_SUMMARY
 
+      # Full-front CloudFront: publish the built SPA to the retained cf-assets
+      # S3 bucket so old+new content-hashed bundles coexist across a deploy
+      # window (kills the multi-build asset-skew black screen). Extracting dist
+      # from the just-pushed image guarantees the S3 copy is byte-identical to
+      # what the container would serve. Skips cleanly (build still green) until
+      # the CloudFront terraform is applied and the SSM params exist — so this
+      # can merge before the infra cutover.
+      - name: Publish client assets to S3 + invalidate CloudFront
+        if: steps.guard.outputs.has_dockerfile == 'true'
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.SITE_LABEL }}-voice-app:${{ github.sha }}
+          AWS_REGION: us-east-1
+          SITE_LABEL: ${{ vars.SITE_LABEL }}
+        run: |
+          set -euo pipefail
+
+          BUCKET=$(aws ssm get-parameter \
+            --name "/${SITE_LABEL}/cloudfront-assets/us-east-1/voice/bucket_name" \
+            --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || true)
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
+            echo "## Client Assets: skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "No cf-assets bucket SSM param yet — CloudFront infra not applied. Skipping S3 sync." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "Publishing client dist to s3://$BUCKET"
+
+          # Extract the built SPA from the image we just pushed.
+          CID=$(docker create "$IMAGE")
+          TMP=$(mktemp -d)
+          docker cp "$CID:/app/client/dist" "$TMP/dist"
+          docker rm "$CID" >/dev/null
+
+          # Content-hashed assets: immutable, long cache. Sync-without-delete so
+          # a prior build's hashes remain during the overlap window.
+          aws s3 sync "$TMP/dist/assets" "s3://$BUCKET/assets" \
+            --cache-control 'public,max-age=31536000,immutable' --no-progress
+          # Any other top-level static files (favicon, etc.), except the shell.
+          aws s3 sync "$TMP/dist" "s3://$BUCKET" \
+            --exclude 'index.html' --exclude 'assets/*' \
+            --cache-control 'public,max-age=31536000,immutable' --no-progress
+          # The SPA shell is not hashed — upload no-cache so a deploy is picked
+          # up immediately.
+          aws s3 cp "$TMP/dist/index.html" "s3://$BUCKET/index.html" \
+            --cache-control 'no-cache, no-store, must-revalidate'
+
+          echo "## Client Assets Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "Synced to \`s3://$BUCKET\`" >> "$GITHUB_STEP_SUMMARY"
+
+          # Invalidate the no-cache shell (hashed assets need no invalidation).
+          DIST_ID=$(aws ssm get-parameter \
+            --name "/${SITE_LABEL}/cloudfront/voice/distribution_id" \
+            --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || true)
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+            INV=$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" \
+              --paths '/' '/index.html' --query 'Invalidation.Id' --output text)
+            echo "CloudFront invalidation \`$INV\` on distribution \`$DIST_ID\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No CloudFront distribution SSM param yet — skipped invalidation." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   deploy:
     name: Deploy Voice
     needs: build
