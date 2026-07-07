@@ -1,0 +1,75 @@
+# kph_retrieval_depth: proves local BM25 retrieval surfaces real klanker-
+# maker DEPTH the curated knowledge/topics/klanker-maker.md pack does NOT
+# contain (Phase 7, 07-05, ROADMAP success criterion 4 -- "retrieval
+# DEPTH/coverage"). Distinct long-tail detail from scenarios/
+# kph_retrieval_km.yaml's (that one targets the action-quota "freeze
+# quarantine" mechanism): this scenario targets klanker-maker's per-tool
+# agent gating (the `spec.agent:` block -- per-tool autoApprove/deny lists
+# for Claude Code and Codex, deny always winning over allow), a real detail
+# present in knowledge/index/klanker-maker/docs.jsonl (chunked from km's
+# real docs/agent-tool-gating.md) and confirmed absent from the curated pack
+# (grep for autoApprove/trustedDirectories/spec.agent against
+# knowledge/topics/klanker-maker.md returns nothing).
+#
+# IMPORTANT design note (07-05): the router only fires retrieval on a
+# GENUINE topic switch (klanker_voice.knowledge.router's deep-turn
+# condition), and the pipeline's initial topic is already klanker-maker
+# (manifest.yaml's tour_priority[0]) -- so a scenario that opens directly on
+# a klanker-maker question never actually exercises the live retrieval path
+# (the router sees topic_id == self._active_topic, no switch, no query).
+# This scenario deliberately opens on a DIFFERENT topic first (defcon.run.34)
+# so the long-tail klanker-maker question in turn 3 is a genuine switch BACK
+# into klanker-maker, firing the ack-masked retrieval query for real.
+#
+# Same shape as scenarios/kph_knowledge_km.yaml / kph_retrieval_km.yaml:
+# greeting-observe first turn (K greets first in eval mode per D-04/bot.py's
+# unconditional register_greet_first), then scripted turns, judged via the
+# existing judge_factory (klanker_voice.harness.judge) -- no harness code
+# change needed.
+#
+# LIVE run (needs a real ANTHROPIC_API_KEY + the pipecat-ai[evals,local]
+# extra installed -- see 07-01-SUMMARY.md's "Not exercised" note, same
+# blocker):
+#   uv run python bot.py -t eval   # one terminal
+#   uv run pipecat eval run scenarios/kph_retrieval_depth.yaml --bot-url ws://localhost:7860
+
+name: kph_retrieval_depth
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  - user: "Tell me a bit about DEFCON dot run."
+    expect:
+      - event: response
+  - user: >-
+      Switching gears -- inside klanker-maker, how fine-grained is the
+      control over exactly which tools a coding agent like Claude Code or
+      Codex can use inside the sandbox? Is it all-or-nothing, or can you
+      lock down individual tools?
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply describes real per-tool, per-agent
+          control beyond a simple all-or-nothing toggle -- for example
+          mentioning that a sandbox profile can declare which specific
+          tools are auto-approved versus denied separately for Claude Code
+          and for Codex, and/or that a deny always wins over an allow for
+          the same tool. This is real depth from the full klanker-maker
+          docs corpus (the `spec.agent:` per-tool gating block), NOT in the
+          short curated summary -- so a generic non-answer ("I don't have
+          details on that") or a reply that only repeats the high-level
+          sandbox-isolation description (eBPF network filtering, security
+          groups) without engaging the specific per-tool allow/deny
+          mechanism should be marked no. Accept close speech-to-text
+          renderings of "klanker maker" / "clanker maker".

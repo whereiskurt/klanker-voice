@@ -1,0 +1,63 @@
+# kph_tour_mode: proves the D-04/D-05 adaptive-steering "tour mode" rule
+# (Phase 7, 07-05). A quiet/aimless visitor -- someone who hasn't asked a
+# directed question -- should be steered into a tour offer ("want the
+# 60-second tour of what Kurt builds?") rather than getting a data dump or a
+# flat "I don't understand." A second turn accepting the tour should walk
+# the manifest's tour_priority order (klanker-maker, then DEFCON dot run,
+# then mesh T K) one stop at a time, not everything at once.
+#
+# Same shape as scenarios/kph_knowledge_km.yaml: greeting-observe first turn
+# (K greets first in eval mode per D-04/bot.py's unconditional
+# register_greet_first), then scripted turns, judged via the existing
+# judge_factory (klanker_voice.harness.judge) -- no harness code change
+# needed.
+#
+# LIVE run (needs a real ANTHROPIC_API_KEY + the pipecat-ai[evals,local]
+# extra installed -- see 07-01-SUMMARY.md's "Not exercised" note, same
+# blocker):
+#   uv run python bot.py -t eval   # one terminal
+#   uv run pipecat eval run scenarios/kph_tour_mode.yaml --bot-url ws://localhost:7860
+
+name: kph_tour_mode
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  - user: "Hmm... I dunno, what even is this?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply offers a short guided tour of what Kurt
+          builds -- for example something like "want the 60-second tour" or
+          "want me to walk you through what Kurt builds" -- rather than
+          immediately launching into one topic's full detail unprompted or
+          giving a flat "I don't understand the question" non-answer.
+          Accept a reply that ALSO gives one quick orienting sentence about
+          who KPH is before offering the tour -- that's fine, as long as the
+          tour offer itself is present. Answer no if the reply dumps deep
+          detail on a specific topic without ever offering a tour/overview,
+          or if it stalls without steering the conversation anywhere.
+  - user: "Sure, give me the tour."
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply starts walking through Kurt's projects one
+          at a time rather than reciting everything in one giant dump -- for
+          example starting with klanker-maker (Kurt's AI-agent sandbox
+          platform) as a first quick stop, with room to continue to DEFCON
+          dot run and mesh T K next. Accept any reasonable ordering or
+          phrasing as long as it reads like a guided, stop-by-stop tour
+          rather than one undifferentiated wall of facts about all three
+          systems at once. Answer no if the reply ignores the tour request
+          entirely, or answers a completely unrelated question.

@@ -1,0 +1,86 @@
+# kph_router_accuracy: a scripted battery of directed + ambiguous utterances
+# across all three primary topics (Phase 7, 07-05, ROADMAP success criterion
+# 4 -- "router accuracy"). Judges topic-SELECTION accuracy through the
+# proxy the live audio harness can actually observe -- the spoken content of
+# each reply -- since the router's internal classify()/active-topic state
+# isn't itself exposed to the eval harness. A directed question per topic
+# should surface that topic's own facts (never a different topic's), and the
+# scripted ambiguous utterance (the exact Pitfall-1 "toolkit" overlap case
+# already keyless-proven in
+# tests/test_knowledge_router.py::test_classify_bare_toolkit_overlap_resolves_to_fallback_via_floor)
+# should get a safe, non-guessing response rather than a confidently wrong
+# meshtk-specific claim.
+#
+# Same shape as scenarios/kph_knowledge_km.yaml: greeting-observe first turn
+# (K greets first in eval mode per D-04/bot.py's unconditional
+# register_greet_first), then scripted turns, judged via the existing
+# judge_factory (klanker_voice.harness.judge) -- no harness code change
+# needed.
+#
+# LIVE run (needs a real ANTHROPIC_API_KEY + the pipecat-ai[evals,local]
+# extra installed -- see 07-01-SUMMARY.md's "Not exercised" note, same
+# blocker):
+#   uv run python bot.py -t eval   # one terminal
+#   uv run pipecat eval run scenarios/kph_router_accuracy.yaml --bot-url ws://localhost:7860
+
+name: kph_router_accuracy
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  - user: "Tell me about klanker maker. What is it?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply correctly describes klanker-maker (`km`)
+          -- Kurt's AI-agent sandbox platform on AWS -- and does NOT talk
+          about DEFCON dot run or meshtk instead. Accept close speech-to-
+          text renderings of "klanker maker" (e.g. "clanker maker"). Answer
+          no if the reply is about the wrong topic or claims not to know.
+  - user: "What is DEFCON dot run all about?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply correctly describes defcon.run.34 --
+          Kurt's DEF CON Run community platform (sign up, plan routes,
+          check in, flash a Meshtastic radio) -- and does NOT keep talking
+          about klanker-maker instead, proving the router actually switched
+          topics. Answer no if the reply is about the wrong topic, mixes up
+          klanker-maker facts with defcon.run facts, or claims not to know.
+  - user: "How does the meshtastic toolkit work?"
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply correctly describes meshtk -- Kurt's Go
+          toolkit for virtual Meshtastic nodes (software-only mesh radios,
+          fleet simulation, or the packet-inspecting security proxy) -- and
+          does NOT keep talking about DEFCON dot run or klanker-maker
+          instead, proving the router switched topics a second time. Answer
+          no if the reply is about the wrong topic or claims not to know.
+  - user: "Do you have any toolkit for that kind of thing?"
+    expect:
+      - event: response
+        eval: >-
+          This utterance is deliberately ambiguous -- "toolkit" alone
+          should NOT confidently commit to meshtk (the router's own
+          confidence floor treats a bare "toolkit" as below-threshold,
+          RESEARCH Pitfall 1). Answer yes if the reply handles this safely:
+          either it asks a clarifying question (for example "which project
+          did you mean?"), stays generic/non-committal, or gives a brief
+          answer that does not invent specific meshtk facts (fleet
+          simulation counts, node names, protocol internals) as if it were
+          confidently about meshtk. Answer no if the reply confidently
+          asserts specific meshtk-only facts as the answer to this vague
+          question without any hedge or clarification -- that would be the
+          over-triggering failure mode this battery exists to catch.

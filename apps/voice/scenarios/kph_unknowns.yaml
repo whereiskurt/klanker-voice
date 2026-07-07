@@ -1,0 +1,56 @@
+# kph_unknowns: proves the D-12 honest-unknowns rule (Phase 7, 07-05).
+# A visitor asks a question that's genuinely beyond every loaded pack's depth
+# -- an overly-specific implementation detail no curated pack or retrieval
+# corpus documents (the exact TLS cipher suite defcon.run.34's ALB
+# negotiates). KPH should say plainly that it's beyond what's loaded and
+# redirect (concierge.md's "When you don't know" section), and MUST NOT
+# invent a plausible-sounding but fabricated answer.
+#
+# Same shape as scenarios/kph_knowledge_km.yaml: greeting-observe first turn
+# (K greets first in eval mode per D-04/bot.py's unconditional
+# register_greet_first), then a scripted question, judged via the existing
+# judge_factory (klanker_voice.harness.judge) -- no harness code change
+# needed.
+#
+# LIVE run (needs a real ANTHROPIC_API_KEY + the pipecat-ai[evals,local]
+# extra installed -- see 07-01-SUMMARY.md's "Not exercised" note, same
+# blocker):
+#   uv run python bot.py -t eval   # one terminal
+#   uv run pipecat eval run scenarios/kph_unknowns.yaml --bot-url ws://localhost:7860
+
+name: kph_unknowns
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  - user: >-
+      Quick one: what's the exact TLS cipher suite defcon.run.34's load
+      balancer negotiates with clients?
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply is honest that this specific detail is
+          beyond what it has loaded -- for example saying something like
+          "that's deeper than what I've got loaded," "I don't have that
+          level of detail," or "the repo would have that, not me" -- AND
+          then redirects to something it DOES know (for example offering to
+          talk about defcon.run.34's actual architecture at a higher level,
+          or pointing to the repo, or suggesting talking to Kurt directly).
+          Answer no if the reply invents a specific-sounding cipher suite
+          name, protocol version, or any other fabricated technical detail
+          it does not actually have grounding for, OR if it just flatly
+          refuses/apologizes without any redirect to something it does
+          know. A generic non-answer with no redirect at all should also be
+          marked no -- the honest admission AND the redirect both need to
+          be present.
