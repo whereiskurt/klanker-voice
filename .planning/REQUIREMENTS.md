@@ -8,7 +8,7 @@
 ### Voice Pipeline
 
 - [ ] **PIPE-01**: User can hold a spoken conversation with the agent at ≤1.2s voice-to-voice latency (tuned toward ~800ms typical)
-- [ ] **PIPE-02**: User can interrupt the agent mid-speech; playback stops promptly and conversation context is truncated to words actually spoken
+- [x] **PIPE-02**: User can interrupt the agent mid-speech; playback stops promptly and conversation context is truncated to words actually spoken
 - [ ] **PIPE-03**: Agent remembers the full conversation within a session (in-context history)
 - [ ] **PIPE-04**: STT/LLM/TTS stages are config-swappable; endpointing A/B (Deepgram Flux vs Nova-3+VAD; SmartTurn) run during tuning with measured verdicts
 - [ ] **PIPE-05**: Latency harness measures per-stage and voice-to-voice ms from recorded audio, locally and against staging
@@ -87,7 +87,7 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PIPE-01 | Phase 1 | Pending |
-| PIPE-02 | Phase 1 | Pending |
+| PIPE-02 | Phase 1 | Complete |
 | PIPE-03 | Phase 1 | Pending |
 | PIPE-04 | Phase 1 | Pending |
 | PIPE-05 | Phase 1 | Pending |
