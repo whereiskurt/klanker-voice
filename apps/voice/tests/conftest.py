@@ -6,6 +6,19 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _reset_scale_in_protection_state():
+    """Reset the module-global scale-in-protection cache between tests so the
+    'only call ECS on a real transition' assertions stay isolated (mirrors the
+    per-file _active_session_count resets)."""
+    from klanker_voice import session
+
+    session._protection_state = None
+    yield
+    session._protection_state = None
+
+
 MINIMAL_TOML = """\
 [stt]
 provider = "deepgram-nova3"

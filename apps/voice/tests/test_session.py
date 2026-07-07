@@ -270,6 +270,63 @@ async def test_scale_in_protection_acquired_on_first_and_released_on_last(fake_a
     )
 
 
+async def test_scale_in_protection_not_stranded_when_released_mid_start(fake_aws, monkeypatch):
+    """Black-screen root cause regression: a terminal connection close during
+    start()'s awaits must NOT leave ECS scale-in protection enabled with zero
+    active sessions. If it does, the stale task can't be drained by a rolling
+    deploy, two builds serve at once, and the SPA asset hashes mismatch -> black
+    screen. Invariant: protection_enabled <=> active_session_count() > 0.
+
+    Deterministic reproduction: park start() inside its first await (metric
+    emit) AFTER it has incremented the count, run release() to completion
+    (count -> 0, protection cleared), then let start() finish. The buggy code
+    re-set protection True after release() cleared it and bailed on _stopped,
+    stranding protection ON.
+    """
+    import threading
+
+    lc = session.SessionLifecycle(
+        user_id="u", session_id="s", tier=_tier(), quota_config=_quota_config(),
+        bypass_accounting=True,  # exercises the protection path with no tick/heartbeat deps
+    )
+
+    reached_first_await = threading.Event()
+    release_completed = threading.Event()
+    emit_calls = {"n": 0}
+
+    def blocking_emit():
+        emit_calls["n"] += 1
+        if emit_calls["n"] == 1:
+            reached_first_await.set()      # start() has incremented + parked here
+            release_completed.wait(3.0)    # hold the thread until release() has run
+        # release()'s own emit (2nd call) returns immediately
+
+    monkeypatch.setattr(lc, "_emit_metric", blocking_emit)
+
+    start_task = asyncio.create_task(lc.start())
+    for _ in range(400):
+        if reached_first_await.is_set():
+            break
+        await asyncio.sleep(0.005)
+    assert reached_first_await.is_set(), "start() never reached its first await"
+    assert session.active_session_count() == 1  # start() incremented before parking
+
+    # Terminal close mid-start: release runs fully, count -> 0.
+    await lc.release()
+    assert session.active_session_count() == 0
+
+    release_completed.set()  # let start() resume (it will see _stopped and bail)
+    await start_task
+
+    # THE INVARIANT: zero active sessions => scale-in protection MUST be OFF.
+    protection_calls = [c for c in fake_aws["ecs"].calls if c[0] == "update_task_protection"]
+    assert protection_calls, "expected at least one scale-in protection call"
+    assert protection_calls[-1][1]["protectionEnabled"] is False, (
+        f"scale-in protection stranded ON with 0 active sessions -> deploy-blocking "
+        f"stale task -> black screen. Calls: {protection_calls}"
+    )
+
+
 async def test_active_sessions_metric_emitted_on_start_and_stop(fake_aws, monkeypatch):
     monkeypatch.setattr(quota, "record_tick", lambda **kw: quota.TickResult(False, False))
     lifecycle = session.SessionLifecycle(user_id="u1", session_id="s1", tier=_tier(), quota_config=_quota_config())

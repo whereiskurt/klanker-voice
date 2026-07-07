@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -51,6 +52,16 @@ _METADATA_FETCH_TIMEOUT_SECS = 2.0
 Callback = Callable[[], Awaitable[None]]
 
 _active_session_count = 0
+
+#: ECS task scale-in protection is a per-TASK boolean that must track this
+#: process's live session count: protection ON iff active_session_count() > 0.
+#: These module-globals serialize the reconcile so a start()/release() race
+#: cannot strand protection ON with zero sessions (the black-screen bug: a
+#: protected stale task blocks a rolling deploy, two builds serve, SPA asset
+#: hashes mismatch). ``_protection_state`` caches the last-APPLIED value so we
+#: still only call ECS on an actual transition (0<->1), not every session.
+_protection_lock = threading.Lock()
+_protection_state: bool | None = None
 
 
 def active_session_count() -> int:
@@ -160,11 +171,12 @@ class SessionLifecycle:
         the service timer + (unless bypassing) the accounting tick loop and
         the D-06 user-silence watchdog."""
         self._last_tick_at = self.clock()
-        was_idle = active_session_count() == 0
         _increment()
         await asyncio.to_thread(self._emit_metric)
-        if was_idle:
-            await asyncio.to_thread(self._set_scale_in_protection, True)
+        # Reconcile against the LIVE count (not a pre-await was_idle flag): if a
+        # terminal close already released this session during the awaits above,
+        # the count is back to 0 and protection stays/goes OFF — never stranded.
+        await asyncio.to_thread(self._reconcile_scale_in_protection)
 
         if self._stopped:
             # A *terminal* connection close during this start() window can drive
@@ -211,12 +223,13 @@ class SessionLifecycle:
         for task in (self._tick_task, self._timer_task, self._watchdog_task, self._reconnect_task):
             if task is not None:
                 task.cancel()
-        is_last = _decrement() == 0
+        _decrement()
         if not self.bypass_accounting:
             await asyncio.to_thread(quota.release_heartbeat, self.user_id, self.session_id)
         await asyncio.to_thread(self._emit_metric)
-        if is_last:
-            await asyncio.to_thread(self._set_scale_in_protection, False)
+        # Reconcile against the live count: clears protection once this was the
+        # last session (count -> 0), leaves it ON while others are still active.
+        await asyncio.to_thread(self._reconcile_scale_in_protection)
         if self.on_released is not None:
             await self.on_released()
 
@@ -364,16 +377,41 @@ class SessionLifecycle:
         except Exception as exc:  # never let metric publish failure break a session
             logger.warning(f"ActiveSessions metric publish failed: {exc}")
 
-    def _set_scale_in_protection(self, enabled: bool) -> None:
+    def _set_scale_in_protection(self, enabled: bool) -> bool:
+        """Low-level ECS UpdateTaskProtection call. Returns True iff the desired
+        state is now applied (or there is nothing to apply in local dev), False
+        on an API failure so the caller does NOT cache an unapplied state."""
         cluster, task_id = _task_metadata_ids()
         if not cluster or not task_id:
             logger.debug("No ECS task metadata (local dev); skipping scale-in protection call")
-            return
+            return True
         try:
             ecs = boto3.client("ecs")
             ecs.update_task_protection(cluster=cluster, tasks=[task_id], protectionEnabled=enabled)
+            return True
         except Exception as exc:  # never let a protection-API hiccup break a session
             logger.warning(f"ECS task-scale-in-protection update failed: {exc}")
+            return False
+
+    def _reconcile_scale_in_protection(self) -> None:
+        """Drive ECS scale-in protection to match the LIVE session count
+        (protection ON iff active_session_count() > 0), serialized under a
+        process lock and reading the count at reconcile time.
+
+        This is the fix for the strand-ON race: because every start()/release()
+        reconciles against the *current* count (not a captured was_idle/is_last
+        flag decided before an await), whichever caller runs last converges the
+        protection state to the truth. A terminal close during start() therefore
+        can no longer leave protection enabled with zero sessions. The
+        ``_protection_state`` cache keeps the "only call ECS on a real 0<->1
+        transition" behaviour, and is only updated on a *successful* apply."""
+        global _protection_state
+        with _protection_lock:
+            desired = active_session_count() > 0
+            if desired == _protection_state:
+                return
+            if self._set_scale_in_protection(desired):
+                _protection_state = desired
 
 
 class TeardownObserver(BaseObserver):
