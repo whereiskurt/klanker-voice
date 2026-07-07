@@ -80,7 +80,7 @@ jobs:
           set -euo pipefail
 
           BUCKET=$(aws ssm get-parameter \
-            --name "/${SITE_LABEL}/cloudfront-assets/us-east-1/voice/bucket_name" \
+            --name "/${SITE_LABEL}/cloudfront-assets/use1/voice/bucket_name" \
             --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || true)
           if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
             echo "## Client Assets: skipped" >> "$GITHUB_STEP_SUMMARY"

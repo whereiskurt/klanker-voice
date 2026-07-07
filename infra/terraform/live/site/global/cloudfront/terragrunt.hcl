@@ -42,43 +42,14 @@ dependency "use1_cloudfront" {
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy"]
 }
 
-dependency "cac1_cloudfront" {
-  config_path = "../../region/ca-central-1/cloudfront"
-
-  mock_outputs = {
-    bucket_ids = {
-      voice = "mock-cf-assets-voice-cac1"
-    }
-    bucket_arns = {
-      voice = "arn:aws:s3:::mock-cf-assets-voice-cac1"
-    }
-    bucket_regional_domain_names = {
-      voice = "mock-cf-assets-voice-cac1.s3.ca-central-1.amazonaws.com"
-    }
-    region_label = "cac1"
-  }
-  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy", "apply"]
-  mock_outputs_merge_strategy_with_state  = "shallow"
-}
-
-dependency "apse1_cloudfront" {
-  config_path = "../../region/ap-southeast-1/cloudfront"
-
-  mock_outputs = {
-    bucket_ids = {
-      voice = "mock-cf-assets-voice-apse1"
-    }
-    bucket_arns = {
-      voice = "arn:aws:s3:::mock-cf-assets-voice-apse1"
-    }
-    bucket_regional_domain_names = {
-      voice = "mock-cf-assets-voice-apse1.s3.ap-southeast-1.amazonaws.com"
-    }
-    region_label = "apse1"
-  }
-  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy", "apply"]
-  mock_outputs_merge_strategy_with_state  = "shallow"
-}
+# NOTE: ca-central-1 / ap-southeast-1 are NOT wired as dependencies. They are
+# skip-excluded (site.skip_regions) and have no regional state backend
+# (TG_BUCKET_CAC1/_APSE1 are unset), so terragrunt cannot read their outputs or
+# fall back to mocks — a dependency block on them fails the plan outright. The
+# module only ever consumes the primary (use1) origin, so these regions are
+# pure dead pre-wiring today. When a second region is lit up (added to
+# cloudfront.regions AND removed from site.skip_regions, with its own state
+# bucket), re-add its dependency block + regional_origins_by_domain entry here.
 
 # --- Primary-region ALB (the /api/*,/health origin) ---
 
@@ -150,9 +121,10 @@ inputs = merge(
   local.site_vars.locals,
   {
     # Per-domain regional origins. Flat routing consumes only the primary
-    # (use1) region: its ALB (from network) + its S3 asset bucket. cac1/apse1
-    # carry the mock bucket outputs with empty ALB fields (no regional ALB
-    # today) so they stay inert until lit up.
+    # (use1) region: its ALB (from network) + its S3 asset bucket. Additional
+    # regions (cac1/apse1) are intentionally absent until lit up — see the note
+    # above the dependency blocks. regional_origins_by_domain is a flexible
+    # map(map(...)), so a use1-only map is valid.
     regional_origins_by_domain = {
       for domain in local.site_vars.locals.cloudfront.domains : domain => {
         use1 = {
@@ -161,20 +133,6 @@ inputs = merge(
           s3_bucket_id                   = dependency.use1_cloudfront.outputs.bucket_ids[domain]
           s3_bucket_arn                  = dependency.use1_cloudfront.outputs.bucket_arns[domain]
           s3_bucket_regional_domain_name = dependency.use1_cloudfront.outputs.bucket_regional_domain_names[domain]
-        }
-        cac1 = {
-          alb_dns_name                   = ""
-          alb_zone_id                    = ""
-          s3_bucket_id                   = try(dependency.cac1_cloudfront.outputs.bucket_ids[domain], "")
-          s3_bucket_arn                  = try(dependency.cac1_cloudfront.outputs.bucket_arns[domain], "")
-          s3_bucket_regional_domain_name = try(dependency.cac1_cloudfront.outputs.bucket_regional_domain_names[domain], "")
-        }
-        apse1 = {
-          alb_dns_name                   = ""
-          alb_zone_id                    = ""
-          s3_bucket_id                   = try(dependency.apse1_cloudfront.outputs.bucket_ids[domain], "")
-          s3_bucket_arn                  = try(dependency.apse1_cloudfront.outputs.bucket_arns[domain], "")
-          s3_bucket_regional_domain_name = try(dependency.apse1_cloudfront.outputs.bucket_regional_domain_names[domain], "")
         }
       }
     }

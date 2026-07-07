@@ -18,6 +18,12 @@ resource "aws_route53_record" "cloudfront_alias" {
   name    = each.key
   type    = "A"
 
+  # The voice A-record may pre-exist (created out-of-band at launch, pointing at
+  # the ALB). allow_overwrite lets terraform take ownership and repoint it to
+  # CloudFront in-place (the DNS cutover) instead of failing on "already exists",
+  # and re-asserts on every apply. Matches the certs/site route53 convention.
+  allow_overwrite = true
+
   alias {
     name                   = aws_cloudfront_distribution.main[split(".", each.key)[0]].domain_name
     zone_id                = aws_cloudfront_distribution.main[split(".", each.key)[0]].hosted_zone_id
