@@ -28,7 +28,7 @@ model = "claude-haiku-4-5"      # mandatory override: pipecat 1.5.0 defaults to 
 [tts]
 provider = "elevenlabs"
 model = "eleven_flash_v2_5"
-voice_id = "UgBBYS2sOqTuMpoF3BR0"  # "Mark" — temporary swap-in 2026-07-06 while KPHv1 is retrained/deleted. Replaces "KPHv1" (6zcBdCPOI1TDYCTSsqUv, Kurt-trained clone — being retrained, will be deleted in ElevenLabs so NOT a usable fallback). Prior audition fallback: "Will - Relaxed Optimist" (bIHbv24MWmeRgasZH58o)
+voice_id = "EIDLidDc73oTUWAedVPt"  # "Burt Fundeck" — swap-in 2026-07-07. Replaces "Mark" (UgBBYS2sOqTuMpoF3BR0, temporary). Prior: KPHv1 (6zcBdCPOI1TDYCTSsqUv, Kurt clone, retrained/deleted). IMPORTANT: on any voice_id change, re-run `make -C apps/voice greetings` and commit the new clips — the slick-start greeting drift guard (tests/test_greeting_voice_drift.py, B-04) fails CI otherwise.
 speed = 1.1                     # D-03: slightly above default; ElevenLabs WS range 0.7-1.2
 
 [persona]
