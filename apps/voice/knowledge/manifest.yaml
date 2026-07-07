@@ -19,6 +19,13 @@
 #                     this repo (e.g. a sibling local checkout) is marked
 #                     skip_if_missing so refresh degrades gracefully when run
 #                     on a machine without that checkout.
+#   public        -- REQUIRED (07-04, D-02): every source must explicitly
+#                     say `public: true` -- hand-verified public-safe by
+#                     Kurt. refresh_knowledge.py's read_manifest() refuses
+#                     (excludes, does not crash) any source missing this
+#                     flag or set to false; a bare comment claiming
+#                     "public-safe" is not enough, the flag itself is what
+#                     the refresh checks.
 
 version: 1
 
@@ -34,35 +41,48 @@ topics:
     sources:
       - path: /Users/khundeck/working/klankrmkr/docs
         kind: docs
+        public: true
         skip_if_missing: true
         note: >-
           km's own docs/ tree (~1,950 md files repo-wide); primary,
           high-signal source for the deep pack (Amendment 5).
       - path: apps/voice/knowledge/diagrams/km-sandbox-aws.md
         kind: diagram
+        public: true
         note: km sandbox AWS architecture, ingested as text (Amendment 3-D).
       - path: apps/voice/knowledge/transcripts/normalized/km-story.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/more.klanker.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/right.literally.the.instance.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/AWS.services.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/irsa.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/github.slack.app.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/checks.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/more.1.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/more.2.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/more.3.clean.md
         kind: transcript
+        public: true
       - path: .planning/phases/07-kph-knowledge-base/corpus/km-digest.md
         kind: docs
+        public: true
         note: >-
           Already-curated digest (hook + long version + sample Q->A +
           do-not-say) promoted directly into the pack -- see 07-01.
@@ -73,6 +93,7 @@ topics:
     sources:
       - path: /Users/khundeck/working/defcon.run.34/infra/terraform
         kind: code
+        public: true
         skip_if_missing: true
         note: >-
           doc-gen then index (Amendment 3.D/5): defcon.run.34 is "really the
@@ -81,14 +102,18 @@ topics:
           the earlier grill-with-docs generated-docs step was dropped).
       - path: /Users/khundeck/working/defcon.run.34/apps
         kind: code
+        public: true
         skip_if_missing: true
         note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
       - path: apps/voice/knowledge/transcripts/normalized/right.literally.the.instance.clean.md
         kind: transcript
+        public: true
       - path: apps/voice/knowledge/transcripts/normalized/irsa.clean.md
         kind: transcript
+        public: true
       - path: .planning/phases/07-kph-knowledge-base/corpus/defcon-run-34-digest.md
         kind: docs
+        public: true
         note: >-
           Already-curated digest (hook + long version + sample Q->A +
           do-not-say) promoted directly into the pack -- see 07-03. An
@@ -102,28 +127,35 @@ topics:
     sources:
       - path: /Users/khundeck/working/meshtk/README.md
         kind: docs
+        public: true
         skip_if_missing: true
         note: "README primary source (Amendment 5)."
       - path: /Users/khundeck/working/meshtk/cmd
         kind: code
+        public: true
         skip_if_missing: true
         note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
       - path: /Users/khundeck/working/meshtk/internal
         kind: code
+        public: true
         skip_if_missing: true
         note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
       - path: /Users/khundeck/working/meshtk/pkg
         kind: code
+        public: true
         skip_if_missing: true
         note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
       - path: /Users/khundeck/working/meshtk/protos
         kind: code
+        public: true
         skip_if_missing: true
         note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
       - path: apps/voice/knowledge/transcripts/normalized/alrighty.clean.md
         kind: transcript
+        public: true
       - path: .planning/phases/07-kph-knowledge-base/corpus/meshtk-digest.md
         kind: docs
+        public: true
         note: >-
           Already-curated digest (hook + long version + sample Q->A +
           do-not-say) promoted directly into the pack -- see 07-03.
