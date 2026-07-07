@@ -82,6 +82,14 @@ class SessionRecord:
 #: not a restructure.
 SESSIONS: dict[str, SessionRecord] = {}
 
+#: Strong references to the fire-and-forget session tasks, keyed by pc_id.
+#: ``asyncio.create_task`` only keeps a *weak* reference to the task it
+#: returns, so without retaining it here a still-pending session task can be
+#: garbage-collected mid-run — silently dropping its ``finally: release()``
+#: and leaking the heartbeat lease (voice-concurrency-slot-leak BUG 1
+#: hardening). Cleared by the task's own done-callback.
+SESSION_TASKS: dict[str, asyncio.Task] = {}
+
 #: One SmallWebRTCRequestHandler for the process lifetime, ICE-server-configured
 #: at import (mirrors the pipecat dev runner's own module-level handler
 #: pattern). Building it only reads KMV_STUN_URL and constructs an in-memory
@@ -219,6 +227,41 @@ async def _start_and_run_tracked_session(
         await lifecycle.stop()
 
 
+def _wire_connection_teardown(
+    connection: SmallWebRTCConnection, lifecycle: SessionLifecycle
+) -> None:
+    """Route the raw connection's own ``closed`` teardown to the lifecycle, at
+    connection-creation time — the abrupt-path release trigger that the
+    transport's ``on_client_disconnected`` handler misses
+    (voice-concurrency-slot-leak BUG 1).
+
+    On an abrupt client vanish (tab-close / ICE-close / retry-storm churn)
+    aiortc discards the peer and :class:`SmallWebRTCConnection` fires its
+    ``closed`` event, but the higher-level transport's
+    ``on_client_disconnected`` — registered only inside :func:`_run_session`,
+    *after* the awaited (slow, AWS-bound) ``lifecycle.start()`` — may never see
+    it. Production evidence: the ``request_handler`` logs "Discarding peer
+    connection" yet nothing reaches :meth:`SessionLifecycle.release`, so the
+    heartbeat lease lingers at its full 45s TTL and walls reconnects with
+    ``concurrency-limit`` 403.
+
+    Registering the handler here — before the fire-and-forget task and
+    independent of the transport handler's post-``start()`` timing —
+    guarantees every close reaches ``release()`` via the idempotent D-07
+    reconnect-grace path. Belt-and-suspenders with the transport handler:
+    ``release()``'s ``_stopped`` guard makes a double-fire a no-op, and a
+    legitimate quick reconnect still cancels the grace via
+    ``on_transport_reconnected``. Routing through
+    :meth:`~SessionLifecycle.on_transport_disconnected` (rather than an
+    immediate release) preserves the reconnect-grace semantics — capping the
+    leak at ``reconnect_grace_seconds`` instead of the full TTL.
+    """
+
+    @connection.event_handler("closed")
+    async def _on_connection_closed(connection):  # noqa: ANN001 — pipecat handler shape
+        await lifecycle.on_transport_disconnected()
+
+
 async def _negotiate_webrtc(
     body: dict[str, Any], identity: SessionIdentity, gate_result: quota.GateResult
 ) -> Any:
@@ -246,7 +289,21 @@ async def _negotiate_webrtc(
         SESSIONS[connection.pc_id] = SessionRecord(
             identity=identity, gate_result=gate_result, lifecycle=lifecycle
         )
-        asyncio.create_task(_start_and_run_tracked_session(connection, lifecycle))
+        # Wire the abrupt-close release trigger BEFORE spawning the run task,
+        # so a client that vanishes during the slow ``lifecycle.start()``
+        # window still reaches release() (voice-concurrency-slot-leak BUG 1).
+        _wire_connection_teardown(connection, lifecycle)
+        pc_id = connection.pc_id
+        task = asyncio.create_task(_start_and_run_tracked_session(connection, lifecycle))
+        # Retain a strong ref (see SESSION_TASKS) and pop both registries once
+        # the session task ends, however it ends.
+        SESSION_TASKS[pc_id] = task
+
+        def _on_session_task_done(_task: asyncio.Task) -> None:
+            SESSION_TASKS.pop(pc_id, None)
+            SESSIONS.pop(pc_id, None)
+
+        task.add_done_callback(_on_session_task_done)
 
     answer = await _webrtc_handler.handle_web_request(webrtc_request, _connection_callback)
 
