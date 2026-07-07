@@ -236,36 +236,49 @@ async def _start_and_run_tracked_session(
 def _wire_connection_teardown(
     connection: SmallWebRTCConnection, lifecycle: SessionLifecycle
 ) -> None:
-    """Route the raw connection's own ``closed`` teardown to the lifecycle, at
-    connection-creation time — the abrupt-path release trigger that the
+    """Release the slot IMMEDIATELY on the raw connection's ``closed`` event,
+    at connection-creation time — the abrupt-path release trigger that the
     transport's ``on_client_disconnected`` handler misses
-    (voice-concurrency-slot-leak BUG 1).
+    (voice-concurrency-slot-leak BUG 1 + rev :13 refinement).
 
-    On an abrupt client vanish (tab-close / ICE-close / retry-storm churn)
-    aiortc discards the peer and :class:`SmallWebRTCConnection` fires its
-    ``closed`` event, but the higher-level transport's
-    ``on_client_disconnected`` — registered only inside :func:`_run_session`,
-    *after* the awaited (slow, AWS-bound) ``lifecycle.start()`` — may never see
-    it. Production evidence: the ``request_handler`` logs "Discarding peer
-    connection" yet nothing reaches :meth:`SessionLifecycle.release`, so the
-    heartbeat lease lingers at its full 45s TTL and walls reconnects with
-    ``concurrency-limit`` 403.
+    On an abrupt client vanish (tab-close / RELOAD / ICE-close) aiortc discards
+    the peer and :class:`SmallWebRTCConnection` fires its ``closed`` event, but
+    the higher-level transport's ``on_client_disconnected`` — registered only
+    inside :func:`_run_session`, *after* the awaited (slow, AWS-bound)
+    ``lifecycle.start()`` — may never see it. Production evidence: the
+    ``request_handler`` logs "Discarding peer connection" yet nothing reaches
+    :meth:`SessionLifecycle.release`, so the heartbeat lease lingered at its
+    full 45s TTL and walled reconnects with ``concurrency-limit`` 403.
 
-    Registering the handler here — before the fire-and-forget task and
-    independent of the transport handler's post-``start()`` timing —
-    guarantees every close reaches ``release()`` via the idempotent D-07
-    reconnect-grace path. Belt-and-suspenders with the transport handler:
-    ``release()``'s ``_stopped`` guard makes a double-fire a no-op, and a
-    legitimate quick reconnect still cancels the grace via
-    ``on_transport_reconnected``. Routing through
-    :meth:`~SessionLifecycle.on_transport_disconnected` (rather than an
-    immediate release) preserves the reconnect-grace semantics — capping the
-    leak at ``reconnect_grace_seconds`` instead of the full TTL.
+    **Why immediate release, not the reconnect grace.** The connection
+    ``closed`` event is *terminal*: pipecat fires it only once aiortc has
+    actually ``pc.close()``d the peer — a graceful ``disconnect()``, an ICE
+    ``failed`` self-close (``_handle_new_connection_state``), or the connecting
+    timeout. A *transient* ICE blip fires the separate ``disconnected`` event
+    (routed to ``_handle_peer_disconnected``, which does **not** reach
+    ``on_client_disconnected``); a ``restart_pc`` renegotiation removes the old
+    pc's listeners before closing, so it never fires ``closed`` either. And
+    after a ``closed`` the ``request_handler`` pops the pc from its map while a
+    returning client gets a brand-new ``session_id`` from ``start_gate`` — so a
+    *same-session* reconnect is impossible. Routing a terminal close through the
+    12s D-07 reconnect grace (rev :13) therefore waits for a reconnect that can
+    never come: two reloads inside the grace stacked two draining slots and
+    walled the third at ``max_concurrent=2`` for ~30s. Calling ``release()``
+    directly frees the slot at once.
+
+    The 12s reconnect grace stays reserved for the TRANSIENT path — the
+    transport's ``on_client_disconnected`` -> ``on_transport_disconnected`` —
+    which is left unchanged (see :func:`_run_session`); a legitimate mid-session
+    ICE recovery still cancels that grace via ``on_transport_reconnected``.
+    ``release()`` is the single idempotent teardown, so this is safe alongside
+    the transport handler: its ``_stopped`` guard makes any double-fire
+    (``closed`` + a racing ``on_client_disconnected``) a no-op, and it cancels
+    any pending reconnect-grace task, so immediate release always wins.
     """
 
     @connection.event_handler("closed")
     async def _on_connection_closed(connection):  # noqa: ANN001 — pipecat handler shape
-        await lifecycle.on_transport_disconnected()
+        await lifecycle.release()
 
 
 async def _negotiate_webrtc(

@@ -166,6 +166,20 @@ class SessionLifecycle:
         if was_idle:
             await asyncio.to_thread(self._set_scale_in_protection, True)
 
+        if self._stopped:
+            # A *terminal* connection close during this start() window can drive
+            # release() to completion before we reach here — the immediate-
+            # release fast-path wired at connection-creation time
+            # (server._wire_connection_teardown, voice-concurrency-slot-leak
+            # BUG 1 rev :13 refinement) calls release() synchronously on the raw
+            # ``closed`` event, which can interleave with this coroutine's
+            # awaits above. If the lifecycle is already released, starting the
+            # tick loop would renew (re-lease) the very heartbeat release() just
+            # freed — reintroducing the slot leak — and leave orphaned
+            # timer/watchdog tasks that release() already had nothing to cancel.
+            # Bail out: a released lifecycle must never (re)start its loops.
+            return
+
         if not self.bypass_accounting:
             # A bypass (smoke/service credential) session has no real tier
             # bound (D-15 skips accounting entirely) — running the service

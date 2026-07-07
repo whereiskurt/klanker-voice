@@ -166,14 +166,31 @@ def _lease_item(user_id: str, session_id: str):
     ).get("Item")
 
 
-# --- BUG 1 primary reproduction: abrupt connection close must free the slot ---
+# --- BUG 1 primary reproduction: a *terminal* connection close must free the
+# slot IMMEDIATELY, not after the 12s reconnect grace ---
+#
+# Refinement (rev :13 live finding): the raw ``SmallWebRTCConnection`` ``closed``
+# event is *terminal* — it fires only once aiortc has actually ``pc.close()``d
+# the peer (graceful disconnect, ICE ``failed`` self-close, or the connecting
+# timeout). A tab-close / RELOAD is terminal: the client returns with a
+# brand-new ``session_id``, so routing this close through the D-07 reconnect
+# grace waits 12s for a same-session reconnect that can never come. Two reloads
+# inside 12s stack two draining slots and wall the third at max_concurrent=2.
+# So the ``closed`` fast-path must call ``release()`` synchronously; the 12s
+# grace stays reserved for the transport-level ``on_transport_disconnected``
+# path (see the transient contrast test below and test_teardown.py).
 
 
-async def test_abrupt_connection_close_releases_heartbeat_lease(fake_aws):
-    """RED: on an abrupt SmallWebRTCConnection ``closed`` (tab-close /
-    ICE-close), the session's heartbeat lease must be released within the
-    reconnect grace. Today nothing wires the connection's own teardown to the
-    lifecycle, so the lease lingers at full TTL and walls reconnects."""
+async def test_abrupt_connection_close_releases_heartbeat_lease_immediately(fake_aws):
+    """A terminal ``SmallWebRTCConnection`` ``closed`` (tab-close / RELOAD /
+    ICE-close) must release the heartbeat lease SYNCHRONOUSLY on the event —
+    NOT after the reconnect grace.
+
+    RED against the rev :13 behavior (``closed`` routed through
+    ``on_transport_disconnected`` -> the 12s reconnect grace): with a large
+    grace and no sleep, the slot would still be held right after the close.
+    GREEN once ``_wire_connection_teardown`` calls ``release()`` directly.
+    """
     user_id, session_id = _ids()
     quota.acquire_heartbeat(user_id, session_id, ttl_seconds=45)
     assert quota.count_active_heartbeats(user_id) == 1
@@ -182,24 +199,19 @@ async def test_abrupt_connection_close_releases_heartbeat_lease(fake_aws):
         user_id=user_id,
         session_id=session_id,
         tier=_tier(),
-        quota_config=_quota_config(reconnect_grace_seconds=0.03),
+        # A deliberately LONG grace: if the terminal close still routed through
+        # the reconnect grace, the slot would remain held for 30s and these
+        # no-sleep assertions would fail — that is the rev :13 leak this
+        # refinement removes.
+        quota_config=_quota_config(reconnect_grace_seconds=30),
     )
     await lifecycle.start()
 
     conn = _FakeWebRTCConnection()
-    # The fix seam: wire the raw connection's teardown to the lifecycle, at
-    # connection-creation time, independent of the transport handler. Until
-    # the fix lands this attribute does not exist AT ALL — the absence of any
-    # connection-level teardown wiring IS the bug, so we let the abrupt close
-    # proceed unwired and assert the observable leak (lease stays live), the
-    # exact production symptom. A no-op fix would also fail these assertions.
-    wire = getattr(server, "_wire_connection_teardown", None)
-    if wire is not None:
-        wire(conn, lifecycle)
+    server._wire_connection_teardown(conn, lifecycle)
 
     await conn.fire_closed()
-    await asyncio.sleep(0.1)  # let the reconnect grace elapse
-
+    # NO grace sleep: a terminal close releases synchronously on the event.
     assert session.active_session_count() == 0
     assert quota.count_active_heartbeats(user_id) == 0
 
@@ -208,6 +220,34 @@ async def test_abrupt_connection_close_releases_heartbeat_lease(fake_aws):
     item = _lease_item(user_id, session_id)
     assert item is not None
     assert int(item["expiresAt"]) <= quota._now_epoch()
+
+
+async def test_transport_disconnect_still_uses_the_reconnect_grace(fake_aws):
+    """Contrast lock: the TRANSIENT path is unchanged. A transport-level
+    ``on_transport_disconnected`` (an ICE blip that may recover via
+    ``on_transport_reconnected``) must STILL hold the slot through the
+    reconnect grace — the refinement makes only the terminal raw-connection
+    ``closed`` event immediate, it must not weaken transient-reconnect
+    semantics."""
+    user_id, session_id = _ids()
+    quota.acquire_heartbeat(user_id, session_id, ttl_seconds=45)
+
+    lifecycle = session.SessionLifecycle(
+        user_id=user_id,
+        session_id=session_id,
+        tier=_tier(),
+        quota_config=_quota_config(reconnect_grace_seconds=0.05, user_silence_timeout=100),
+    )
+    await lifecycle.start()
+
+    await lifecycle.on_transport_disconnected()
+    # Still within the grace window -> slot deliberately held for reconnect.
+    assert session.active_session_count() == 1
+    assert quota.count_active_heartbeats(user_id) == 1
+
+    await asyncio.sleep(0.12)  # let the grace elapse
+    assert session.active_session_count() == 0
+    assert quota.count_active_heartbeats(user_id) == 0
 
 
 # --- regression lock: the clean stop() path already releases the lease ---
