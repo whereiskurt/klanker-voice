@@ -13,8 +13,10 @@ phase delivers: the knowledge manifest + `knowledge/` content, an LLM-powered di
 generator behind a manual refresh command, persona steering rules (adaptive tour +
 time-aware pacing), and a benchmark eval set proving KPH answers correctly.
 
-NOT in this phase: live retrieval / tool-calling (explicitly rejected — see D-13),
-latency work (Phase 6), voice cloning (captured todo), any client/deploy changes.
+NOT in this phase: LLM tool-calling / agentic retrieval, latency work (Phase 6), voice
+cloning (captured todo), any client/deploy changes. **AMENDED 2026-07-06 (Amendment 3):
+bounded LOCAL retrieval (SQLite FTS5 / BM25, in-process, keyless) IS now in scope — this
+reverses D-10/D-11. LLM tool-calling and vector/semantic RAG remain out.**
 
 **Origin note:** This phase activates the conditional requirement **PIPE-10**
 ("RAG/knowledge retrieval — only if the persona outgrows prompt space") from
@@ -28,13 +30,26 @@ than adopting retrieval. PROJECT.md's out-of-scope entries ("RAG/knowledge retri
 <decisions>
 ## Implementation Decisions
 
+> **READ FIRST — Amendment 3 (2026-07-06) supersedes parts of this block.** The concierge is
+> being made "smart and deep": a **bounded local retrieval path** is added (SQLite FTS5 + BM25,
+> in-process, keyless — no 4th vendor). This **reverses D-10 and D-11**, **relaxes D-02** (public
+> corpus → the scrubber becomes a non-blocking advisory lint, not a refuse-gate), and adds
+> **per-source corpus prep** (km docs+diagram indexed directly; defcon.run.34/meshtk get an
+> offline `grill-with-docs` doc-generation pass, then index generated-docs primary + code
+> secondary; klanker-voice self-docs via Phase 8). Retrieval is **topic-scoped**, injected into
+> the **uncached system[1] block**, **ack-masked**; ~top-4 chunks / ~1.5k tokens, tunable.
+> Cross-system synthesis and vector/semantic RAG are OUT for launch. D-03..D-09, D-12, D-13 stay
+> unchanged. Full detail: **07-DESIGN-NOTES.md → Amendment 3** (design of record).
+
 ### Sources & boundaries
 - **D-01:** Corpus is a **curated manifest file** checked into the repo. The digest
   generator reads ONLY manifest entries — no auto-discovery of public repos.
-- **D-02:** **Hard public-only rule.** The manifest may only reference public sources;
-  the generator must refuse private ones. The entire pack is treated as world-readable
-  by design (public mic ⇒ assume full prompt extraction): no infra details, no account
-  IDs/hostnames/key names, no PII beyond Kurt's self-written bio.
+- **D-02 [RELAXED by Amendment 3]:** Corpus is all-public; manifest still references public
+  sources only. But the do-not-say scrubber is **DEMOTED from a build-blocking refuse-gate to a
+  thin ADVISORY LINT** — it flags account IDs / role ARNs / key blocks / internal `.local`/Cloud
+  Map hostnames in the offline refresh git-diff for human review, and **never blocks the build**.
+  Rationale: the LLM doc-gen-over-code path can surface public-but-shouldn't-volunteer identifiers
+  (e.g. account `481723467561`); flag for the reviewer, don't gate. Git-diff human review (D-09) stays.
 - **D-03:** Non-repo materials (bio, scripts, extra color) live in a **`knowledge/`
   directory in the klanker-voice repo** (public), versioned alongside the manifest —
   same pattern as the versioned persona markdown.
@@ -61,10 +76,13 @@ than adopting retrieval. PROJECT.md's out-of-scope entries ("RAG/knowledge retri
   ordinary diff before commit; nothing changes what KPH says without a human seeing it.
 
 ### Depth retrieval shape
-- **D-10:** **Pre-digested only.** Each topic gets BOTH a hook-sized digest AND a
-  pre-baked "long version" in the pack. Depth = bigger pack, not lookups.
-- **D-11:** **No live retrieval, no tool-calling.** The original project decision
-  ("round-trip pauses undercut the slick feel") stands unrevised.
+- **D-10 [AMENDED by Amendment 3]:** Curated per-topic packs REMAIN as the fast/slick path
+  (hook digest + a curated "long version" for framing + Kurt style). But depth is NO LONGER
+  pack-only — a bounded local BM25 retrieval path answers ad-hoc detail from the full corpus on
+  deep turns.
+- **D-11 [REVERSED by Amendment 3]:** Local, in-process retrieval (SQLite FTS5 / BM25, keyless)
+  IS now used — topic-scoped, top-k chunks injected into the uncached system[1] block, masked by
+  the router ack (so the "slick feel" is preserved). Still NO LLM tool-calling, NO vector/semantic RAG.
 - **D-12:** **Unknowns: honest + redirect.** Beyond-the-pack questions get "that's
   deeper than what I've got loaded — the repo has it, or grab Kurt", then steer to an
   adjacent known topic. Never bluff about Kurt's projects on a public mic.
@@ -140,9 +158,10 @@ than adopting retrieval. PROJECT.md's out-of-scope entries ("RAG/knowledge retri
 <deferred>
 ## Deferred Ideas
 
-- **Live retrieval tool over full repo content** — explicitly rejected for this phase
-  (D-10/D-11); revisit only if the eval set proves the pack can't cover real questions,
-  and then alongside Phase-6 ack-masking.
+- **Local retrieval ADOPTED (Amendment 3, 2026-07-06)** — bounded LOCAL retrieval (SQLite
+  FTS5 / BM25, in-process, keyless) is now IN scope for depth, topic-scoped and ack-masked.
+  Still deferred: LLM tool-calling, vector/semantic RAG (a 4th vendor / infra), and cross-system
+  synthesis — revisit only if evals prove local BM25 can't cover real questions.
 - **Voice clone (Kurt-trained ElevenLabs voice)** — already a captured todo in STATE.md;
   unrelated to knowledge.
 - **TTS text-normalization filter** — 01-05 follow-up candidate if pronunciation-sensitive
