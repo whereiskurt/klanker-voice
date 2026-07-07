@@ -9,6 +9,8 @@ export interface AuthorizeParams {
   verifier: string;
   /** The CSRF `state` value this browser generated for this sign-in attempt. */
   state: string;
+  /** When "none", requests a silent (no-UI) authorization — top-level only. */
+  prompt?: "none";
 }
 
 /**
@@ -19,7 +21,7 @@ export interface AuthorizeParams {
  */
 export async function buildAuthorizeUrl(
   config: OidcConfig,
-  { verifier, state }: AuthorizeParams,
+  { verifier, state, prompt }: AuthorizeParams,
 ): Promise<string> {
   const challenge = await codeChallenge(verifier);
 
@@ -32,6 +34,7 @@ export async function buildAuthorizeUrl(
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");
+  if (prompt) url.searchParams.set("prompt", prompt);
 
   return url.toString();
 }

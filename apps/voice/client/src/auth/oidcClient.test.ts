@@ -45,6 +45,17 @@ describe("buildAuthorizeUrl", () => {
   });
 });
 
+describe("buildAuthorizeUrl prompt", () => {
+  it("omits prompt by default (interactive sign-in)", async () => {
+    const url = await buildAuthorizeUrl(testConfig, { verifier: "v".repeat(43), state: "s" });
+    expect(new URL(url).searchParams.has("prompt")).toBe(false);
+  });
+  it("adds prompt=none when requested (silent SSO)", async () => {
+    const url = await buildAuthorizeUrl(testConfig, { verifier: "v".repeat(43), state: "s", prompt: "none" });
+    expect(new URL(url).searchParams.get("prompt")).toBe("none");
+  });
+});
+
 describe("exchangeCode", () => {
   it("POSTs code + code_verifier to the token endpoint with NO client secret", async () => {
     let capturedUrl: string | undefined;
