@@ -267,7 +267,7 @@ Plans:
 
 **Reconciliation (RE-PLANNED 2026-07-07 for Amendments 3–5):** Built as **router + per-topic curated packs + a stable Kurt-STYLE cached prefix + a bounded LOCAL retrieval path** (CONTEXT D-10/D-11/D-13 ⋈ DESIGN-NOTES Amendments 1–5). **Amendment 3 reopens D-10/D-11** to add keyless in-process retrieval — **SQLite FTS5 + BM25**, topic-scoped, top-k chunks injected into the uncached system[1] block, ack-masked (no 4th vendor, PIPE-07). Criterion 2's "retrieval path... from full repo content" is now literal (bounded local BM25 over the full corpus), not just a pre-baked pack. **Amendment 4:** the style layer is REAL — Kurt's 14 transcribed clips (~82 min, km-heavy) + a humor/personality deck ground a distilled Kurt-STYLE layer in the cached prefix (with a public-mic PG-13 guardrail), and the transcripts + km diagram-as-text feed the facts packs + retrieval corpus. **Amendment 5:** grill-with-docs is **DROPPED** — corpus prep is direct per-source indexing (km docs+diagram+transcripts; defcon.run.34 `infra/terraform/{live,modules,providers}` + `apps/` as code; meshtk README + Go source), with retrieval-quality mitigation (per-topic scoping, curated-pack framing, docs-over-source ranking). The refresh pipeline is re-runnable + manifest-driven so the GROWING corpus (incoming defcon audio, a Google Docs talk) folds in via one manifest edit, no re-plan. The do-not-say scrubber is DEMOTED to a thin advisory lint (flag-not-block, corpus is all-public). Cross-system synthesis and vector/semantic RAG remain OUT for launch. The four pre-Amendment-3 plans were regenerated into five (Amendments 4 & 5 applied 2026-07-07).
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans complete
 
 Plans:
 **Wave 1**
@@ -282,7 +282,7 @@ Plans:
 **Wave 3** *(parallel; both depend on 07-01 + 07-02 + 07-03)*
 
 - [x] 07-04-PLAN.md — Refresh workflow (`make knowledge` / `kv knowledge refresh`): promote transcribe/normalize scripts + distill curated packs + style pass + DIRECT per-source code indexing (grill-with-docs DROPPED, Amendment 5) + FTS5 chunk/index build + advisory-lint flagging (manifest-only, skip-missing, offline, re-runnable/growing) (PIPE-10, PIPE-07)
-- [ ] 07-05-PLAN.md — Adaptive steering + time-aware pacing + honest unknowns + do-not-say spoken boundary + public-mic PG-13 crude-humor guard eval + benchmark eval set incl. retrieval DEPTH/coverage + router accuracy (PIPE-10, PIPE-06)
+- [x] 07-05-PLAN.md — Adaptive steering + time-aware pacing + honest unknowns + do-not-say spoken boundary + public-mic PG-13 crude-humor guard eval + benchmark eval set incl. retrieval DEPTH/coverage + router accuracy (PIPE-10, PIPE-06)
 
 **Waves:** 1 → {07-01}; 2 → {07-02, 07-03 parallel}; 3 → {07-04, 07-05 parallel}
 
@@ -300,7 +300,7 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 4. Voice Service Deployed & Quota Enforcement | 6/6 | Complete   | 2026-07-06 |
 | 5. Browser Client & Conference Readiness | 7/7 | Complete   | 2026-07-06 |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
-| 7. KPH Knowledge Base | 4/5 | In Progress|  |
+| 7. KPH Knowledge Base | 5/5 | Complete   | 2026-07-07 |
 
 ### Phase 8: Documentation & Architecture
 
