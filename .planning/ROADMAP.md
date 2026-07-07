@@ -204,13 +204,13 @@ Plans:
 
 **Task 0 (prompt=none feasibility gate): VERIFIED GREEN 2026-07-06** — live issuer returns `303 → /callback?error=login_required` for `prompt=none` with no session (no login-page render); Workstream A is cleared to build.
 
-**Plans:** 4 plans
+**Plans:** 1/4 plans executed
 
 **Waves:** 1 → {05.2-01, 05.2-02, 05.2-04}; 2 → {05.2-03}
 
 Plans:
 
-- [ ] 05.2-01-PLAN.md — Workstream A: single-tap silent SSO (breadcrumb, prompt=none, attemptSilentSso, login_required branch) [CLNT-08]
+- [x] 05.2-01-PLAN.md — Workstream A: single-tap silent SSO (breadcrumb, prompt=none, attemptSilentSso, login_required branch) [CLNT-08]
 - [ ] 05.2-02-PLAN.md — Workstream B: greeting source + render script + drift guard (key-gated render checkpoint) [CLNT-01, CLNT-02]
 - [ ] 05.2-03-PLAN.md — Workstream B: greeting player + deferred Live handoff (+ phase full-suite gate) [CLNT-01, CLNT-02]
 - [ ] 05.2-04-PLAN.md — Workstream B: server greet_first toggle + persona opening-move tweak [PIPE-02]
@@ -263,25 +263,26 @@ Plans:
   3. Knowledge refresh is a script run, not a manual edit — regenerating digests from the live repos
   4. KPH answers a benchmark set of Kurt/repo questions correctly, verified by eval scenarios
 
-**Reconciliation (planned 2026-07-05):** Built as **router + per-topic deep packs + a stable Kurt-STYLE cached prefix** (CONTEXT D-10/D-11/D-13 ⋈ DESIGN-NOTES Amendments 1+2). Criterion 2's "retrieval path... from full repo content" = a **bounded classify-then-LOAD-a-pack** (router picks a pre-baked per-topic deep pack), NOT open RAG / tool-calling — honors D-11 while satisfying criterion 2.
+**Reconciliation (RE-PLANNED 2026-07-06 for Amendment 3):** Built as **router + per-topic curated packs + a stable Kurt-STYLE cached prefix + a bounded LOCAL retrieval path** (CONTEXT D-10/D-11/D-13 ⋈ DESIGN-NOTES Amendments 1+2+3). **Amendment 3 reopens D-10/D-11** to add keyless in-process retrieval — **SQLite FTS5 + BM25**, topic-scoped, top-k chunks injected into the uncached system[1] block, ack-masked (no 4th vendor, PIPE-07). Criterion 2's "retrieval path... from full repo content" is now literal (bounded local BM25 over the full corpus), not just a pre-baked pack. Corpus prep is per-source (km docs+diagram-as-text indexed directly; defcon.run.34/meshtk get an offline grill-with-docs doc-gen pass then index). The do-not-say scrubber is DEMOTED to a thin advisory lint (flag-not-block, corpus is all-public). Cross-system synthesis and vector/semantic RAG remain OUT for launch. The four pre-Amendment-3 plans were regenerated into five.
 
-**Plans**: 4 plans
+**Plans**: 5 plans
 
 Plans:
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — Whole loop on ONE topic (km): keyword router + ack + two-block cached prompt (stable prefix + swappable deep pack) + km content + live cache proof (PIPE-10, PIPE-06, PIPE-07)
+- [ ] 07-01-PLAN.md — Foundation on ONE topic (km): keyword router + ack + two-block cached prompt (stable prefix + swappable deep pack) + km curated content + advisory do-not-say lint + live cache proof (PIPE-10, PIPE-06, PIPE-07)
 
 **Wave 2** *(parallel; both depend on 07-01)*
 
-- [ ] 07-02-PLAN.md — Add defcon.run.34 + meshtk deep packs, multi-topic discrimination, cross-topic cache warmth, per-topic evals (PIPE-10)
-- [ ] 07-03-PLAN.md — `make knowledge` / `kv knowledge refresh` distillation script + do-not-say scrubber (manifest-only, public-refusal, skip-missing) (PIPE-10, PIPE-07)
+- [ ] 07-02-PLAN.md — Local retrieval subsystem: SQLite FTS5/BM25 chunking+index+query (keyless), deep-turn topic-scoped injection into uncached system[1], km depth walking slice + latency guard (PIPE-10, PIPE-07)
+- [ ] 07-03-PLAN.md — defcon.run.34 + meshtk curated deep packs, multi-topic discrimination + overlap guard, cross-topic cache warmth, per-topic evals (PIPE-10)
 
-**Wave 3** *(depends on 07-01 + 07-02)*
+**Wave 3** *(parallel; both depend on 07-01 + 07-02 + 07-03)*
 
-- [ ] 07-04-PLAN.md — Adaptive steering + time-aware pacing + honest unknowns + do-not-say boundary + benchmark eval set (PIPE-10, PIPE-06)
+- [ ] 07-04-PLAN.md — Refresh workflow (`make knowledge` / `kv knowledge refresh`): distill curated packs + swappable grill-with-docs doc-gen + FTS5 chunk/index build + advisory-lint flagging (manifest-only, public-refusal, skip-missing, offline) (PIPE-10, PIPE-07)
+- [ ] 07-05-PLAN.md — Adaptive steering + time-aware pacing + honest unknowns + do-not-say spoken boundary + benchmark eval set incl. retrieval DEPTH/coverage + router accuracy (PIPE-10, PIPE-06)
 
-**Waves:** 1 → {07-01}; 2 → {07-02, 07-03 parallel}; 3 → {07-04}
+**Waves:** 1 → {07-01}; 2 → {07-02, 07-03 parallel}; 3 → {07-04, 07-05 parallel}
 
 ## Progress
 
@@ -297,7 +298,7 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 | 4. Voice Service Deployed & Quota Enforcement | 6/6 | Complete   | 2026-07-06 |
 | 5. Browser Client & Conference Readiness | 7/7 | Complete   | 2026-07-06 |
 | 6. Latency v2 (deferred) | 0/TBD | Not started | - |
-| 7. KPH Knowledge Base | 0/4 | Planned (4 plans, 3 waves) | - |
+| 7. KPH Knowledge Base | 0/5 | Planned (5 plans, 3 waves — re-planned for Amendment 3) | - |
 
 ### Phase 8: Documentation & Architecture
 

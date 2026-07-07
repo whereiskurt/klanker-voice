@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: "OVERNIGHT DONE: Phase 5 client 7/7 code-complete + verified (human_needed=live pass); deploy.yml de-coupled; branch pushed. NEXT (user-awake): auth standup + deploy, then live AWS validation. Phase 7 NOT started — needs km/klanker-maker repo locally (only defcon.run.34+meshtk present) + user knowledge steering."
-last_updated: "2026-07-06T19:50:46.703Z"
+stopped_at: "05.2-01 executed: single-tap silent SSO (breadcrumb store, prompt=none, attemptSilentSso guard, Callback login_required branch) — 4/4 tasks, all client tests + tsc build green. Workstream A code-complete; live verification deferred to phase's consolidated pass. Next: 05.2-02/03/04 (Workstream B, greeting)."
+last_updated: "2026-07-07T00:41:39.728Z"
 last_activity: 2026-07-06
-last_activity_desc: Phase 05 execution started
+last_activity_desc: Mark voice deployed live (rev 10); CI deploy fixed (IAM applied + deploy.yml deadlock 260706-q42)
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 5
-  total_plans: 33
-  completed_plans: 29
-  percent: 56
+  total_plans: 38
+  completed_plans: 30
+  percent: 50
 current_phase: 5
 current_phase_name: Browser Client & Conference Readiness
 ---
@@ -77,6 +77,7 @@ Progress: [█████████░] 88%
 | Phase 05 P05 | 35min | 2 tasks | 15 files |
 | Phase 05 P06 | 55min | 3 tasks | 10 files |
 | Phase 05 P07 | 40min | 1 tasks | 10 files |
+| Phase 05.2 P01 | 12min | 4 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,8 @@ Recent decisions affecting current work:
 - [Phase 05-06]: A post-connect transport drop routes to a sessionSummary (reason: provider-error), not Task 1's pre-connect retry/wall flow -- wasConnectedRef/connectedAtRef live entirely in useVoiceSession.ts's own state, no change to the shared connectionState.ts reducer
 - [Phase ?]: [Phase 05-07]: Countdown announces at escalation boundaries (warning/critical), not every tick -- fixed a real screen-reader-spam bug where the sr-only span was continuously aria-live=polite
 - [Phase ?]: [Phase 05-07]: prefers-reduced-motion is now a reactive matchMedia subscription (useReducedMotion), not a one-shot mount check -- OrbCanvas swaps to the calm fallback immediately on a mid-session OS toggle
+- [Phase 05.2]: 05.2-01: navigate.ts wraps window.location.assign for spy-friendliness (this vitest/jsdom disallows redefining window.location.assign directly), per the source plan's own documented fallback
+- [Phase 05.2]: 05.2-01: installed @testing-library/react + @testing-library/dom as client devDependencies (were entirely absent; required by the plan's own verbatim renderHook/render test code)
 
 ### Pending Todos
 
@@ -143,6 +146,7 @@ Recent decisions affecting current work:
 
 - Phase 05.1 inserted after Phase 5: Operator Admin Panel — gated /admin in auth app (operational-only; transcripts deferred to Phase 7) (URGENT)
 - Phase 8 added: Documentation & Architecture — polished system diagram + README/architecture/runbook (starter Excalidraw diagram exported 2026-07-06)
+- Phase 05.2 inserted after Phase 5: Slick Start — single-tap silent SSO + instant pre-rendered greeting (conference-readiness UX polish on Phase-5 client) (URGENT)
 
 ## Deferred Items
 
@@ -154,10 +158,10 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-**Resume file:** .planning/phases/05-browser-client-conference-readiness/05-VERIFICATION.md
+**Resume file:** .planning/phases/05.2-slick-start-single-tap-silent-sso-instant-pre-rendered-greet/05.2-01-SUMMARY.md
 
-Last session: 2026-07-06T07:29:13.903Z
-Stopped at: OVERNIGHT DONE: Phase 5 client 7/7 code-complete + verified (human_needed=live pass); deploy.yml de-coupled; branch pushed. NEXT (user-awake): auth standup + deploy, then live AWS validation. Phase 7 NOT started — needs km/klanker-maker repo locally (only defcon.run.34+meshtk present) + user knowledge steering.
+Last session: 2026-07-07T00:41:39.722Z
+Stopped at: 05.2-01 executed: single-tap silent SSO (breadcrumb store, prompt=none, attemptSilentSso guard, Callback login_required branch) — 4/4 tasks, all client tests + tsc build green. Workstream A code-complete; live verification deferred to phase's consolidated pass. Next: 05.2-02/03/04 (Workstream B, greeting).
 Resume: Phase 05 is now CODE-COMPLETE (7/7 plans). The only remaining phase-5 work is the single consolidated LIVE verification pass every 05-0x plan's checkpoint has deferred to: a real iPhone (Safari, normal Wi-Fi/cellular AND a restricted/UDP-blocked conference network) exercising the full attract->sign-in->mic->live-conversation->countdown->session-end flow, mic-error states, the UDP-blocked wall + hotspot recovery, no-access/killswitch gates, and iOS Reduce Motion + VoiceOver -- gate="blocking", NOT self-approved. It remains additionally blocked on the still-open Phase-4 IAM gap (voice task role lacks cross-table read on kmv-auth-electro). Next step is the orchestrator's phase-level verification/sign-off, not another plan.
 Also this session: 05-07 executed (a11y/liveRegions.ts shared announcer + reactive useReducedMotion hook + a11y.test.ts 6 tests; new responsive.css; tokens.css --sz-display mobile clamp; fixed two real bugs -- Countdown's per-second aria-live spam and Callback's total lack of any live region; Esc-dismiss on GateCard/MicError via new useVoiceSession.dismissMicError -- 1 task, 10 files, 85/85 total client-side tests pass, tsc/build clean). Checkpoint (real iPhone + restricted network, VoiceOver, Reduce Motion) deferred to post-deploy validation per orchestrator guidance, not self-approved -- this IS the consolidated pass every prior 05-0x checkpoint (05-03 PKCE round-trip, 05-04 live conversation, 05-05 countdown/HUD, 05-06 hostile-network/gate-copy/reconnect) has been folding into, additionally blocked on the still-open Phase-4 IAM gap (voice task role lacks cross-table read on kmv-auth-electro).
 Note: git guard is a harmless `rm -f` wrapper in ~/.zshrc (footgun-prevention) — avoid `rm -f`/`-r` in non-interactive shells (use plain `rm`), git itself is fine.
