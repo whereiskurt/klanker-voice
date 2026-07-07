@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { clearReturningUser, markReturningUser } from "../auth/returningStore";
 import { consumeStashedPkce } from "../auth/useAuth";
 import { exchangeCode } from "../auth/oidcClient";
 import { getOidcConfig } from "../config/oidc";
@@ -27,6 +28,16 @@ export default function Callback({ onAuthenticated }: CallbackProps) {
 
     async function run() {
       const params = new URLSearchParams(window.location.search);
+      const errorParam = params.get("error");
+      if (errorParam === "login_required" || errorParam === "interaction_required") {
+        // Silent SSO (Workstream A) found no live issuer session — expected
+        // "session expired", not a failure. Clear the breadcrumb so a
+        // signed-out device doesn't re-loop the silent attempt (T-05.2-01-D).
+        clearReturningUser();
+        if (!cancelled) { window.history.replaceState({}, "", "/"); onAuthenticated(); }
+        return;
+      }
+
       const code = params.get("code");
       const returnedState = params.get("state");
       const stashed = consumeStashedPkce();
@@ -42,6 +53,7 @@ export default function Callback({ onAuthenticated }: CallbackProps) {
           verifier: stashed.verifier,
         });
         setToken(accessToken);
+        markReturningUser();
         if (!cancelled) onAuthenticated();
       } catch {
         if (!cancelled) setError("Sign-in didn't complete. Please try again.");

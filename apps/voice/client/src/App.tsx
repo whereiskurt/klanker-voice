@@ -9,6 +9,7 @@ import ConnectingRetry from "./screens/ConnectingRetry";
 import UdpBlockedWall from "./screens/UdpBlockedWall";
 import SessionEnd from "./screens/SessionEnd";
 import OrbCanvas from "./orb/OrbCanvas";
+import { markReturningUser } from "./auth/returningStore";
 import { useAuth } from "./auth/useAuth";
 import { useVoiceSession } from "./transport/useVoiceSession";
 import GateCard from "./gates/GateCard";
@@ -46,6 +47,7 @@ export default function App() {
   };
 
   const handleAuthenticated = () => {
+    markReturningUser();
     auth.refresh();
     window.history.replaceState({}, "", "/");
     setOnCallbackRoute(false);
@@ -80,6 +82,17 @@ export default function App() {
   // boundary announcement isn't delayed by lazy DOM-node creation.
   useEffect(() => {
     ensureLiveRegions();
+  }, []);
+
+  // Slick-start Workstream A (CLNT-08): kick the guarded silent prompt=none
+  // SSO attempt once on initial load. attemptSilentSso is internally
+  // guarded (returning user AND not authenticated AND not already tried this
+  // load), so calling it unconditionally here is safe -- a first-time or
+  // already-authenticated visitor sees no navigation at all.
+  useEffect(() => {
+    void voice; // (keep existing hooks above)
+    void auth.attemptSilentSso();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Esc dismisses transient gate copy (UI-SPEC a11y baseline: "Esc
