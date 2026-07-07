@@ -185,6 +185,36 @@ Plans:
 
 **Waves:** 1 → {05-01, 05-02}; 2 → {05-03}; 3 → {05-04}; 4 → {05-05}; 5 → {05-06}; 6 → {05-07}
 
+### Phase 05.2: Slick Start — single-tap silent SSO + instant pre-rendered greeting (INSERTED)
+
+**Goal:** A returning user taps the mic once and immediately hears a warm, randomly-chosen KPH greeting while the WebRTC stream connects underneath — the session start feels like one slick tap, no visible sign-in bounce on the tap, and KPH never greets twice.
+**Mode:** mvp
+**Depends on**: Phase 5 (browser client)
+**Design spec**: docs/superpowers/specs/2026-07-06-slick-start-design.md
+**Implementation plan**: docs/superpowers/plans/2026-07-06-slick-start.md
+**Requirements**: CLNT-08 (auth), CLNT-01/02 (session start), PIPE-02 (greet-first), D-04/D-05 (auth/attract)
+**Success Criteria** (what must be TRUE):
+
+  1. A returning user (previously interactively signed in on this device) loads voice.klankermaker.ai, one silent top-level `prompt=none` SSO bounce completes during load, and their **first tap** goes straight to mic + connect — no sign-in redirect on the tap
+  2. A signed-out user loads to Attract instantly and does no silent attempt; a `login_required` from the silent bounce clears the breadcrumb and lands signed-out with no error UI
+  3. The instant a returning user taps, a random pre-rendered KPH greeting clip plays (unlocking iOS audio on the same gesture), masking the connect gap; the Live handoff waits until BOTH the clip has ended AND the transport is connected (no greeting/STT overlap)
+  4. Greeting clips are rendered from the `voice_id` configured in pipeline.toml (MP3, `eleven_flash_v2_5`); a CI drift guard fails if the clips were rendered from a different voice than currently shipped
+  5. Server `greet_first` is disabled on the WebRTC path (client owns the opener) so KPH does not greet twice; the console/local path is unaffected
+  6. No access token is ever persisted — Workstream A adds only a boolean `localStorage` breadcrumb + a `sessionStorage` per-load loop guard
+
+**Task 0 (prompt=none feasibility gate): VERIFIED GREEN 2026-07-06** — live issuer returns `303 → /callback?error=login_required` for `prompt=none` with no session (no login-page render); Workstream A is cleared to build.
+
+**Plans:** 4 plans
+
+**Waves:** 1 → {05.2-01, 05.2-02, 05.2-04}; 2 → {05.2-03}
+
+Plans:
+
+- [ ] 05.2-01-PLAN.md — Workstream A: single-tap silent SSO (breadcrumb, prompt=none, attemptSilentSso, login_required branch) [CLNT-08]
+- [ ] 05.2-02-PLAN.md — Workstream B: greeting source + render script + drift guard (key-gated render checkpoint) [CLNT-01, CLNT-02]
+- [ ] 05.2-03-PLAN.md — Workstream B: greeting player + deferred Live handoff (+ phase full-suite gate) [CLNT-01, CLNT-02]
+- [ ] 05.2-04-PLAN.md — Workstream B: server greet_first toggle + persona opening-move tweak [PIPE-02]
+
 ### Phase 05.1: Operator Admin Panel (INSERTED)
 
 **Goal**: The operator (KPH) can invite his dad + a few close friends (≤25 users) and glance at usage — a gated `/admin` section in the existing auth app showing users, sessions, minutes, quota trips, and code create/list/expire + kill-switch, so the first-look audience can be onboarded and watched without touching the CLI
