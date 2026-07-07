@@ -204,6 +204,8 @@ Plans:
 
 **Task 0 (prompt=none feasibility gate): VERIFIED GREEN 2026-07-06** — live issuer returns `303 → /callback?error=login_required` for `prompt=none` with no session (no login-page render); Workstream A is cleared to build.
 
+**Gap-closure (05.2-VERIFICATION.md, commit cfc7013):** phase verification found one reproducible, non-live bug against Success Criterion #2 — App.tsx's `handleAuthenticated` unconditionally re-marked the returning-user breadcrumb, undoing Callback.tsx's `clearReturningUser()` on the `login_required` safe-degrade path. Fixed via TDD (regression test proven RED then GREEN); 6/6 success criteria now verified at the code/behavior level. Live iPhone/Safari verification pass remains deferred, unchanged in scope.
+
 **Plans:** 4/4 plans complete
 
 **Waves:** 1 → {05.2-01, 05.2-02, 05.2-04}; 2 → {05.2-03}
