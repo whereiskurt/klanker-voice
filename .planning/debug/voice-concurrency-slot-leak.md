@@ -1,6 +1,6 @@
 ---
 slug: voice-concurrency-slot-leak
-status: fixing
+status: resolved
 created: 2026-07-07
 severity: high
 area: voice quota / session lifecycle (server) + client transport
@@ -107,6 +107,19 @@ verification: "New useVoiceSession.rejection.test.ts: (2b) `keeps a concurrency-
 files_changed:
   - "apps/voice/client/src/transport/useVoiceSession.ts (rejectedRef latch; OFFER_REJECTED dispatched immediately + latched; TRANSPORT_ERROR/DISCONNECTED swallowed post-rejection; latch reset in start()/stop())"
   - "apps/voice/client/src/transport/useVoiceSession.rejection.test.ts (new — 2a probe-stop regression lock, 2b terminal-rejection RED->GREEN)"
+
+## Resolution (BUG 3 — client UX: concurrency-limit renders the GateCard)
+
+root_cause: "The App render path for a typed start-gate rejection was already correct: App.tsx renders `<GateCard copy={gateMapping(error)} …>` whenever `voice.outcome.state === 'rejected'`, and `handleSessionEvent` dispatches `OFFER_REJECTED` immediately (NOT deferred behind the greeting handoff — only CONNECTED waits on `greetingEndedRef`). So the rejection reaches the reducer as `rejected` even while the greeting clip is still playing. The user-visible 'just the welcome, no clear gate / appears stuck' symptom was NOT a separate App bug — it was the downstream effect of BUG 2: the stray post-reject `TRANSPORT_ERROR` stomped `rejected` → `failed`, so App fell through to the retry spinner / UDP-blocked wall instead of the GateCard. Fixing BUG 2 (terminal rejection) restores the correct App render. Confirmed: reverting the BUG 2 guard turns the BUG 3 App test RED (GateCard replaced by the wall/retry path); with the guard, GREEN."
+
+fix: "No additional production code change required — BUG 2's `rejectedRef` terminal-rejection guard is what makes the App land on the GateCard. Added App.gate.test.tsx as the end-to-end regression lock (real App -> useVoiceSession -> connectionReducer -> gateMapping, only the leaf mic/transport/greeting seams mocked): (1) a concurrency-limit reject followed by the production stray transport error renders the concurrency GateCard copy ('You've got a conversation running already.' / 'End that one, then start again here.') with the 'Reconnect' CTA and NOT the UDP-blocked wall; (2) the gate renders immediately even while the greeting clip's `ended` promise is still pending, proving a rejection is not gated behind the greeting handoff."
+
+verification: "App.gate.test.tsx: 2 tests GREEN with the BUG 2 fix; test (1) verified RED when the BUG 2 guard is reverted (proves teeth). Full client suite: 106 passed (104 + 2 new), 0 regressions. tsc --noEmit clean."
+
+note_by_design: "Greeting-not-interruptible is BY DESIGN and was NOT changed: the pre-rendered greeting clip continues playing (speaker) while the GateCard is shown, and the pipeline does not listen (mic->STT) until clip-end + CONNECTED. The greeting resolves on its own within a few seconds; the GateCard is already visible, so the UX is not 'stuck'. Per the seed's explicit instruction, this was noted only, not fixed."
+
+files_changed:
+  - "apps/voice/client/src/App.gate.test.tsx (new — end-to-end BUG 3 regression lock; no production code change beyond BUG 2's guard)"
 
 ## Evidence (appended during confirmation)
 - checked: server.py release wiring (_start_and_run_tracked_session finally, _run_session transport handlers), session.py release/_reconnect_grace/on_transport_disconnected, quota.py release_heartbeat/count_active_heartbeats/_heartbeat_pk/_heartbeat_sk, record_tick renewal.
