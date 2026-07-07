@@ -16,8 +16,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import refresh_knowledge as rk  # noqa: E402  (sys.path shim above)
@@ -60,11 +58,35 @@ def test_read_manifest_only_includes_public_sources(tmp_path):
         public: true
 """,
     )
-    topics, refused = rk.read_manifest(manifest_path)
+    topics, refused = rk.read_manifest(manifest_path, base_dir=tmp_path)
     assert [t.id for t in topics] == ["demo"]
     assert len(topics[0].sources) == 1
-    assert topics[0].sources[0].path == Path("a.md")
+    assert topics[0].sources[0].path == tmp_path / "a.md"
     assert refused == []
+
+
+def test_read_manifest_resolves_relative_paths_against_repo_root_by_default(tmp_path):
+    """manifest.yaml's real relative paths (e.g. `apps/voice/knowledge/...`,
+    `.planning/phases/...`) are REPO-ROOT relative, not cwd- or
+    manifest-file-relative -- confirmed by their own path prefixes. The
+    default `base_dir` (no override) must resolve against `REPO_ROOT`, not
+    leave the path bare (a real bug this test pins: a bare relative path
+    silently "not found" against the wrong base directory)."""
+    manifest_path = _write_manifest(
+        tmp_path,
+        """\
+  - id: demo
+    spoken_name: "demo"
+    pack: demo.md
+    sources:
+      - path: apps/voice/knowledge/style/kurt-voice.md
+        kind: docs
+        public: true
+""",
+    )
+    topics, _refused = rk.read_manifest(manifest_path)
+    assert topics[0].sources[0].path == rk.REPO_ROOT / "apps/voice/knowledge/style/kurt-voice.md"
+    assert topics[0].sources[0].path.is_file()
 
 
 def test_manifest_public_false_is_refused(tmp_path):
