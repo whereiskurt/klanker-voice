@@ -40,6 +40,10 @@ def _write_knowledge_fixture(tmp_path: Path) -> None:
     (tmp_path / "knowledge" / "router").mkdir(parents=True, exist_ok=True)
     (tmp_path / "knowledge" / "topics").mkdir(parents=True, exist_ok=True)
     (tmp_path / "knowledge" / "style").mkdir(parents=True, exist_ok=True)
+    # 07-02: retrieval_enabled defaults True, so index_dir must exist (empty is
+    # fine -- RetrievalIndex/load_knowledge_config only require the dir, not
+    # any topic subdirs; a topic with no chunk files degrades gracefully).
+    (tmp_path / "knowledge" / "index").mkdir(parents=True, exist_ok=True)
 
     (tmp_path / "knowledge" / "manifest.yaml").write_text(
         """

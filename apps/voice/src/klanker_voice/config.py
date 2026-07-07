@@ -114,6 +114,13 @@ class KnowledgeConfig:
     packs_dir: Path  # resolved absolute dir; existence-checked at load
     style_path: Path  # resolved absolute path; existence-checked at load
     cache_floor: int = 4096  # D-13: Haiku 4.5's minimum cacheable prefix
+    # --- 07-02: local BM25/FTS5 retrieval (Amendment 3-A/B/C, PIPE-07) ---
+    index_dir: Path = Path("knowledge/index")  # resolved absolute dir; existence-checked when retrieval_enabled
+    retrieval_enabled: bool = True  # off -> router never queries; behavior == Plan 01 (07-01)
+    retrieval_top_k: int = 4  # top-k chunks injected into system[1] per deep turn
+    retrieval_budget: int = 1500  # approx-token cap on injected chunk text (D-13 cache_floor
+    # rename precedent: NOT named retrieval_max_tokens -- _CREDENTIAL_FIELD_RE rejects any
+    # field ending in _token(s) as credential-looking material)
 
 
 #: Default D-04 wind-down copy (QUOT-03, 04-05). Lives here — not in a code
@@ -365,12 +372,34 @@ def load_knowledge_config(path: Path | str | None = None) -> KnowledgeConfig:
         )
     )
 
+    # --- 07-02: local BM25/FTS5 retrieval (Amendment 3-A/B/C, PIPE-07) ---
+    retrieval_enabled = bool(knowledge_table.get("retrieval_enabled", True))
+    index_dir = _resolve_relative_to(
+        path.parent, str(knowledge_table.get("index_dir", "knowledge/index"))
+    )
+    if retrieval_enabled and not index_dir.is_dir():
+        raise ConfigError(f"knowledge index_dir not found: {index_dir}")
+    retrieval_top_k = int(
+        _require_positive_under(
+            "knowledge.retrieval_top_k", knowledge_table.get("retrieval_top_k", 4), 50.0
+        )
+    )
+    retrieval_budget = int(
+        _require_positive_under(
+            "knowledge.retrieval_budget", knowledge_table.get("retrieval_budget", 1500), 200000.0
+        )
+    )
+
     return KnowledgeConfig(
         manifest_path=manifest_path,
         topic_map_path=topic_map_path,
         packs_dir=packs_dir,
         style_path=style_path,
         cache_floor=cache_floor,
+        index_dir=index_dir,
+        retrieval_enabled=retrieval_enabled,
+        retrieval_top_k=retrieval_top_k,
+        retrieval_budget=retrieval_budget,
     )
 
 
