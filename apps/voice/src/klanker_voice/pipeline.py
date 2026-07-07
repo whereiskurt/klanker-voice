@@ -17,12 +17,17 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.processors.frameworks.rtvi import RTVIProcessor
 from pipecat.transports.base_transport import BaseTransport
 
-from klanker_voice.config import PipelineConfig
+from klanker_voice.config import KnowledgeConfig, PipelineConfig, load_knowledge_config
 from klanker_voice.factories import (
     build_llm,
     build_stt,
     build_tts,
     build_user_aggregator_params,
+)
+from klanker_voice.knowledge.prompt_assembly import (
+    apply_system_blocks,
+    build_system_blocks,
+    load_manifest,
 )
 
 
@@ -49,25 +54,49 @@ def load_persona(cfg: PipelineConfig) -> str:
 
 
 def build_pipeline(
-    cfg: PipelineConfig, transport: BaseTransport, *, rtvi: RTVIProcessor | None = None
+    cfg: PipelineConfig,
+    transport: BaseTransport,
+    *,
+    rtvi: RTVIProcessor | None = None,
+    knowledge_cfg: KnowledgeConfig | None = None,
 ) -> BuiltPipeline:
     """Assemble the canonical cascade pipeline from config.
-
-    Persona markdown from ``cfg.persona.prompt_path`` seeds the LLMContext
-    system message; the greeting instruction lives inside that prompt so copy
-    iterates without code changes (Pattern 6).
 
     ``rtvi`` (05-01, CLNT-03/04/06): when provided, the RTVIProcessor is
     placed immediately after ``transport.input()`` — the standard RTVI
     placement so it observes every upstream/downstream frame in the cascade.
     Optional so pipelines built without a live browser client (harness,
     console) are unaffected.
+
+    Phase 7 (D-13, Amendment 1): the persona system message is replaced by
+    the two-block cached system prompt (``build_system_blocks`` — persona +
+    Kurt STYLE layer + topic-map hooks in the cached block0, the manifest's
+    lead ``tour_priority`` topic's deep pack in block1). ``LLMContext`` no
+    longer carries an initial system message at all — its content now lives
+    on the LLM service's ``Settings.system_instruction`` (see
+    ``knowledge.prompt_assembly.apply_system_blocks`` for why: pipecat's own
+    ``LLMContext`` system-message path can't carry ``cache_control``
+    block-level markers through to the Anthropic API). The greet-first kick
+    (``GREET_KICK_MESSAGE``, a "developer"-role message) becomes the
+    context's first message instead — unaffected, since
+    ``AnthropicLLMAdapter._extract_initial_system`` only ever inspects a
+    "system"-role ``messages[0]``.
+
+    ``knowledge_cfg`` defaults to ``load_knowledge_config()`` (the checked-in
+    ``pipeline.toml``'s ``[knowledge]`` table) when not supplied, mirroring
+    how ``load_quota_config()`` is called independently elsewhere
+    (server.py/bot.py/console.py) — those callers need no change.
     """
     stt = build_stt(cfg)
     llm = build_llm(cfg)
     tts = build_tts(cfg)
 
-    context = LLMContext(messages=[{"role": "system", "content": load_persona(cfg)}])
+    knowledge_cfg = knowledge_cfg or load_knowledge_config()
+    manifest = load_manifest(knowledge_cfg)
+    initial_topic = manifest["tour_priority"][0]
+    apply_system_blocks(llm, build_system_blocks(cfg, knowledge_cfg, initial_topic))
+
+    context = LLMContext()
     aggregator_pair = LLMContextAggregatorPair(
         context,
         user_params=build_user_aggregator_params(cfg),
