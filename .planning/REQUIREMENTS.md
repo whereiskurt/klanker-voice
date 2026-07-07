@@ -14,6 +14,7 @@
 - [ ] **PIPE-05**: Latency harness measures per-stage and voice-to-voice ms from recorded audio, locally and against staging
 - [x] **PIPE-06**: Agent speaks as the KlankerMaker concierge (knows Kurt, klanker platform, defcon.run, repos) via a versioned markdown system prompt
 - [x] **PIPE-07**: Developer can run the full bot locally with only the three provider API keys
+- [x] **PIPE-10**: RAG/knowledge retrieval (promoted from v2-deferred in Phase 7: router + curated per-topic packs + local keyless SQLite FTS5/BM25 retrieval, Amendment 1/3)
 
 ### Browser Client
 
@@ -66,7 +67,6 @@
 - **PIPE-08**: Instant-acknowledgment latency masking — only if tuned typical latency lands >700ms
 - **CLNT-09**: TURN fallback for UDP-blocked networks — when measured failure rate justifies it
 - **PIPE-09**: Agent tool-calling — only with a latency-safe spoken-filler pattern
-- **PIPE-10**: RAG/knowledge retrieval — only if the persona outgrows prompt space
 
 ## Out of Scope
 
@@ -82,7 +82,7 @@
 
 ## Traceability
 
-Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
+Coverage: 38/38 v1 requirements mapped (PIPE-10 promoted from v2-deferred in Phase 7).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -93,6 +93,7 @@ Coverage: 37/37 v1 requirements mapped (roadmap created 2026-07-04).
 | PIPE-05 | Phase 1 | Pending |
 | PIPE-06 | Phase 1 | Complete |
 | PIPE-07 | Phase 1 | Complete |
+| PIPE-10 | Phase 7 | Complete |
 | CLNT-01 | Phase 5 | Complete |
 | CLNT-02 | Phase 5 | Complete |
 | CLNT-03 | Phase 5 | Complete |
