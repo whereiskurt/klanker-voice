@@ -12,9 +12,15 @@ text blocks:
   by :class:`klanker_voice.knowledge.router.KnowledgeRouterProcessor` on a
   genuine topic switch; never touches block0.
 
-``retrieved_chunks`` (07-02, local BM25 retrieval) and ``remaining_seconds``
-(07-05, time-aware pacing) are accepted-but-unused parameters here -- both
-future plans inject into block1 ONLY, never block0 (Amendment 3-C, D-13).
+``retrieved_chunks`` (07-02, local BM25 retrieval): when non-empty, a THIRD
+post-breakpoint block is appended -- the topic-scoped top-k chunks
+``klanker_voice.knowledge.router.KnowledgeRouterProcessor`` fetched from
+:class:`klanker_voice.knowledge.retrieval.RetrievalIndex` on a genuine deep
+turn. It never touches block0 or block1's text (Amendment 3-C, Pitfall 3);
+empty/None yields exactly the Plan-01 two-block shape.
+
+``remaining_seconds`` (07-05, time-aware pacing) is an accepted-but-unused
+parameter here -- that future plan injects into block1 ONLY as well.
 
 Wiring note (a genuine pipecat gap, not a shortcut): see
 :func:`apply_system_blocks` for why this two-block ``system`` array is set
@@ -33,6 +39,7 @@ from typing import Any
 import yaml
 
 from klanker_voice.config import KnowledgeConfig, PipelineConfig
+from klanker_voice.knowledge.retrieval import Chunk
 
 CacheControlBlock = dict[str, Any]
 
@@ -105,36 +112,52 @@ def load_topic_pack_text(knowledge_cfg: KnowledgeConfig, topic: str) -> str:
     return _read(pack_path)
 
 
+def render_retrieved_chunks(chunks: list[Chunk]) -> str:
+    """Render retrieved chunks with light source attribution KPH can cite
+    from -- narration framing, not a raw code/doc dump (Amendment 5's
+    retrieval-quality caveat: KPH should narrate, not read code aloud)."""
+    lines = ["## Retrieved detail (top matches from the full corpus -- ad-hoc depth)"]
+    for chunk in chunks:
+        heading_suffix = f" -- {chunk.heading}" if chunk.heading else ""
+        lines.append(f"\n### From {chunk.source_path}{heading_suffix}\n{chunk.text.strip()}")
+    return "\n".join(lines) + "\n"
+
+
 def build_system_blocks(
     cfg: PipelineConfig,
     knowledge_cfg: KnowledgeConfig,
     topic: str,
     *,
-    retrieved_chunks: list[str] | None = None,
+    retrieved_chunks: list[Chunk] | None = None,
     remaining_seconds: float | None = None,
 ) -> list[CacheControlBlock]:
-    """Build the two-block Anthropic ``system`` array for ``topic``.
+    """Build the Anthropic ``system`` array for ``topic``.
 
     Args:
         cfg: The pipeline config (persona path, llm model).
         knowledge_cfg: The ``[knowledge]`` config (manifest/topic-map/pack/
             style paths).
         topic: The manifest topic id to load into block1.
-        retrieved_chunks: Present-but-unused (07-02 fills retrieval injection
-            into block1 ONLY -- never block0).
+        retrieved_chunks: 07-02 local BM25 retrieval (Amendment 3-B/C) -- when
+            non-empty, a THIRD uncached, post-breakpoint block is appended
+            with these chunks, alongside (never replacing) the curated
+            block1 pack. Empty/None -> the Plan-01 two-block shape,
+            unchanged.
         remaining_seconds: Present-but-unused (07-05 fills time-aware pacing,
-            also into block1 ONLY).
+            also into a post-breakpoint block ONLY).
 
     Returns:
-        ``[block0, block1]`` -- block0 carries ``cache_control: ephemeral``,
-        block1 does not.
+        ``[block0, block1]`` when no chunks are retrieved (block0 carries
+        ``cache_control: ephemeral``, block1 does not); ``[block0, block1,
+        block2]`` when chunks are present -- block2 also carries no
+        ``cache_control`` (it is per-turn dynamic, Pitfall 3).
     """
-    del retrieved_chunks, remaining_seconds  # 07-02 / 07-05 seams; unused here
+    del remaining_seconds  # 07-05 seam; unused here
 
     stable_prefix = build_stable_prefix_text(cfg, knowledge_cfg)
     pack_text = load_topic_pack_text(knowledge_cfg, topic)
 
-    return [
+    blocks: list[CacheControlBlock] = [
         {
             "type": "text",
             "text": stable_prefix,
@@ -145,6 +168,16 @@ def build_system_blocks(
             "text": pack_text,
         },
     ]
+
+    if retrieved_chunks:
+        blocks.append(
+            {
+                "type": "text",
+                "text": render_retrieved_chunks(retrieved_chunks),
+            }
+        )
+
+    return blocks
 
 
 def apply_system_blocks(llm: Any, blocks: list[CacheControlBlock]) -> None:

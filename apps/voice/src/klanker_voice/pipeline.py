@@ -29,6 +29,7 @@ from klanker_voice.knowledge.prompt_assembly import (
     build_system_blocks,
     load_manifest,
 )
+from klanker_voice.knowledge.retrieval import RetrievalIndex
 from klanker_voice.knowledge.router import KnowledgeRouterProcessor
 
 
@@ -93,6 +94,13 @@ def build_pipeline(
     point, before the transcription reaches ``LLMContextAggregatorPair``. It
     classifies each finalized transcription, swaps block1 on a genuine topic
     switch, and fires the "let's dig into it" ack — never touching block0.
+
+    07-02 (Amendment 3-B/G): one ``RetrievalIndex`` is constructed here, once
+    per session, and reused across every turn (never rebuilt per turn — the
+    per-topic FTS5 connection it lazily builds on first query stays cached
+    for the life of the session). It's handed to ``KnowledgeRouterProcessor``,
+    which queries it on the same deep-turn condition that fires the ack, so
+    the local BM25 query's cost is ack-masked.
     """
     stt = build_stt(cfg)
     llm = build_llm(cfg)
@@ -110,11 +118,14 @@ def build_pipeline(
     )
     user_aggregator, assistant_aggregator = aggregator_pair.user(), aggregator_pair.assistant()
 
+    retrieval_index = RetrievalIndex(knowledge_cfg) if knowledge_cfg.retrieval_enabled else None
+
     router = KnowledgeRouterProcessor(
         cfg=cfg,
         knowledge_cfg=knowledge_cfg,
         llm=llm,
         initial_topic=initial_topic,
+        retrieval_index=retrieval_index,
     )
 
     processors = [transport.input()]

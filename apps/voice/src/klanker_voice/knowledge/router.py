@@ -13,6 +13,17 @@ pattern) and swaps block1 on the live LLM service to the new topic's deep
 pack -- block0 is never touched (Pitfall 3). Same-topic follow-ups and
 shallow one-liners the stable prefix can already answer never trigger the
 ack (Pitfall 2) and never swap the pack.
+
+07-02 (Amendment 3-B/G): on that SAME genuine deep-turn switch -- never on a
+shallow one-liner or same-topic follow-up -- this processor also queries a
+:class:`klanker_voice.knowledge.retrieval.RetrievalIndex` (when one is
+supplied and ``knowledge_cfg.retrieval_enabled``) for the newly-switched
+topic and passes the returned chunks into
+:func:`klanker_voice.knowledge.prompt_assembly.build_system_blocks`'s
+``retrieved_chunks``. The query is local (tens of ms) and happens exactly
+where the ack is already firing, so its cost is ack-masked -- no new network
+hop before the ack (Amendment 3-G). ``retrieval_index=None`` (the default)
+reproduces Plan 01's behavior unchanged.
 """
 
 from __future__ import annotations
@@ -30,6 +41,7 @@ from klanker_voice.knowledge.prompt_assembly import (
     build_system_blocks,
     load_topic_map,
 )
+from klanker_voice.knowledge.retrieval import RetrievalIndex
 
 #: Default ack template (Amendment 1's "OK! Let's dig into it."). Rendered
 #: with the switched-to topic's spoken_name; fires ONLY on a genuine
@@ -140,6 +152,7 @@ class KnowledgeRouterProcessor(FrameProcessor):
         initial_topic: str,
         fallback_classify: FallbackClassifier | None = None,
         ack_template: str = DEFAULT_ACK_TEMPLATE,
+        retrieval_index: RetrievalIndex | None = None,
     ) -> None:
         super().__init__()
         self._cfg = cfg
@@ -149,6 +162,7 @@ class KnowledgeRouterProcessor(FrameProcessor):
         self._active_topic = initial_topic
         self._fallback_classify = fallback_classify or default_haiku_fallback_classify
         self._ack_template = ack_template
+        self._retrieval_index = retrieval_index
 
     def _spoken_name(self, topic_id: str) -> str:
         for topic in self._topic_map.get("topics", []):
@@ -181,7 +195,26 @@ class KnowledgeRouterProcessor(FrameProcessor):
             return
 
         self._active_topic = topic_id
-        blocks = build_system_blocks(self._cfg, self._knowledge_cfg, topic_id)
+
+        retrieved_chunks = None
+        if self._retrieval_index is not None and self._knowledge_cfg.retrieval_enabled:
+            # Local (tens of ms), topic-scoped (Amendment 3-B) BM25 query --
+            # fired on the exact same deep-turn condition as the ack below,
+            # so its cost is ack-masked (Amendment 3-G). A topic with no
+            # built index returns [] (graceful degrade, never a crash).
+            retrieved_chunks = (
+                self._retrieval_index.query(
+                    topic_id,
+                    utterance,
+                    top_k=self._knowledge_cfg.retrieval_top_k,
+                    max_tokens=self._knowledge_cfg.retrieval_budget,
+                )
+                or None
+            )
+
+        blocks = build_system_blocks(
+            self._cfg, self._knowledge_cfg, topic_id, retrieved_chunks=retrieved_chunks
+        )
         apply_system_blocks(self._llm, blocks)
 
         ack_text = self._ack_template.format(spoken_name=self._spoken_name(topic_id))

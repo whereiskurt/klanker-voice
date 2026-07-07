@@ -1,0 +1,61 @@
+# kph_retrieval_km: proves local BM25 retrieval surfaces real km DEPTH the
+# curated knowledge/topics/klanker-maker.md pack does NOT contain (Phase 7,
+# 07-02, Amendment 3, ROADMAP success criterion 2 -- "depth from full repo
+# content"). The question targets km's Phase 121 "action quotas / freeze
+# quarantine" feature -- present in knowledge/index/klanker-maker/docs.jsonl
+# (chunked from km's real docs/action-quotas.md and RELEASE-HIGHLIGHTS.md)
+# but absent from the curated pack (see
+# tests/test_knowledge_retrieval.py::test_km_index_surfaces_long_tail_detail_absent_from_curated_pack).
+#
+# Same shape as scenarios/kph_knowledge_km.yaml / memory.yaml: greeting-observe
+# first turn (K greets first per D-04), then a scripted long-tail question,
+# judged via the existing judge_factory (klanker_voice.harness.judge) -- no
+# harness code change needed.
+#
+# LIVE run (needs a real ANTHROPIC_API_KEY + the pipecat-ai[evals,local]
+# extra installed -- see 07-01-SUMMARY.md's "Not exercised" note, same
+# blocker):
+#   uv run python bot.py -t eval   # one terminal
+#   uv run pipecat eval run scenarios/kph_retrieval_km.yaml --bot-url ws://localhost:7860
+
+name: kph_retrieval_km
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: "klanker_voice.harness.judge.judge_factory"
+turns:
+  # K greets first in audio mode (D-04) -- just observe it.
+  - expect:
+      - event: tts_response
+  - user: "Tell me about klanker maker."
+    expect:
+      - event: response
+  - user: >-
+      Here's a specific one: what happens to a klanker-maker sandbox when it
+      trips an action quota with the freeze policy? What's the actual
+      mechanism?
+    expect:
+      - event: response
+        eval: >-
+          Answer yes if the reply describes klanker-maker's action-quota
+          "freeze" mechanism with real specificity beyond a generic "it gets
+          shut down" -- for example mentioning that the sandbox gets latched
+          or locked into a frozen/quarantine state (accept "frozen",
+          "quarantined", "locked out", or similar), that it keeps running but
+          can no longer take outbound actions (posting to Slack, opening
+          GitHub PRs, sending email, etc.), and/or that an operator has to
+          release or unlock it. This is real depth from the full km docs
+          corpus (Phase 121 action quotas / freeze quarantine), NOT in the
+          short curated summary -- so a generic non-answer ("I don't have
+          details on that") or a reply that only repeats the high-level
+          budget-enforcement description (spend caps, 80%/100% Bedrock
+          revocation) without engaging the freeze/quarantine mechanism itself
+          should be marked no. Accept close speech-to-text renderings of
+          "klanker maker" / "clanker maker".
