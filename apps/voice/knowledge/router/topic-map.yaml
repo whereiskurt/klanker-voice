@@ -60,6 +60,85 @@ topics:
       - term: "agent runtime"
         weight: 1
 
-  # defcon-run-34, meshtk: candidate next topics (Amendment 1/5). Appending
-  # a new entry here (id + spoken_name + hook + keywords) plus a matching
-  # manifest.yaml topic is the whole 07-03 job -- this schema does not change.
+  - id: defcon-run-34
+    spoken_name: "DEFCON dot run, thirty-four"
+    hook: >-
+      Kurt's DEF CON Run community platform -- sign up, plan Las Vegas run
+      routes in a real GPX editor, GPS check in, and flash a Meshtastic
+      radio, all from a multi-region AWS webapp.
+    keywords:
+      - term: "defcon dot run"
+        weight: 3
+      - term: "defcon.run"
+        weight: 3
+      - term: "defcon run"
+        weight: 3
+      - term: "def con run"
+        weight: 3
+      - term: "defcon.run.34"
+        weight: 3
+      - term: "thirty four"          # spoken "thirty-four" edition name
+        weight: 1
+      - term: "run auth"
+        weight: 2
+      - term: "run.auth"
+        weight: 2
+      - term: "run.human"
+        weight: 2
+      - term: "run.gpx"
+        weight: 2
+      - term: "gpx editor"
+        weight: 2
+      - term: "meshtastic flasher"
+        weight: 2
+      - term: "race bib"
+        weight: 2
+      - term: "check in"
+        weight: 1
+      - term: "gps check"
+        weight: 1
+      - term: "multi region"
+        weight: 1
+      - term: "cloudfront"
+        weight: 1
+      - term: "waffaw"
+        weight: 2
+
+  - id: meshtk
+    spoken_name: "mesh T K, the meshtastic toolkit"
+    hook: >-
+      Kurt's Go toolkit for virtual Meshtastic nodes -- software-only mesh
+      radios over MQTT, a fleet simulator, and a packet-inspecting security
+      proxy, running live at DEF CON in support of defcon.run.
+    keywords:
+      - term: "mesh tk"
+        weight: 3
+      - term: "meshtk"
+        weight: 3
+      - term: "mesh t k"
+        weight: 3
+      - term: "meshtastic toolkit"
+        weight: 3
+      - term: "meshtastic"
+        weight: 2
+      - term: "mesh radio"
+        weight: 2
+      - term: "virtual node"
+        weight: 2
+      - term: "ghost fleet"
+        weight: 2
+      - term: "mqtt broker"
+        weight: 2
+      - term: "meshmap"
+        weight: 2
+      - term: "mesh network"
+        weight: 1
+      # NOTE (Pitfall 1, RESEARCH): "toolkit" alone is deliberately NOT a
+      # keyword here -- it is generic-enough (any dev-tools question) that
+      # keying on it would over-trigger a meshtk classification on an
+      # unrelated "toolkit" utterance. Only the distinctive multi-word forms
+      # above ("mesh tk", "meshtastic toolkit", etc.) count.
+
+  # klanker-voice (self) and any further topics: append the same shape here
+  # plus a matching manifest.yaml topic (Amendment 1/5) -- this schema does
+  # not change.

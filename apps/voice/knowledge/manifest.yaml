@@ -24,6 +24,8 @@ version: 1
 
 tour_priority:
   - klanker-maker
+  - defcon-run-34
+  - meshtk
 
 topics:
   - id: klanker-maker
@@ -65,6 +67,68 @@ topics:
           Already-curated digest (hook + long version + sample Q->A +
           do-not-say) promoted directly into the pack -- see 07-01.
 
-  # defcon-run-34, meshtk: candidate next topics (Amendment 1/5). Add entries
-  # here (+ a matching router/topic-map.yaml entry) once their packs land --
-  # this file's shape does not change, only APPEND (07-03).
+  - id: defcon-run-34
+    spoken_name: "DEFCON dot run, thirty-four"
+    pack: defcon-run-34.md
+    sources:
+      - path: /Users/khundeck/working/defcon.run.34/infra/terraform
+        kind: code
+        skip_if_missing: true
+        note: >-
+          doc-gen then index (Amendment 3.D/5): defcon.run.34 is "really the
+          code" -- 07-04's refresh indexes infra/terraform/live (deployed
+          "services") + modules/ + providers/ directly as code (Amendment 5;
+          the earlier grill-with-docs generated-docs step was dropped).
+      - path: /Users/khundeck/working/defcon.run.34/apps
+        kind: code
+        skip_if_missing: true
+        note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
+      - path: apps/voice/knowledge/transcripts/normalized/right.literally.the.instance.clean.md
+        kind: transcript
+      - path: apps/voice/knowledge/transcripts/normalized/irsa.clean.md
+        kind: transcript
+      - path: .planning/phases/07-kph-knowledge-base/corpus/defcon-run-34-digest.md
+        kind: docs
+        note: >-
+          Already-curated digest (hook + long version + sample Q->A +
+          do-not-say) promoted directly into the pack -- see 07-03. An
+          incoming ~1hr defcon.run.34 audio recording (Amendment 5) will
+          deepen this topic on a future refresh run; not a planning
+          dependency for this plan.
+
+  - id: meshtk
+    spoken_name: "mesh T K, the meshtastic toolkit"
+    pack: meshtk.md
+    sources:
+      - path: /Users/khundeck/working/meshtk/README.md
+        kind: docs
+        skip_if_missing: true
+        note: "README primary source (Amendment 5)."
+      - path: /Users/khundeck/working/meshtk/cmd
+        kind: code
+        skip_if_missing: true
+        note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
+      - path: /Users/khundeck/working/meshtk/internal
+        kind: code
+        skip_if_missing: true
+        note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
+      - path: /Users/khundeck/working/meshtk/pkg
+        kind: code
+        skip_if_missing: true
+        note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
+      - path: /Users/khundeck/working/meshtk/protos
+        kind: code
+        skip_if_missing: true
+        note: doc-gen then index (Amendment 3.D/5); indexed as code, no doc-gen step.
+      - path: apps/voice/knowledge/transcripts/normalized/alrighty.clean.md
+        kind: transcript
+      - path: .planning/phases/07-kph-knowledge-base/corpus/meshtk-digest.md
+        kind: docs
+        note: >-
+          Already-curated digest (hook + long version + sample Q->A +
+          do-not-say) promoted directly into the pack -- see 07-03.
+
+  # klanker-voice (self): candidate next topic (Amendment 3-D: fed by Phase
+  # 8's own docs/architecture work). Append an entry here (+ a matching
+  # router/topic-map.yaml entry) once its pack lands -- this file's shape
+  # does not change, only APPEND.
