@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock useAuth + useVoiceSession so we can drive the flow deterministically.
@@ -49,10 +49,16 @@ describe("App linear flow", () => {
     expect(auth.beginSignIn).toHaveBeenCalled();
   });
 
-  it("authenticated + idle shows ReadyToStart", () => {
+  it("authenticated + idle shows ReadyToStart", async () => {
     auth.isAuthenticated = true;
     render(<App />);
     expect(screen.getByRole("button", { name: /let's start talking/i })).toBeInTheDocument();
+    // Flush the land effect's microtasks (attemptSilentSso resolves, then the
+    // auth.isAuthenticated guard is checked) — an authenticated arrival must
+    // never fire the forced interactive redirect (split-brain auth regression).
+    await act(async () => {});
+    expect(auth.beginSignIn).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("kmv_interactive_tried")).toBeNull();
   });
 
   it("connecting shows the ceremony, not Ready", () => {

@@ -16,7 +16,6 @@ import { useAuth } from "./auth/useAuth";
 import { useVoiceSession } from "./transport/useVoiceSession";
 import { resolveScreen } from "./flow/resolveScreen";
 import { decideLandAction } from "./flow/landDecision";
-import { isAuthenticated as tokenIsAuthenticated } from "./auth/tokenStore";
 import { isReturningUser, wasSilentTried, markInteractiveTried, wasInteractiveTried } from "./auth/returningStore";
 
 /** Matches auth.py's NO_ACCESS_TIER_ID default — the no-access gate trigger (D-13). */
@@ -59,7 +58,7 @@ export default function App() {
     (async () => {
       await auth.attemptSilentSso();
       if (cancelled) return;
-      if (!tokenIsAuthenticated() && !onCallbackRoute) {
+      if (!auth.isAuthenticated && !onCallbackRoute) {
         const action = decideLandAction({
           isReturning: isReturningUser(),
           silentTried: wasSilentTried(),
