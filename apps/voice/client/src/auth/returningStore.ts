@@ -23,3 +23,18 @@ export function markSilentTried(): void {
 export function wasSilentTried(): boolean {
   try { return sessionStorage.getItem(SILENT_TRIED_KEY) === "1"; } catch { return false; }
 }
+
+/**
+ * One-shot guard for the forced-auth bounce (voice-flow-redesign §3.1). Set
+ * when the app auto-fires a FULL interactive redirect. If the user returns
+ * still unauthenticated (they bailed at auth), the app shows a manual "Sign
+ * in" nudge instead of auto-redirecting again — no redirect storm.
+ */
+const INTERACTIVE_TRIED_KEY = "kmv_interactive_tried";
+
+export function markInteractiveTried(): void {
+  try { sessionStorage.setItem(INTERACTIVE_TRIED_KEY, "1"); } catch { /* no-op */ }
+}
+export function wasInteractiveTried(): boolean {
+  try { return sessionStorage.getItem(INTERACTIVE_TRIED_KEY) === "1"; } catch { return false; }
+}

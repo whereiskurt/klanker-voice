@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   markReturningUser, isReturningUser, clearReturningUser,
   markSilentTried, wasSilentTried,
+  markInteractiveTried, wasInteractiveTried,
 } from "./returningStore";
 
 afterEach(() => {
@@ -35,5 +36,13 @@ describe("silent-tried per-load guard", () => {
     markSilentTried();
     expect(sessionStorage.getItem("kmv_silent_tried")).toBe("1");
     expect(localStorage.getItem("kmv_silent_tried")).toBeNull();
+  });
+});
+
+describe("interactive-redirect guard", () => {
+  it("defaults to false and latches true once marked", () => {
+    expect(wasInteractiveTried()).toBe(false);
+    markInteractiveTried();
+    expect(wasInteractiveTried()).toBe(true);
   });
 });
