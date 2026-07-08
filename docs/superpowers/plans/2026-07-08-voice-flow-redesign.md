@@ -648,15 +648,24 @@ describe("Ceremony", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("advances through the scripted lines and fires onScriptDone once at the end", () => {
+  it("advances through the scripted lines and fires onScriptDone once at the end", async () => {
     const onScriptDone = vi.fn();
     render(<Ceremony onScriptDone={onScriptDone} />);
     expect(screen.getByTestId("ceremony-line")).toHaveTextContent(CEREMONY_SCRIPT[0].line);
 
-    act(() => vi.advanceTimersByTime(LINE_MS));
-    expect(screen.getByTestId("ceremony-line")).toHaveTextContent(CEREMONY_SCRIPT[1].line);
+    // Each scripted line's timer is scheduled by the PREVIOUS line's React
+    // state update (a cascade). `advanceTimersByTimeAsync` flushes the
+    // microtask/state-update queue between timers, so the next setTimeout is
+    // scheduled before we advance again — a plain synchronous
+    // `advanceTimersByTime(LINE_MS * n)` only fires the first timer and stalls.
+    // Advance one LINE_MS at a time inside an awaited act().
+    for (let i = 1; i < CEREMONY_SCRIPT.length; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(LINE_MS); });
+      expect(screen.getByTestId("ceremony-line")).toHaveTextContent(CEREMONY_SCRIPT[i].line);
+    }
 
-    act(() => vi.advanceTimersByTime(LINE_MS * CEREMONY_SCRIPT.length));
+    // The final line schedules onScriptDone one LINE_MS later.
+    await act(async () => { await vi.advanceTimersByTimeAsync(LINE_MS); });
     expect(onScriptDone).toHaveBeenCalledTimes(1);
     // Holds on the final line after finishing (does not blank out).
     expect(screen.getByTestId("ceremony-line")).toHaveTextContent(CEREMONY_SCRIPT[CEREMONY_SCRIPT.length - 1].line);
@@ -690,7 +699,7 @@ export const LINE_MS = 850;
 
 ```tsx
 // src/screens/Ceremony.tsx
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import OrbCanvas from "../orb/OrbCanvas";
 import { CEREMONY_SCRIPT, LINE_MS } from "./ceremonyScript";
 import "./ceremony.css";
@@ -1447,7 +1456,7 @@ Expected: FAIL — App still renders the old Attract cascade / lacks the land ef
 Rewrite `src/App.tsx` around `resolveScreen`. Key pieces:
 
 ```tsx
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ensureLiveRegions } from "./a11y/liveRegions";
 import Callback from "./screens/Callback";
 import NoAccessGate from "./screens/NoAccessGate";
@@ -1508,6 +1517,13 @@ export default function App() {
     setCeremonyDone(false);
     void voice.start();
   };
+
+  // Stable identity REQUIRED: Ceremony's effect deps include onScriptDone, so
+  // an inline arrow (new identity each render) would re-run the effect after
+  // it fires and re-schedule the onScriptDone timer while Ceremony stays
+  // mounted (slow connect). useCallback keeps it referentially stable so it
+  // fires exactly once. setCeremonyDone from useState is already stable.
+  const handleScriptDone = useCallback(() => setCeremonyDone(true), []);
 
   const handleAuthenticated = () => {
     auth.refresh();
@@ -1576,7 +1592,7 @@ export default function App() {
     case "udp-wall":
       return withStage(<UdpBlockedWall onTryAgain={voice.retryNow} />);
     case "ceremony":
-      return <div className="stage"><Ceremony onScriptDone={() => setCeremonyDone(true)} /></div>;
+      return <div className="stage"><Ceremony onScriptDone={handleScriptDone} /></div>;
     case "live":
       return <div className="stage"><Live client={voice.client!} sessionMaxSeconds={voice.sessionMaxSeconds} onEndChat={() => void voice.endChat()} /></div>;
     case "ready":
