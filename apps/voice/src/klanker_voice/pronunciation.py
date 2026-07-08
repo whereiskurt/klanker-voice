@@ -23,12 +23,24 @@ from typing import Any
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 
 #: Ordered (pattern, spoken) rules. Order matters: earlier rules win on overlap,
-#: so the ``defcon.run`` phrase is normalized before the bare ``defcon`` rule.
+#: so the ``defcon.run.34`` phrase is normalized before ``defcon.run``, which is
+#: normalized before the bare ``defcon`` rule; and ``km CLI`` is normalized
+#: before the bare ``km`` and ``CLI`` rules (otherwise "km CLI" would come out
+#: as the robotic "klanker maker see elle eye" instead of "klanker maker tool").
 _RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bdef\s*con\.run\.34\b", re.IGNORECASE), "deaf con run thirty four"),
     (re.compile(r"\bdef\s*con\.run\b", re.IGNORECASE), "deaf con run"),
     (re.compile(r"\bmesh\s*tk\b", re.IGNORECASE), "Mesh Tee Kay"),
+    (re.compile(r"\btiogo\b", re.IGNORECASE), "tee oh go"),
+    # kvmlab before the bare kvm rule so "kvmlab" -> "kay vee em lab", not
+    # "kay vee em lab" via two passes leaving a stray "lab".
+    (re.compile(r"\bkvmlab\b", re.IGNORECASE), "kay vee em lab"),
+    (re.compile(r"\bkvm\b", re.IGNORECASE), "kay vee em"),
+    # "the klanker maker tool" -- no leading article in the replacement so the
+    # sentence's own "the"/"a" composes ("the km CLI" -> "the klanker maker tool").
+    (re.compile(r"\bkm\s*CLI\b", re.IGNORECASE), "klanker maker tool"),
     (re.compile(r"\bdef\s*con\b", re.IGNORECASE), "deaf con"),
-    (re.compile(r"\bkm\b", re.IGNORECASE), "kay em"),
+    (re.compile(r"\bkm\b", re.IGNORECASE), "klanker maker"),
     (re.compile(r"\bCLI\b", re.IGNORECASE), "see elle eye"),
     (re.compile(r"\bGuelph\b", re.IGNORECASE), "Gwelf"),
 ]

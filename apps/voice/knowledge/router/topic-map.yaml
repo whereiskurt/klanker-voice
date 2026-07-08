@@ -139,6 +139,78 @@ topics:
       # unrelated "toolkit" utterance. Only the distinctive multi-word forms
       # above ("mesh tk", "meshtastic toolkit", etc.) count.
 
+  - id: tiogo
+    spoken_name: "tiogo, Kurt's Tenable tool"
+    hook: >-
+      Kurt's open-source Go command-line tool for Tenable dot I O -- run as
+      tio, it pulls vulnerabilities, assets, and scan results out of the cloud
+      vulnerability scanner as CSV or JSON for SIEM and SOAR pipelines, with a
+      clever local caching proxy. An older standalone project, the earliest
+      public ancestor of his km/kv CLI style.
+    keywords:
+      - term: "tiogo"
+        weight: 3
+      - term: "tio go"
+        weight: 3
+      - term: "tenable"
+        weight: 3
+      - term: "tenable io"
+        weight: 3
+      - term: "tenable.io"
+        weight: 3
+      - term: "tio cli"
+        weight: 2
+      - term: "vulnerability management"
+        weight: 2
+      - term: "nessus"
+        weight: 2
+      - term: "vuln export"
+        weight: 2
+      - term: "siem"
+        weight: 1
+      - term: "vulnerability scan"
+        weight: 1
+      - term: " tio "
+        weight: 1                    # weak alone -- also a common word/name
+      - term: "vulnerabilities"
+        weight: 1
+
+  - id: kvmlab
+    spoken_name: "kvmlab, Kurt's home security lab"
+    hook: >-
+      Kurt's pre-klanker home security lab -- a single Linux KVM host wired with
+      Open vSwitch into a double-firewall design, isolating malware and
+      offensive-security experiments two firewall hops from his home network,
+      with Kali, FLARE, Whonix, and Splunk boxes on separated "combat" and
+      management networks.
+    keywords:
+      - term: "kvmlab"
+        weight: 3
+      - term: "kvm lab"
+        weight: 3
+      - term: "combat lab"
+        weight: 3
+      - term: "malware lab"
+        weight: 3
+      - term: "double firewall"
+        weight: 3
+      - term: "combat network"
+        weight: 2
+      - term: "pfsense"
+        weight: 2
+      - term: "open vswitch"
+        weight: 2
+      - term: "whonix"
+        weight: 2
+      - term: "flare vm"
+        weight: 2
+      - term: "home lab"
+        weight: 1
+      - term: "homelab"
+        weight: 1
+      - term: " kvm "
+        weight: 1                    # weak alone -- generic virtualization term
+
   # klanker-voice (self) and any further topics: append the same shape here
   # plus a matching manifest.yaml topic (Amendment 1/5) -- this schema does
   # not change.

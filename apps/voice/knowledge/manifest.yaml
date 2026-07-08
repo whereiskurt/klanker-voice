@@ -160,6 +160,46 @@ topics:
           Already-curated digest (hook + long version + sample Q->A +
           do-not-say) promoted directly into the pack -- see 07-03.
 
+  - id: tiogo
+    spoken_name: "tiogo, Kurt's Tenable tool"
+    pack: tiogo.md
+    sources:
+      - path: https://github.com/whereiskurt/tiogo
+        kind: code
+        public: true
+        skip_if_missing: true
+        note: >-
+          Public GitHub repo; not cloned locally on every machine, so
+          skip_if_missing. The curated digest below is the primary pack source.
+      - path: .planning/phases/07-kph-knowledge-base/corpus/tiogo-digest.md
+        kind: docs
+        public: true
+        note: >-
+          Already-curated digest (hook + long version + sample Q->A +
+          do-not-say) promoted directly into the pack.
+
+  - id: kvmlab
+    spoken_name: "kvmlab, Kurt's home security lab"
+    pack: kvmlab.md
+    sources:
+      - path: /Users/khundeck/working/backup-maker/clones/kvmlab
+        kind: code
+        public: true
+        skip_if_missing: true
+        note: >-
+          Local clone of the public github.com/whereiskurt/kvmlab repo (build
+          script + pfSense XML configs + draw.io diagram). skip_if_missing so
+          refresh degrades on a machine without the clone; the curated digest
+          below is the primary pack source. NOTE: the pfSense XMLs embed private
+          key material + password hashes -- do-not-say scrubbing is mandatory.
+      - path: .planning/phases/07-kph-knowledge-base/corpus/kvmlab-digest.md
+        kind: docs
+        public: true
+        note: >-
+          Already-curated digest (hook + long version + sample Q->A +
+          do-not-say) promoted directly into the pack; topology confirmed
+          against the repo's Virtual Lab Design (KVM).png diagram.
+
   # klanker-voice (self): candidate next topic (Amendment 3-D: fed by Phase
   # 8's own docs/architecture work). Append an entry here (+ a matching
   # router/topic-map.yaml entry) once its pack lands -- this file's shape

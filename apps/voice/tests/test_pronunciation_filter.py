@@ -29,17 +29,39 @@ async def test_bare_defcon_and_def_con_space():
 
 
 async def test_km_standalone():
-    assert await _f("run km now") == "run kay em now"
+    assert await _f("run km now") == "run klanker maker now"
 
 
 async def test_km_possessive_kept():
-    assert await _f("km's config") == "kay em's config"
+    assert await _f("km's config") == "klanker maker's config"
 
 
 async def test_km_not_matched_inside_larger_tokens():
     # kmv (sibling CLI) and 10km must NOT be rewritten by the km rule.
     assert await _f("kmv sandbox") == "kmv sandbox"
     assert await _f("a 10km run") == "a 10km run"
+
+
+async def test_km_cli_expands_to_klanker_maker_tool():
+    # "km CLI" must fire the combined rule BEFORE the bare km/CLI rules -- the
+    # sentence's own article composes with the article-less replacement.
+    assert await _f("the km CLI is great") == "the klanker maker tool is great"
+    assert await _f("kmCLI") == "klanker maker tool"
+
+
+async def test_defcon_run_34_says_thirty_four():
+    # The .34 suffix must be spoken, not mangled into "DEFCON-er-one".
+    assert await _f("deployed on defcon.run.34") == "deployed on deaf con run thirty four"
+
+
+async def test_tiogo_spelled_out():
+    assert await _f("tell me about tiogo") == "tell me about tee oh go"
+
+
+async def test_kvmlab_and_kvm_spelled_out():
+    # kvmlab must fire before the bare kvm rule (no stray "lab").
+    assert await _f("the kvmlab design") == "the kay vee em lab design"
+    assert await _f("a kvm host") == "a kay vee em host"
 
 
 async def test_cli_spelled_out():
@@ -51,7 +73,7 @@ async def test_guelph_spelled_out():
 
 
 async def test_multiple_terms_in_one_utterance():
-    assert await _f("km and meshtk") == "kay em and Mesh Tee Kay"
+    assert await _f("km and meshtk") == "klanker maker and Mesh Tee Kay"
 
 
 async def test_passthrough_when_no_terms():
