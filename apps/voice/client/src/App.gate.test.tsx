@@ -26,8 +26,8 @@ const CONCURRENCY_REJECTION: OfferRejection = {
 };
 
 /** A minimal well-formed JWT carrying a real (non-"no-access") tier, so
- * useAuth reports authenticated and "Tap to talk" routes into voice.start()
- * rather than the sign-in redirect. */
+ * useAuth reports authenticated and the ReadyToStart CTA routes into
+ * voice.start() rather than the land/sign-in redirect. */
 function authenticateAsPaidTier(): void {
   const payload = { "https://klankermaker.ai/tier_id": "paid" };
   const base64 = btoa(JSON.stringify(payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -80,7 +80,7 @@ describe("App — concurrency-limit renders the GateCard (BUG 3)", () => {
 
     render(<App />);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+      fireEvent.click(screen.getByRole("button", { name: /let's start talking/i }));
     });
 
     await waitFor(() =>
@@ -107,7 +107,7 @@ describe("App — concurrency-limit renders the GateCard (BUG 3)", () => {
 
     render(<App />);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+      fireEvent.click(screen.getByRole("button", { name: /let's start talking/i }));
     });
 
     await waitFor(() =>
