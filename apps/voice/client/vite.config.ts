@@ -13,7 +13,11 @@ export default defineConfig({
     emptyOutDir: true,
   },
   test: {
-    environment: "jsdom",
+    // happy-dom instead of jsdom: jsdom@29's transitive @exodus/bytes is
+    // ESM-only and jsdom require()s it, which fails under Node 22.1.0
+    // (require(ESM) only became default in 22.12+/23). happy-dom avoids that
+    // chain entirely and runs the same component tests.
+    environment: "happy-dom",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 });
