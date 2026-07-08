@@ -56,12 +56,13 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const silentTriedBefore = wasSilentTried(); // snapshot BEFORE attemptSilentSso marks it
       await auth.attemptSilentSso();
       if (cancelled) return;
       if (!auth.isAuthenticated && !onCallbackRoute) {
         const action = decideLandAction({
           isReturning: isReturningUser(),
-          silentTried: wasSilentTried(),
+          silentTried: silentTriedBefore, // use the pre-await snapshot
           interactiveTried: wasInteractiveTried(),
         });
         if (action === "redirect") {

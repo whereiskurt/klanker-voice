@@ -31,6 +31,7 @@ vi.mock("./auth/useAuth", () => ({ useAuth: () => auth }));
 vi.mock("./transport/useVoiceSession", () => ({ useVoiceSession: () => voice }));
 
 import App from "./App";
+import { markReturningUser, markSilentTried } from "./auth/returningStore";
 
 describe("App linear flow", () => {
   beforeEach(() => {
@@ -66,5 +67,26 @@ describe("App linear flow", () => {
     voice.outcome = { state: "connecting" };
     render(<App />);
     expect(screen.getByTestId("ceremony-line")).toBeInTheDocument();
+  });
+
+  // Regression for the land-effect ordering bug: attemptSilentSso marks
+  // silentTried (in sessionStorage) BEFORE it navigates, so re-deriving
+  // decideLandAction AFTER the await with the post-mutation wasSilentTried()
+  // collapses a returning user's intended "holding" into "redirect" and
+  // fires a redundant beginSignIn()+markInteractiveTried() in the same tick.
+  // App.tsx must snapshot wasSilentTried() BEFORE the await and use that
+  // snapshot. This test drives the REAL side effect (the mocked
+  // attemptSilentSso calls the real markSilentTried(), exactly like
+  // useAuth's real implementation does) so it fails without the fix.
+  it("returning user holds for silent SSO instead of also firing a redundant interactive redirect", async () => {
+    markReturningUser();
+    auth.attemptSilentSso.mockImplementation(async () => {
+      markSilentTried();
+    });
+    auth.isAuthenticated = false;
+    render(<App />);
+    await act(async () => {});
+    expect(auth.beginSignIn).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("kmv_interactive_tried")).toBeNull();
   });
 });

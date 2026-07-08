@@ -300,6 +300,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
    * session down and produces a CLEAN session summary so App shows the ended
    * screen. Mirrors the post-connect DISCONNECTED path but on demand. */
   const endChat = useCallback(async () => {
+    if (endedRef.current) return; // ignore a double-tap; the first endChat already owns the teardown + summary
     endedRef.current = true;
     const elapsedSeconds =
       connectedAtRef.current != null ? Math.max(0, (Date.now() - connectedAtRef.current) / 1000) : 0;

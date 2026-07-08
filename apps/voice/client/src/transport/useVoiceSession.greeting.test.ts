@@ -117,4 +117,48 @@ describe("useVoiceSession — endChat latches against trailing teardown noise (h
 
     unmount();
   });
+
+  // Regression: endChat() nulls connectedAtRef then awaits disconnect();
+  // setClient(null) only runs after that await, so Live stays mounted and
+  // "End chat" stays clickable during the window. A second tap used to
+  // recompute elapsedSeconds from the now-null ref -> a spurious "0:00
+  // spoken" summary, clobbering the real one. endChat must guard re-entry
+  // via endedRef so a double-tap is a no-op.
+  it("a double-tap of endChat() does not clobber the first summary with 0:00", async () => {
+    vi.mocked(requestMic).mockResolvedValue(grantedMic());
+
+    let capturedOnEvent!: (event: ConnectionEvent) => void;
+    vi.mocked(createVoiceSession).mockImplementation((options) => {
+      capturedOnEvent = options.onEvent;
+      return {
+        client: {} as never,
+        connect: async () => { capturedOnEvent({ type: "CONNECTED" }); },
+        disconnect: async () => {},
+      };
+    });
+
+    const { result, unmount } = renderHook(() => useVoiceSession());
+
+    await act(async () => { await result.current.start(); });
+    await waitFor(() => expect(result.current.outcome.state).toBe("connected"));
+
+    // Let real wall-clock time elapse so the first summary's elapsedSeconds
+    // is meaningfully greater than 0 (distinguishable from a "reset to 0:00").
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await act(async () => { await result.current.endChat(); });
+    const firstSummary = result.current.sessionSummary;
+    expect(firstSummary).not.toBeNull();
+    expect(firstSummary!.elapsedSeconds).toBeGreaterThan(0);
+
+    // The double-tap: without the endedRef re-entry guard, this would
+    // recompute elapsedSeconds from the now-null connectedAtRef -> 0.
+    await act(async () => { await result.current.endChat(); });
+
+    expect(result.current.sessionSummary).toBe(firstSummary); // no-op: same object, not recomputed
+    expect(result.current.sessionSummary!.elapsedSeconds).toBe(firstSummary!.elapsedSeconds);
+    expect(result.current.sessionSummary!.elapsedSeconds).toBeGreaterThan(0);
+
+    unmount();
+  });
 });
