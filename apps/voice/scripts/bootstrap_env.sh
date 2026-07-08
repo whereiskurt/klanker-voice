@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# bootstrap_env.sh — D-10 key bootstrap: SSM /kmv/bootstrap/* -> apps/voice/.env
+# bootstrap_env.sh — D-10 key bootstrap: SSM /kmv/secrets/use1/* -> apps/voice/.env
 #
 # Reads the three provider API keys from AWS SSM SecureString parameters using
 # the klanker-application profile (us-east-1) and writes apps/voice/.env with
 # mode 600. SSM is the single source of truth; nothing plaintext in the repo.
+#
+# Parameter layout note: the deployed secrets live under the region-qualified
+# /kmv/secrets/use1/{provider}/api_key tree (the same tree the auth service
+# reads), NOT the old /kmv/bootstrap/{provider}_api_key paths.
 #
 # Security invariants:
 #   - never echoes a secret value to stdout/stderr
@@ -42,9 +46,9 @@ ENV_FILE="${TARGET_DIR}/.env"
 
 # param-name:ENV_VAR_NAME pairs (exact names pipecat's services/dotenv loading expect)
 PARAMS=(
-  "/kmv/bootstrap/deepgram_api_key:DEEPGRAM_API_KEY"
-  "/kmv/bootstrap/anthropic_api_key:ANTHROPIC_API_KEY"
-  "/kmv/bootstrap/elevenlabs_api_key:ELEVENLABS_API_KEY"
+  "/kmv/secrets/use1/deepgram/api_key:DEEPGRAM_API_KEY"
+  "/kmv/secrets/use1/anthropic/api_key:ANTHROPIC_API_KEY"
+  "/kmv/secrets/use1/elevenlabs/api_key:ELEVENLABS_API_KEY"
 )
 
 fetch_param() {

@@ -12,6 +12,7 @@ import tomllib
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 
 APP_ROOT = Path(__file__).resolve().parents[1]          # apps/voice
 PIPELINE_TOML = APP_ROOT / "pipeline.toml"
@@ -41,6 +42,10 @@ def voice_settings_from_config() -> dict:
     }
 
 def main() -> None:
+    # Load apps/voice/.env the same way bot.py does, so `make env` then
+    # `make greetings` works standalone (the .env written by bootstrap_env.sh
+    # is not otherwise on the environment).
+    load_dotenv(APP_ROOT / ".env", override=True)
     key = os.environ.get("ELEVENLABS_API_KEY")
     if not key:
         sys.exit("render_greetings: ELEVENLABS_API_KEY not set (run `make -C apps/voice env`)")

@@ -3,15 +3,15 @@
   "model": "eleven_flash_v2_5",
   "clips": [
     {
-      "text": "Hey \u2014 I'm KPH. What's on your mind?",
+      "text": "Hey, how's it going \u2014 I'm KPH, Kurt's concierge. I can tell you about a bunch of his GitHub projects and DEF CON run. What do you wanna hear about?",
       "file": "greeting-1.mp3"
     },
     {
-      "text": "Hey there \u2014 KPH here. What do you wanna dig into?",
+      "text": "Hey \u2014 KPH here, Kurt's concierge. I've got the rundown on his projects and DEF CON run. What's got your interest?",
       "file": "greeting-2.mp3"
     },
     {
-      "text": "Hey \u2014 KPH here. Let's get into it.",
+      "text": "Hey there \u2014 I'm KPH, Kurt's concierge. Ask me about his GitHub work or DEF CON run. Where do you wanna start?",
       "file": "greeting-3.mp3"
     }
   ]
