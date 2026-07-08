@@ -53,10 +53,19 @@ from klanker_voice.knowledge.prompt_assembly import (
 )
 from klanker_voice.knowledge.retrieval import RetrievalIndex
 
-#: Default ack template (Amendment 1's "OK! Let's dig into it."). Rendered
-#: with the switched-to topic's spoken_name; fires ONLY on a genuine
-#: deep-pack switch (Pitfall 2), never on a same-topic follow-up.
-DEFAULT_ACK_TEMPLATE = "Okay! Let's dig into {spoken_name}."
+#: Default ack templates (Amendment 1's "OK! Let's dig into it.", naturalized).
+#: Rendered with the switched-to topic's spoken_name; one fires ONLY on a
+#: genuine deep-pack switch (Pitfall 2), never on a same-topic follow-up. The
+#: processor rotates through these round-robin (deterministic, testable) so the
+#: "let me think about it" beat that masks the pack-swap + BM25 retrieval feels
+#: human instead of a canned repeat. Every variant ends on ``{spoken_name}`` (or
+#: leads into a beat) so the retrieval stays masked behind the spoken ack.
+DEFAULT_ACK_TEMPLATES: list[str] = [
+    "Ooh, {spoken_name} — good one. Let me get into it.",
+    "Okay, let's dig into {spoken_name}.",
+    "Right — {spoken_name}. Here's the deal.",
+    "Love that one. So, {spoken_name}…",
+]
 
 FallbackClassifier = Callable[..., Awaitable["str | None"]]
 
@@ -161,7 +170,7 @@ class KnowledgeRouterProcessor(FrameProcessor):
         llm: Any,
         initial_topic: str,
         fallback_classify: FallbackClassifier | None = None,
-        ack_template: str = DEFAULT_ACK_TEMPLATE,
+        ack_templates: list[str] | None = None,
         retrieval_index: RetrievalIndex | None = None,
         remaining_seconds_fn: Callable[[], "float | None"] | None = None,
     ) -> None:
@@ -172,7 +181,8 @@ class KnowledgeRouterProcessor(FrameProcessor):
         self._topic_map = load_topic_map(knowledge_cfg)
         self._active_topic = initial_topic
         self._fallback_classify = fallback_classify or default_haiku_fallback_classify
-        self._ack_template = ack_template
+        self._ack_templates = ack_templates or DEFAULT_ACK_TEMPLATES
+        self._ack_index = 0
         self._retrieval_index = retrieval_index
         self._remaining_seconds_fn = remaining_seconds_fn
 
@@ -238,5 +248,9 @@ class KnowledgeRouterProcessor(FrameProcessor):
         )
         apply_system_blocks(self._llm, blocks)
 
-        ack_text = self._ack_template.format(spoken_name=self._spoken_name(topic_id))
+        # Round-robin through the naturalized ack set (deterministic) so
+        # back-to-back topic switches don't repeat the same canned line.
+        template = self._ack_templates[self._ack_index % len(self._ack_templates)]
+        self._ack_index += 1
+        ack_text = template.format(spoken_name=self._spoken_name(topic_id))
         await self.push_frame(TTSSpeakFrame(text=ack_text, append_to_context=False))

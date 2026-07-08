@@ -367,6 +367,53 @@ class TestKnowledgeRouterProcessor:
         assert any(isinstance(f, UserStartedSpeakingFrame) for f in down)
         assert not any(isinstance(f, TTSSpeakFrame) for f in down)
 
+    async def test_ack_text_rotates_round_robin_across_switches(self, tmp_path):
+        """Lever C: back-to-back topic switches must not repeat the same canned
+        ack line -- the processor rotates deterministically through
+        DEFAULT_ACK_TEMPLATES, rendered with each switched-to spoken_name."""
+        from klanker_voice.knowledge.router import (
+            DEFAULT_ACK_TEMPLATES,
+            KnowledgeRouterProcessor,
+        )
+
+        cfg = _cfg(tmp_path)
+        knowledge_cfg = _knowledge_cfg(tmp_path)
+        llm = _FakeLLM()
+        router = KnowledgeRouterProcessor(
+            cfg=cfg,
+            knowledge_cfg=knowledge_cfg,
+            llm=llm,
+            initial_topic="klanker-maker",
+            fallback_classify=_never_fallback,
+        )
+
+        # Alternate km <-> defcon so every utterance is a genuine switch and one
+        # ack fires per turn -- enough turns to wrap past the template count.
+        utterances = [
+            ("what is defcon run all about", "DEFCON dot run, thirty-four"),
+            ("tell me about klanker maker", "klanker-maker"),
+            ("what is defcon run all about", "DEFCON dot run, thirty-four"),
+            ("tell me about klanker maker", "klanker-maker"),
+            ("what is defcon run all about", "DEFCON dot run, thirty-four"),
+        ]
+        spoken_texts = []
+        for i, (text, _spoken) in enumerate(utterances):
+            frame = TranscriptionFrame(
+                text=text, user_id="u1", timestamp=f"2026-07-07T00:00:0{i}Z"
+            )
+            down, _ = await run_test(router, frames_to_send=[frame])
+            acks = [f for f in down if isinstance(f, TTSSpeakFrame)]
+            assert len(acks) == 1
+            spoken_texts.append(acks[0].text)
+
+        expected = [
+            DEFAULT_ACK_TEMPLATES[i % len(DEFAULT_ACK_TEMPLATES)].format(spoken_name=spoken)
+            for i, (_text, spoken) in enumerate(utterances)
+        ]
+        assert spoken_texts == expected
+        # Sanity: the wrap actually happened (turn 4 reuses template 0's wording).
+        assert len(utterances) > len(DEFAULT_ACK_TEMPLATES)
+
     async def test_topic_switch_fires_ack_then_same_topic_followup_does_not(self, tmp_path):
         """07-03 Task 2: starting on km, a directed defcon question flips the
         active topic AND fires the ack; a second defcon question (same

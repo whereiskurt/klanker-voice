@@ -139,6 +139,123 @@ topics:
       # unrelated "toolkit" utterance. Only the distinctive multi-word forms
       # above ("mesh tk", "meshtastic toolkit", etc.) count.
 
-  # klanker-voice (self) and any further topics: append the same shape here
-  # plus a matching manifest.yaml topic (Amendment 1/5) -- this schema does
-  # not change.
+  - id: tiogo
+    spoken_name: "tiogo, Kurt's Tenable tool"
+    hook: >-
+      Kurt's open-source Go command-line tool for Tenable dot I O -- run as
+      tio, it pulls vulnerabilities, assets, and scan results out of the cloud
+      vulnerability scanner as CSV or JSON for SIEM and SOAR pipelines, with a
+      clever local caching proxy. An older standalone project, the earliest
+      public ancestor of his km/kv CLI style.
+    keywords:
+      - term: "tiogo"
+        weight: 3
+      - term: "tio go"
+        weight: 3
+      - term: "tenable"
+        weight: 3
+      - term: "tenable io"
+        weight: 3
+      - term: "tenable.io"
+        weight: 3
+      - term: "tio cli"
+        weight: 2
+      - term: "vulnerability management"
+        weight: 2
+      - term: "nessus"
+        weight: 2
+      - term: "vuln export"
+        weight: 2
+      - term: "siem"
+        weight: 1
+      - term: "vulnerability scan"
+        weight: 1
+      - term: " tio "
+        weight: 1                    # weak alone -- also a common word/name
+      - term: "vulnerabilities"
+        weight: 1
+
+  - id: kvmlab
+    spoken_name: "kvmlab, Kurt's home security lab"
+    hook: >-
+      Kurt's pre-klanker home security lab -- a single Linux KVM host wired with
+      Open vSwitch into a double-firewall design, isolating malware and
+      offensive-security experiments two firewall hops from his home network,
+      with Kali, FLARE, Whonix, and Splunk boxes on separated "combat" and
+      management networks.
+    keywords:
+      - term: "kvmlab"
+        weight: 3
+      - term: "kvm lab"
+        weight: 3
+      - term: "combat lab"
+        weight: 3
+      - term: "malware lab"
+        weight: 3
+      - term: "double firewall"
+        weight: 3
+      - term: "combat network"
+        weight: 2
+      - term: "pfsense"
+        weight: 2
+      - term: "open vswitch"
+        weight: 2
+      - term: "whonix"
+        weight: 2
+      - term: "flare vm"
+        weight: 2
+      - term: "home lab"
+        weight: 1
+      - term: "homelab"
+        weight: 1
+      - term: " kvm "
+        weight: 1                    # weak alone -- generic virtualization term
+
+  - id: klanker-voice
+    spoken_name: "klanker-voice, the voice agent you're talking to"
+    hook: >-
+      The project you're talking to right now -- a public speech-to-speech
+      voice agent (that's KPH) built as a cascaded pipeline: Deepgram
+      speech-to-text, Claude Haiku thinking, ElevenLabs voice, every stage
+      streaming for about a second voice-to-voice with natural barge-in, gated
+      by a magic-link login and run by a little Go CLI called kv.
+    keywords:
+      - term: "klanker voice"
+        weight: 3
+      - term: "klanker-voice"
+        weight: 3
+      - term: "klankervoice"
+        weight: 3
+      - term: "pipecat"
+        weight: 3
+      - term: "kv cli"
+        weight: 2
+      - term: "voice agent"
+        weight: 2
+      - term: "voice pipeline"
+        weight: 2
+      - term: "speech to speech"
+        weight: 2
+      - term: "cascaded pipeline"
+        weight: 2
+      - term: "barge in"
+        weight: 2
+      - term: "deepgram"
+        weight: 2
+      - term: "elevenlabs"
+        weight: 2
+      - term: "eleven labs"
+        weight: 2
+      - term: "how do you work"
+        weight: 2
+      - term: "how were you built"
+        weight: 2
+      - term: "speech to text"
+        weight: 1
+      - term: "text to speech"
+        weight: 1
+      - term: " kv "
+        weight: 1                    # weak alone -- also a common abbreviation
+
+  # Any further topics: append the same shape here plus a matching
+  # manifest.yaml topic (Amendment 1/5) -- this schema does not change.
