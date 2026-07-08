@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>klanker-voice — flow redesign mockup</title>
+<style>
+  /* Tokens ported from apps/voice/client/src/styles/tokens.css (subset). */
+  :root {
+    --stage-core:#06070c; --stage-edge:#04050a; --overlay:#10121c;
+    --accent:#2de2c8; --destructive:#ff5a5f;
+    --text-primary:#e6e8ef; --text-secondary:#a6abbd; --text-interim:#7c8296;
+    --border-subtle:#232636;
+    --orb-idle:#2de2c8; --orb-listening:#4ea8ff; --orb-thinking:#8b7cf6; --orb-speaking:#34f5d0;
+    --font-ui:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --font-mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --radius:16px;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body {
+    font-family:var(--font-ui); color:var(--text-primary);
+    background:radial-gradient(120% 100% at 50% 30%, var(--stage-core), var(--stage-edge));
+    -webkit-font-smoothing:antialiased;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* Phone-ish stage so the mockup reads as the client viewport. */
+  .stage {
+    position:relative; width:min(440px,100vw); height:min(880px,100vh);
+    overflow:hidden; background:radial-gradient(120% 90% at 50% 28%, var(--stage-core), var(--stage-edge));
+    border:1px solid var(--border-subtle);
+  }
+  @media (max-width:460px){ .stage{ border:none; } }
+
+  .wordmark {
+    position:absolute; top:20px; left:22px; z-index:10;
+    font-size:13px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--text-secondary); font-weight:600;
+  }
+  .wordmark b { color:var(--text-primary); }
+
+  .screen { position:absolute; inset:0; display:none; }
+  .screen.active { display:block; }
+
+  /* ---- Orb ---- */
+  .orb-wrap { position:absolute; left:50%; top:38%; transform:translate(-50%,-50%); }
+  .orb-wrap.compact { top:88px; }
+  .orb {
+    --c:var(--orb-idle);
+    width:200px; height:200px; border-radius:50%;
+    background:radial-gradient(circle at 38% 34%, #ffffff22 0%, var(--c) 34%, color-mix(in srgb,var(--c) 30%, #000) 78%);
+    box-shadow:0 0 60px 12px color-mix(in srgb,var(--c) 30%,transparent),
+               inset -14px -18px 46px #00000066;
+    animation:breathe 6s ease-in-out infinite;
+    transition:background .6s ease, box-shadow .6s ease, width .5s ease, height .5s ease;
+  }
+  .orb-wrap.compact .orb { width:96px; height:96px; }
+  .orb.listening { --c:var(--orb-listening); }
+  .orb.thinking  { --c:var(--orb-thinking); animation:spin 2.4s linear infinite, breathe 6s ease-in-out infinite; }
+  .orb.speaking  { --c:var(--orb-speaking); animation:pulse 1s ease-in-out infinite; }
+  .orb.booting   { --c:var(--orb-thinking); animation:spin 1.6s linear infinite; }
+  @keyframes breathe { 0%,100%{transform:scale(1);} 50%{transform:scale(1.05);} }
+  @keyframes pulse   { 0%,100%{transform:scale(1);} 50%{transform:scale(1.09);} }
+  @keyframes spin    { to{ box-shadow:0 0 70px 16px color-mix(in srgb,var(--c) 34%,transparent), inset -14px -18px 46px #00000066; } }
+
+  /* booting ring */
+  .boot-ring {
+    position:absolute; left:50%; top:50%; width:240px; height:240px;
+    transform:translate(-50%,-50%); border-radius:50%;
+    border:2px solid transparent; border-top-color:var(--accent); border-right-color:#8b7cf6aa;
+    animation:ringspin 1.1s linear infinite;
+  }
+  @keyframes ringspin { to{ transform:translate(-50%,-50%) rotate(360deg); } }
+
+  /* ---- CTA / buttons ---- */
+  .center-cta { position:absolute; left:50%; bottom:12%; transform:translateX(-50%); text-align:center; z-index:12; width:88%; }
+  .cta {
+    display:inline-flex; align-items:center; justify-content:center;
+    min-height:64px; padding:0 34px; font-size:16px; font-weight:600;
+    color:var(--stage-core); background:var(--accent); border:none; border-radius:999px;
+    cursor:pointer; font-family:inherit;
+    box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 18%,transparent),0 8px 40px color-mix(in srgb,var(--accent) 30%,transparent);
+    transition:transform .2s, box-shadow .2s;
+  }
+  .cta:hover { transform:translateY(-1px); box-shadow:0 0 0 8px color-mix(in srgb,var(--accent) 22%,transparent),0 10px 48px color-mix(in srgb,var(--accent) 38%,transparent); }
+  .cta.ghost { background:transparent; color:var(--text-primary); border:1px solid var(--border-subtle); box-shadow:none; min-height:44px; font-size:14px; padding:0 22px; }
+  .cta.danger { background:transparent; color:var(--destructive); border:1px solid color-mix(in srgb,var(--destructive) 50%,transparent); box-shadow:none; min-height:44px; font-size:14px; padding:0 22px; }
+  .sub { margin-top:14px; font-size:13px; color:var(--text-secondary); }
+
+  /* ---- LAND / auth ---- */
+  .holding { position:absolute; left:50%; top:60%; transform:translateX(-50%); text-align:center; color:var(--text-secondary); font-size:14px; z-index:12; }
+  .dots::after { content:""; animation:dots 1.4s steps(4,end) infinite; }
+  @keyframes dots { 0%{content:"";}25%{content:".";}50%{content:"..";}75%{content:"...";}100%{content:"";} }
+
+  .auth-panel {
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:32px;
+    background:radial-gradient(120% 90% at 50% 30%, #0a0d18, #05060c);
+  }
+  .auth-brand { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--text-secondary); font-weight:600; }
+  .auth-title { font-size:26px; font-weight:600; }
+  .auth-note { font-size:13px; color:var(--text-interim); max-width:280px; text-align:center; }
+  .auth-input { width:280px; max-width:80%; height:48px; border-radius:12px; border:1px solid var(--border-subtle); background:#0c0e18; color:var(--text-primary); padding:0 14px; font-family:inherit; font-size:15px; }
+
+  /* ---- Ceremony ---- */
+  .ceremony-line {
+    position:absolute; left:50%; bottom:22%; transform:translateX(-50%);
+    font-size:20px; font-weight:600; color:var(--text-primary); text-align:center; width:90%;
+    letter-spacing:.01em;
+  }
+  .ceremony-line .mono { font-family:var(--font-mono); color:var(--accent); }
+  .ceremony-sub { position:absolute; left:50%; bottom:16%; transform:translateX(-50%); font-size:13px; color:var(--text-interim); }
+
+  /* ---- Live ---- */
+  .orb-header-bg { position:absolute; top:0; left:0; right:0; height:176px;
+    background:linear-gradient(to bottom, #ffffff00, #ffffff00); z-index:1; }
+  .transcript {
+    position:absolute; top:176px; bottom:96px; left:0; right:0;
+    overflow-y:auto; padding:8px 18px 20px; z-index:2;
+    -webkit-mask-image:linear-gradient(to bottom,#0000 0,#000 22px,#000 100%);
+            mask-image:linear-gradient(to bottom,#0000 0,#000 22px,#000 100%);
+  }
+  .turn { margin:14px 0; max-width:100%; }
+  .turn .chip {
+    display:inline-block; font-size:11px; letter-spacing:.06em; font-weight:600;
+    padding:2px 8px; border-radius:999px; margin-bottom:5px;
+  }
+  .turn.user .chip { color:var(--text-secondary); background:#ffffff0e; }
+  .turn.agent .chip { color:var(--stage-core); background:var(--accent); }
+  .turn .body { font-size:16px; line-height:1.45; color:var(--text-primary); }
+  .turn.interim .body { color:var(--text-interim); font-style:italic; }
+
+  .jump {
+    position:absolute; right:16px; bottom:104px; z-index:5; display:none;
+    background:var(--overlay); color:var(--text-primary); border:1px solid var(--border-subtle);
+    border-radius:999px; padding:7px 14px; font-size:12px; cursor:pointer; font-family:inherit;
+  }
+  .jump.show { display:block; }
+
+  .live-bar {
+    position:absolute; bottom:0; left:0; right:0; height:96px; z-index:6;
+    display:flex; align-items:center; justify-content:space-between; padding:0 20px;
+    background:linear-gradient(to top, #05060cf2, #05060c00);
+  }
+  .pill { font-size:13px; color:var(--text-secondary); font-family:var(--font-mono);
+    border:1px solid var(--border-subtle); border-radius:999px; padding:6px 12px; background:#0c0e1888; }
+
+  /* ---- Ended ---- */
+  .ended {
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:32px; text-align:center; z-index:8;
+  }
+  .ended h2 { font-size:22px; margin:0; }
+  .ended p { color:var(--text-secondary); font-size:14px; margin:0 0 8px; }
+
+  /* ---- dev flow controls ---- */
+  .flowmap {
+    position:fixed; top:10px; left:10px; z-index:100; font-family:var(--font-mono);
+    font-size:11px; color:var(--text-interim); background:#0009; border:1px solid var(--border-subtle);
+    border-radius:10px; padding:8px 10px; line-height:1.7; user-select:none;
+  }
+  .flowmap b { color:var(--text-secondary); font-weight:600; }
+  .flowmap span { cursor:pointer; }
+  .flowmap span.on { color:var(--accent); }
+  .hint { position:fixed; bottom:8px; left:50%; transform:translateX(-50%); z-index:100; font-size:11px; color:var(--text-interim); }
+</style>
+</head>
+<body>
+
+<div class="flowmap">
+  <b>flow (click to jump)</b><br>
+  <span data-go="land">1 · LAND / auth bounce</span><br>
+  <span data-go="ready">2 · READY_TO_START</span><br>
+  <span data-go="ceremony">3 · CEREMONY</span><br>
+  <span data-go="live">4 · LIVE + transcript</span><br>
+  <span data-go="ended">5 · ENDED</span>
+</div>
+<div class="hint">Throwaway mockup — no app wiring. Matches spec 2026-07-08-voice-flow-redesign.</div>
+
+<div class="stage" id="stage">
+
+  <!-- 1. LAND -->
+  <section class="screen" id="s-land">
+    <div class="wordmark">voice<b>.klankermaker.ai</b></div>
+    <div class="orb-wrap"><div class="orb"></div></div>
+    <div class="holding" id="landStatus"><span class="dots">checking your session</span></div>
+  </section>
+
+  <!-- 1b. faux AUTH (what the forced redirect lands on) -->
+  <section class="screen" id="s-auth">
+    <div class="auth-panel">
+      <div class="auth-brand">auth<b style="color:var(--text-primary)">.klankermaker.ai</b></div>
+      <div class="auth-title">Sign in to continue</div>
+      <div class="auth-note">You arrived at voice without a session, so you were sent straight here. No landing page, no button to hunt for.</div>
+      <input class="auth-input" placeholder="you@example.com" />
+      <button class="cta" onclick="finishAuth()">Send magic link → return to voice</button>
+      <div class="auth-note" style="margin-top:4px">(mockup: this button simulates completing auth and bouncing back)</div>
+    </div>
+  </section>
+
+  <!-- 2. READY_TO_START -->
+  <section class="screen" id="s-ready">
+    <div class="wordmark">voice<b>.klankermaker.ai</b></div>
+    <div class="orb-wrap"><div class="orb"></div></div>
+    <div class="center-cta">
+      <button class="cta" onclick="startCeremony()">Let's start talking</button>
+      <p class="sub">This taps the mic awake and pages KPH. Ready when you are.</p>
+    </div>
+  </section>
+
+  <!-- 3. CEREMONY -->
+  <section class="screen" id="s-ceremony">
+    <div class="wordmark">voice<b>.klankermaker.ai</b></div>
+    <div class="orb-wrap">
+      <div class="boot-ring"></div>
+      <div class="orb booting"></div>
+    </div>
+    <div class="ceremony-line" id="ceremonyLine"><span class="mono">initializing…</span></div>
+    <div class="ceremony-sub" id="ceremonySub">establishing the connection under the hood</div>
+  </section>
+
+  <!-- 4. LIVE -->
+  <section class="screen" id="s-live">
+    <div class="wordmark">voice<b>.klankermaker.ai</b></div>
+    <div class="orb-wrap compact"><div class="orb" id="liveOrb"></div></div>
+    <div class="transcript" id="transcript"></div>
+    <button class="jump" id="jumpBtn" onclick="jumpToLatest()">↓ jump to latest</button>
+    <div class="live-bar">
+      <button class="cta danger" onclick="endChat()">End chat</button>
+      <div class="pill" id="countdown">⏱ 5:00</div>
+    </div>
+  </section>
+
+  <!-- 5. ENDED -->
+  <section class="screen" id="s-ended">
+    <div class="orb-wrap"><div class="orb"></div></div>
+    <div class="ended">
+      <h2>Chat ended</h2>
+      <p id="endedDetail">4 min 12 sec · you wrapped it up</p>
+      <button class="cta" onclick="goReady()">Start another</button>
+      <button class="cta ghost" onclick="go('land')" style="margin-top:6px">Sign out</button>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  const screens = ["land","auth","ready","ceremony","live","ended"];
+  let timers = [];
+  function clearTimers(){ timers.forEach(t=>clearTimeout(t)||clearInterval(t)); timers=[]; }
+  function go(name){
+    clearTimers();
+    screens.forEach(s=>document.getElementById("s-"+s).classList.toggle("active", s===name));
+    document.querySelectorAll(".flowmap span").forEach(el=>el.classList.toggle("on", el.dataset.go===name || (name==="auth"&&el.dataset.go==="land")));
+    if(name==="land") runLand();
+    if(name==="live") runLive();
+  }
+
+  // 1. LAND: brief "checking", then auto-bounce to auth (simulating first-timer / no cookie).
+  function runLand(){
+    document.getElementById("landStatus").innerHTML = '<span class="dots">checking your session</span>';
+    timers.push(setTimeout(()=>{
+      document.getElementById("landStatus").innerHTML = 'no session — redirecting to auth…';
+    }, 1400));
+    timers.push(setTimeout(()=> go("auth"), 2300));
+  }
+  function finishAuth(){ go("ready"); }   // returns from /callback → READY_TO_START
+  function goReady(){ go("ready"); }
+
+  // 3. CEREMONY: theatrical fixed script; flip to LIVE at max(script done, "connected").
+  const SCRIPT = [
+    {t:'<span class="mono">initializing…</span>', s:'waking the mic'},
+    {t:'<span class="mono">paging KPH…</span>', s:'sending /api/offer'},
+    {t:'let me see if he\'s out there…', s:'negotiating the connection'},
+    {t:'<span class="mono">do do do…</span>', s:'almost there'},
+    {t:'he\'s warming up…', s:'waiting for KPH to pick up'},
+  ];
+  function startCeremony(){
+    go("ceremony");
+    const line=document.getElementById("ceremonyLine");
+    const sub=document.getElementById("ceremonySub");
+    let i=0;
+    const step=()=>{
+      line.innerHTML=SCRIPT[i].t; sub.textContent=SCRIPT[i].s;
+      i++;
+      if(i<SCRIPT.length){ timers.push(setTimeout(step,900)); }
+      else { timers.push(setTimeout(()=>go("live"), 900)); } // "connected" arrives with/after script
+    };
+    step();
+  }
+
+  // 4. LIVE: compact orb + append-only growing transcript with auto-scroll-unless-scrolled-up.
+  const CONVO = [
+    {speaker:"agent", text:"Hey — what's on your mind?"},
+    {speaker:"user",  text:"Tell me what klanker actually is."},
+    {speaker:"agent", text:"It's Kurt's platform for spinning up sandboxed agents that email and Slack each other — km is the CLI that drives the whole thing."},
+    {speaker:"user",  text:"And defcon.run?"},
+    {speaker:"agent", text:"That's the running-club-meets-CTF he built for DEF CON — the auth service you just logged through is a port of run.auth."},
+    {speaker:"user",  text:"Nice. What are you running on under the hood?"},
+    {speaker:"agent", text:"Deepgram for the ears, Claude Haiku for the brain, ElevenLabs Flash for the voice — cascaded through Pipecat so every stage streams."},
+  ];
+  const orbStates = ["speaking","listening","thinking"];
+  function runLive(){
+    const tx=document.getElementById("transcript");
+    const orb=document.getElementById("liveOrb");
+    const jump=document.getElementById("jumpBtn");
+    tx.innerHTML=""; orb.className="orb speaking";
+    let pinned=true;
+    tx.onscroll=()=>{
+      pinned = tx.scrollHeight - tx.scrollTop - tx.clientHeight < 40;
+      jump.classList.toggle("show", !pinned);
+    };
+    let i=0;
+    const addTurn=()=>{
+      if(i>=CONVO.length){ orb.className="orb listening"; return; }
+      const turn=CONVO[i];
+      // interim shimmer for user turns, then firm to final (mirrors reducer interim→final)
+      const div=document.createElement("div");
+      div.className="turn "+turn.speaker+(turn.speaker==="user"?" interim":"");
+      div.innerHTML='<div class="chip">'+(turn.speaker==="agent"?"KPH":"You")+'</div><div class="body"></div>';
+      tx.appendChild(div);
+      orb.className="orb "+(turn.speaker==="agent"?"speaking":"listening");
+      typeInto(div.querySelector(".body"), turn.text, ()=>{
+        if(turn.speaker==="user") div.classList.remove("interim");
+        i++;
+        if(turn.speaker==="user"){ orb.className="orb thinking"; timers.push(setTimeout(addTurn,700)); }
+        else timers.push(setTimeout(addTurn,500));
+      }, pinnedRef=>{ if(pinned) tx.scrollTop=tx.scrollHeight; });
+    };
+    timers.push(setTimeout(addTurn,400));
+    // countdown tick
+    let secs=300; const cd=document.getElementById("countdown");
+    timers.push(setInterval(()=>{ secs--; const m=Math.floor(secs/60), s=String(secs%60).padStart(2,"0");
+      cd.textContent="⏱ "+m+":"+s; cd.style.color = secs<30?"var(--destructive)":""; }, 1000));
+  }
+  function typeInto(el, text, done, onTick){
+    let n=0;
+    const iv=setInterval(()=>{
+      el.textContent=text.slice(0,++n); onTick();
+      if(n>=text.length){ clearInterval(iv); done(); }
+    }, 18);
+    timers.push(iv);
+  }
+  function jumpToLatest(){ const tx=document.getElementById("transcript"); tx.scrollTop=tx.scrollHeight; }
+
+  function endChat(){ go("ended"); document.getElementById("endedDetail").textContent="4 min 12 sec · you wrapped it up"; }
+
+  document.querySelectorAll(".flowmap span").forEach(el=>el.addEventListener("click",()=>go(el.dataset.go)));
+
+  go("land");
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PipecatClient } from "@pipecat-ai/client-js";
 import { requestMic, type MicError } from "../media/getMic";
 import { getToken } from "../auth/tokenStore";
-import { playRandomGreeting, type GreetingHandle } from "../greeting/greetingPlayer";
+import { unlockAudioPlayback } from "../greeting/greetingPlayer";
 import {
   connectionReducer,
   INITIAL_CONNECTION_OUTCOME,
@@ -53,6 +53,8 @@ export interface UseVoiceSessionResult {
    * server's quota start_gate -- never a silent transport reopen. */
   start: () => Promise<void>;
   stop: () => Promise<void>;
+  /** User-initiated clean end from the Live "End chat" button. */
+  endChat: () => Promise<void>;
   /** Manual "Try again" on the exhausted `UdpBlockedWall` (D-11): resets the
    * bounded retry schedule and re-attempts immediately. */
   retryNow: () => void;
@@ -105,12 +107,12 @@ export function useVoiceSession(): UseVoiceSessionResult {
    * feed the transport retry controller, which exists ONLY for genuine
    * pre-connect ICE/transport failures (D-11). Reset by `start()`/`stop()`. */
   const rejectedRef = useRef(false);
-  /** The currently-playing pre-rendered greeting clip (B-05), if any. */
-  const greetingRef = useRef<GreetingHandle | null>(null);
-  /** Resolves when the current greeting clip has ended (or immediately if
-   * there is no clip this session) -- the CONNECTED branch below waits on
-   * this so the visible Live handoff never overlaps the greeting audio. */
-  const greetingEndedRef = useRef<Promise<void>>(Promise.resolve());
+  /** Latched once the user explicitly ended the session via endChat(). Like
+   * rejectedRef, this swallows any trailing DISCONNECTED/TRANSPORT_ERROR the
+   * vendor transport emits during/after teardown, so an explicit end can never
+   * be stomped to "failed" or arm a background retry (retryController). Reset
+   * by start()/stop(). */
+  const endedRef = useRef(false);
 
   const dispatch = useCallback((event: ConnectionEvent) => {
     setOutcome((current) => connectionReducer(current, event));
@@ -131,9 +133,9 @@ export function useVoiceSession(): UseVoiceSessionResult {
         setSessionSummary(null);
         retryControllerRef.current?.reportSuccess();
         setRetryStatus(IDLE_RETRY_STATUS);
-        // Hold the visible "connected/Live" state until the greeting clip has
-        // finished -- greeting audio (speaker) and live STT (mic) must not overlap.
-        void greetingEndedRef.current.then(() => dispatch(event));
+        // voice-flow-redesign: the orb appears BEFORE the greeting (the greeting
+        // now plays on Live mount), so CONNECTED is no longer held behind it.
+        dispatch(event);
         return;
       }
 
@@ -142,9 +144,8 @@ export function useVoiceSession(): UseVoiceSessionResult {
         // late transport-teardown noise from voiceSession.ts's proactive
         // client.disconnect() (or the vendor's own still-scheduled
         // reconnection) can't convert this clear gate into a "failed"
-        // retry/wall below. Dispatch immediately -- unlike CONNECTED, a
-        // rejection is NOT held behind the greeting handoff, so the GateCard
-        // shows right away even while the greeting clip is still playing.
+        // retry/wall below. Dispatch immediately so the GateCard shows right
+        // away.
         rejectedRef.current = true;
         dispatch(event);
         return;
@@ -156,6 +157,12 @@ export function useVoiceSession(): UseVoiceSessionResult {
           // swallow the trailing transport noise entirely: no "failed" stomp,
           // and crucially no retryController.reportFailure() (retry is for
           // pre-connect ICE/transport failures only, never a quota reject).
+          return;
+        }
+
+        if (endedRef.current) {
+          // User already ended the chat explicitly (endChat) — swallow trailing
+          // teardown noise entirely: no "failed" stomp, no retry, no second summary.
           return;
         }
 
@@ -178,10 +185,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
         if (event.type === "TRANSPORT_ERROR") {
           // A genuine pre-connect transport/ICE failure -- Task 1's bounded
-          // retry policy owns what happens next. Halt the greeting clip so
-          // it never plays over the retry UI / UdpBlockedWall (B-05).
-          greetingRef.current?.stop();
-          greetingRef.current = null;
+          // retry policy owns what happens next.
           dispatch(event);
           retryControllerRef.current?.reportFailure();
           return;
@@ -248,6 +252,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     wasConnectedRef.current = false;
     connectedAtRef.current = null;
     rejectedRef.current = false;
+    endedRef.current = false;
     dispatch({ type: "REQUEST_MIC" });
 
     const mic = await requestMic();
@@ -270,21 +275,16 @@ export function useVoiceSession(): UseVoiceSessionResult {
     mic.stream.getTracks().forEach((track) => track.stop());
     dispatch({ type: "MIC_GRANTED" });
 
-    // Instant greeting: play a random pre-rendered clip on this same gesture
-    // (unlocks iOS audio). Runs concurrently with connect; the CONNECTED
-    // handoff above waits for it so the greeting never overlaps live STT.
-    greetingRef.current?.stop();
-    const handle = await playRandomGreeting();
-    greetingRef.current = handle;
-    greetingEndedRef.current = handle ? handle.ended : Promise.resolve();
+    // Unlock iOS audio on this gesture so the greeting can play on Live mount
+    // (after the ceremony). The clip itself is played by Live, not here
+    // (voice-flow-redesign: orb appears, THEN KPH greets).
+    unlockAudioPlayback();
 
     await beginConnect();
   }, [dispatch, beginConnect]);
 
   const stop = useCallback(async () => {
     retryControllerRef.current?.cancel();
-    greetingRef.current?.stop();
-    greetingRef.current = null;
     await sessionRef.current?.disconnect();
     sessionRef.current = null;
     setClient(null);
@@ -292,6 +292,28 @@ export function useVoiceSession(): UseVoiceSessionResult {
     wasConnectedRef.current = false;
     connectedAtRef.current = null;
     rejectedRef.current = false;
+    endedRef.current = false;
+    dispatch({ type: "RESET" });
+  }, [dispatch]);
+
+  /** User-initiated "End chat" (voice-flow-redesign §3.4/§3.5): tears the
+   * session down and produces a CLEAN session summary so App shows the ended
+   * screen. Mirrors the post-connect DISCONNECTED path but on demand. */
+  const endChat = useCallback(async () => {
+    if (endedRef.current) return; // ignore a double-tap; the first endChat already owns the teardown + summary
+    endedRef.current = true;
+    const elapsedSeconds =
+      connectedAtRef.current != null ? Math.max(0, (Date.now() - connectedAtRef.current) / 1000) : 0;
+    // Clear the connected latch BEFORE disconnecting so the trailing transport
+    // teardown event can't also synthesize a second summary.
+    wasConnectedRef.current = false;
+    connectedAtRef.current = null;
+    retryControllerRef.current?.cancel();
+    await sessionRef.current?.disconnect();
+    sessionRef.current = null;
+    setClient(null);
+    setSessionMaxSeconds(null);
+    setSessionSummary({ elapsedSeconds, reason: "clean" });
     dispatch({ type: "RESET" });
   }, [dispatch]);
 
@@ -319,6 +341,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     sessionSummary,
     start,
     stop,
+    endChat,
     retryNow,
     dismissGate,
     dismissMicError,

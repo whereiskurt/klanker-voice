@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import App from "./App";
-import { isReturningUser, markReturningUser, markSilentTried } from "./auth/returningStore";
+import {
+  isReturningUser,
+  markReturningUser,
+  markSilentTried,
+  markInteractiveTried,
+} from "./auth/returningStore";
 import * as navigateModule from "./auth/navigate";
+import { clearToken } from "./auth/tokenStore";
 
 // Mirrors useAuth.ts's private PKCE sessionStorage keys (not exported) — the
 // success-path test stashes them directly to simulate "we just came back
@@ -67,6 +73,7 @@ beforeEach(() => {
 afterEach(() => {
   localStorage.clear();
   sessionStorage.clear();
+  clearToken(); // the code-exchange test above leaves a real in-memory token
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
@@ -108,5 +115,36 @@ describe("App breadcrumb wiring (login_required must NOT re-arm it)", () => {
     await act(async () => {
       await vi.waitFor(() => expect(isReturningUser()).toBe(true));
     });
+  });
+
+  // voice-flow-redesign §3.1 forced-auth land effect (Task 12): the
+  // interactiveTried one-shot guard is the whole anti-loop mechanism -- once
+  // a full interactive redirect has already auto-fired this session and the
+  // device is STILL unauthenticated (bailed at auth / no live issuer
+  // session), the app must land on the manual nudge, never fire another
+  // automatic redirect. Uses the REAL useAuth hook (not mocked) so this
+  // exercises the actual window.location.assign call beginSignIn makes --
+  // happy-dom (unlike this repo's old jsdom) allows spying on
+  // window.location.assign directly (verified: no "Cannot redefine
+  // property" error here), so we can assert it was never invoked.
+  it("does not auto-redirect again once interactiveTried is already set -- renders the manual nudge instead", async () => {
+    markInteractiveTried();
+    // Also mark silentTried so decideLandAction's first ("holding", a silent
+    // SSO navigation about to happen) branch can never mask the guard this
+    // test targets, regardless of isReturningUser() -- the interactiveTried
+    // nudge branch is what's under test here, not the silent-SSO branch
+    // (that's `landDecision.test.ts`'s job).
+    markSilentTried();
+    const assignSpy = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+
+    render(<App />);
+
+    // Manual nudge, not the auto-bounce holding state.
+    expect(await screen.findByText(/sign-in needed/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.queryByText(/checking your session/i)).toBeNull();
+    // No automatic navigation anywhere (neither the silent-SSO `navigate()`
+    // path nor beginSignIn's direct window.location.assign).
+    expect(assignSpy).not.toHaveBeenCalled();
   });
 });

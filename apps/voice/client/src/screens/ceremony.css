@@ -1,0 +1,8 @@
+/* src/screens/ceremony.css */
+.ceremony { position: relative; width: 100%; height: 100%; }
+.ceremony-copy {
+  position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%);
+  width: 90%; text-align: center; z-index: 12;
+}
+.ceremony-line { margin: 0; font-size: var(--sz-heading); font-weight: var(--w-semibold); color: var(--text-primary); }
+.ceremony-sub { margin-top: var(--sm); font-size: var(--sz-label); color: var(--text-interim); }

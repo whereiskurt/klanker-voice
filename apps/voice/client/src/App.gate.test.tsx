@@ -14,7 +14,10 @@ import type { ConnectionEvent, OfferRejection } from "./transport/connectionStat
 // side effects are mocked (same seams as useVoiceSession.rejection.test.ts).
 vi.mock("./media/getMic", () => ({ requestMic: vi.fn() }));
 vi.mock("./transport/voiceSession", () => ({ createVoiceSession: vi.fn() }));
-vi.mock("./greeting/greetingPlayer", () => ({ playRandomGreeting: vi.fn() }));
+// `unlockAudioPlayback` must also be mocked -- `useVoiceSession.start()`
+// imports it alongside `playRandomGreeting` (voice-flow-redesign Task 9); an
+// undefined import would throw when `start()` calls it.
+vi.mock("./greeting/greetingPlayer", () => ({ playRandomGreeting: vi.fn(), unlockAudioPlayback: vi.fn() }));
 
 const CONCURRENCY_REJECTION: OfferRejection = {
   status: 403,
@@ -23,8 +26,8 @@ const CONCURRENCY_REJECTION: OfferRejection = {
 };
 
 /** A minimal well-formed JWT carrying a real (non-"no-access") tier, so
- * useAuth reports authenticated and "Tap to talk" routes into voice.start()
- * rather than the sign-in redirect. */
+ * useAuth reports authenticated and the ReadyToStart CTA routes into
+ * voice.start() rather than the land/sign-in redirect. */
 function authenticateAsPaidTier(): void {
   const payload = { "https://klankermaker.ai/tier_id": "paid" };
   const base64 = btoa(JSON.stringify(payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -77,7 +80,7 @@ describe("App — concurrency-limit renders the GateCard (BUG 3)", () => {
 
     render(<App />);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+      fireEvent.click(screen.getByRole("button", { name: /let's start talking/i }));
     });
 
     await waitFor(() =>
@@ -104,7 +107,7 @@ describe("App — concurrency-limit renders the GateCard (BUG 3)", () => {
 
     render(<App />);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+      fireEvent.click(screen.getByRole("button", { name: /let's start talking/i }));
     });
 
     await waitFor(() =>

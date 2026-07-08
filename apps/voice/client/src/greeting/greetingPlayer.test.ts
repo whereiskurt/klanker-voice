@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { unlockAudioPlayback } from "./greetingPlayer";
 
 const MANIFEST = { voiceId: "v", model: "eleven_flash_v2_5", clips: [{ text: "hi", file: "greeting-1.mp3" }] };
 
@@ -36,5 +37,11 @@ describe("playRandomGreeting", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ ...MANIFEST, clips: [] }) }));
     const { playRandomGreeting } = await import("./greetingPlayer");
     expect(await playRandomGreeting()).toBeNull();
+  });
+});
+
+describe("unlockAudioPlayback", () => {
+  it("does not throw when called within a gesture", () => {
+    expect(() => unlockAudioPlayback()).not.toThrow();
   });
 });

@@ -2,46 +2,55 @@ import { useEffect, useReducer, useState } from "react";
 import { RTVIEvent, type PipecatClient } from "@pipecat-ai/client-js";
 import OrbCanvas from "../orb/OrbCanvas";
 import { useOrbBinding } from "../orb/useOrbBinding";
-import Captions from "../captions/Captions";
-import { captionReducer, INITIAL_CAPTION_STATE } from "../captions/captionReducer";
+import Transcript from "../transcript/Transcript";
+import { transcriptReducer, INITIAL_TRANSCRIPT_STATE } from "../transcript/transcriptReducer";
+import { playRandomGreeting, type GreetingHandle } from "../greeting/greetingPlayer";
 import Countdown from "../timer/Countdown";
 import LatencyHud from "../hud/LatencyHud";
 import "./live.css";
 
 export interface LiveProps {
   client: PipecatClient;
-  /** Tier session_max_seconds from the `/api/offer` connect flow (CLNT-05,
-   * D-10) -- `null` until it lands or for a no-cap (bypass) session, in
-   * which case the countdown pill simply doesn't render. */
   sessionMaxSeconds: number | null;
+  /** User tapped "End chat" — App routes this to useVoiceSession.endChat(). */
+  onEndChat: () => void;
 }
 
 /**
- * The live-conversation stage (CLNT-03/04/05/06): the hero orb now driven by
- * real RTVI state/amplitude (`useOrbBinding`) plus the subtitle caption band
- * (`captionReducer` fed by RTVI transcript frames), the persistent session
- * countdown, and the off-by-default latency HUD. Mounted by `App.tsx` only
- * once `connectionState` reaches "connected" — no conversation UI exists
- * before that (T-05-04-E), which also makes THIS component's mount time
- * exactly "the moment the session reaches connected" (D-10's countdown
- * start clock).
+ * The live-conversation stage (voice-flow-redesign §3.4): a COMPACT orb header
+ * over a growing, scrollable transcript. Mounted by App only once the
+ * connection reached "connected" AND the ceremony finished, so mount time is
+ * exactly "the orb appears" — which is where the KPH greeting now plays
+ * (orb-before-greeting; iOS audio was unlocked on the start gesture).
  */
-export default function Live({ client, sessionMaxSeconds }: LiveProps) {
+export default function Live({ client, sessionMaxSeconds, onEndChat }: LiveProps) {
   const orb = useOrbBinding(client);
-  const [captions, dispatchCaption] = useReducer(captionReducer, INITIAL_CAPTION_STATE);
+  const [turns, dispatch] = useReducer(transcriptReducer, INITIAL_TRANSCRIPT_STATE);
+
+  // Freeze the countdown start clock at mount (== "orb appears"). Live
+  // re-renders on every orb-amplitude/transcript frame, so an inline Date.now()
+  // would reset the countdown baseline every render and it would never advance.
   const [startedAt] = useState<number>(() => Date.now());
 
+  // Play the greeting exactly once as the orb appears.
   useEffect(() => {
-    const onUserTranscript = (data: { text: string; final: boolean }) => {
-      dispatchCaption({ type: "USER_TRANSCRIPT", text: data.text, final: data.final });
-    };
-    const onBotTranscript = (data: { text: string }) => {
-      dispatchCaption({ type: "AGENT_TRANSCRIPT", text: data.text });
-    };
+    let handle: GreetingHandle | null = null;
+    let cancelled = false;
+    void playRandomGreeting().then((h) => {
+      if (cancelled) { h?.stop(); return; }
+      handle = h;
+    });
+    return () => { cancelled = true; handle?.stop(); };
+  }, []);
+
+  useEffect(() => {
+    const onUserTranscript = (data: { text: string; final: boolean }) =>
+      dispatch({ type: "USER_TRANSCRIPT", text: data.text, final: data.final });
+    const onBotTranscript = (data: { text: string }) =>
+      dispatch({ type: "AGENT_TRANSCRIPT", text: data.text });
 
     client.on(RTVIEvent.UserTranscript, onUserTranscript);
     client.on(RTVIEvent.BotTranscript, onBotTranscript);
-
     return () => {
       client.off(RTVIEvent.UserTranscript, onUserTranscript);
       client.off(RTVIEvent.BotTranscript, onBotTranscript);
@@ -50,11 +59,14 @@ export default function Live({ client, sessionMaxSeconds }: LiveProps) {
 
   return (
     <div className="live">
-      <OrbCanvas state={orb.state} amplitude={orb.amplitude} />
-      <Captions captions={captions} />
-      {sessionMaxSeconds != null && sessionMaxSeconds > 0 ? (
-        <Countdown sessionMaxSeconds={sessionMaxSeconds} startedAt={startedAt} />
-      ) : null}
+      <div className="live-orb"><OrbCanvas state={orb.state} amplitude={orb.amplitude} /></div>
+      <Transcript turns={turns} />
+      <div className="live-bar">
+        <button type="button" className="live-endchat" onClick={onEndChat}>End chat</button>
+        {sessionMaxSeconds != null && sessionMaxSeconds > 0 ? (
+          <Countdown sessionMaxSeconds={sessionMaxSeconds} startedAt={startedAt} />
+        ) : null}
+      </div>
       <LatencyHud client={client} />
     </div>
   );

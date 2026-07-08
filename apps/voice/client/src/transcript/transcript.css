@@ -1,0 +1,21 @@
+/* src/transcript/transcript.css */
+.transcript-wrap { position: absolute; inset: var(--stage-orb-header) 0 var(--stage-action-bar); z-index: 2; }
+.transcript {
+  height: 100%; overflow-y: auto; padding: var(--sm) var(--lg) var(--lg);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, var(--stage-core) var(--lg), var(--stage-core) 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, var(--stage-core) var(--lg), var(--stage-core) 100%);
+}
+.turn { margin: var(--md) 0; }
+.turn-chip {
+  display: inline-block; margin-bottom: var(--xs); padding: var(--xs) var(--sm);
+  border-radius: 999px; font-size: var(--sz-label); font-weight: var(--w-semibold); letter-spacing: 0.06em;
+}
+.turn-chip--user { color: var(--text-secondary); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.turn-chip--agent { color: var(--stage-core); background: var(--accent); }
+.turn-text { display: block; font-size: var(--sz-body); line-height: var(--lh-prose); color: var(--text-primary); }
+.turn--interim .turn-text { color: var(--text-interim); font-style: italic; }
+.transcript-jump {
+  position: absolute; right: var(--md); bottom: var(--md); min-height: var(--hit-min);
+  padding: 0 var(--md); border: 1px solid var(--border-subtle); border-radius: 999px;
+  background: var(--scrim); color: var(--text-primary); font-size: var(--sz-label); cursor: pointer;
+}
