@@ -14,7 +14,10 @@ import type { ConnectionEvent, OfferRejection } from "./transport/connectionStat
 // side effects are mocked (same seams as useVoiceSession.rejection.test.ts).
 vi.mock("./media/getMic", () => ({ requestMic: vi.fn() }));
 vi.mock("./transport/voiceSession", () => ({ createVoiceSession: vi.fn() }));
-vi.mock("./greeting/greetingPlayer", () => ({ playRandomGreeting: vi.fn() }));
+// `unlockAudioPlayback` must also be mocked -- `useVoiceSession.start()`
+// imports it alongside `playRandomGreeting` (voice-flow-redesign Task 9); an
+// undefined import would throw when `start()` calls it.
+vi.mock("./greeting/greetingPlayer", () => ({ playRandomGreeting: vi.fn(), unlockAudioPlayback: vi.fn() }));
 
 const CONCURRENCY_REJECTION: OfferRejection = {
   status: 403,

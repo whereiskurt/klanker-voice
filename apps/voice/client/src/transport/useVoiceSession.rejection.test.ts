@@ -11,7 +11,10 @@ import type { ConnectionEvent, OfferRejection } from "./connectionState";
 // driven deterministically without a real getUserMedia/WebRTC/Audio stack.
 vi.mock("../media/getMic", () => ({ requestMic: vi.fn() }));
 vi.mock("./voiceSession", () => ({ createVoiceSession: vi.fn() }));
-vi.mock("../greeting/greetingPlayer", () => ({ playRandomGreeting: vi.fn() }));
+// `unlockAudioPlayback` must also be mocked -- `start()` imports it alongside
+// `playRandomGreeting` (voice-flow-redesign Task 9); an undefined import
+// would throw when `start()` calls it.
+vi.mock("../greeting/greetingPlayer", () => ({ playRandomGreeting: vi.fn(), unlockAudioPlayback: vi.fn() }));
 
 afterEach(() => { vi.clearAllMocks(); });
 

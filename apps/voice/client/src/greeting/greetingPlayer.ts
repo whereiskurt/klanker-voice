@@ -31,6 +31,23 @@ async function loadManifest(): Promise<GreetingManifest | null> {
   }
 }
 
+/**
+ * iOS audio unlock (voice-flow-redesign Task 9). Play + immediately pause a
+ * muted, silent audio element inside the start gesture so a LATER
+ * `playRandomGreeting()` (fired on Live mount, after the ceremony) is
+ * permitted by Safari's autoplay policy. No-op-safe: swallows a blocked play.
+ */
+export function unlockAudioPlayback(): void {
+  try {
+    const el = new Audio();
+    el.muted = true;
+    // A 1-sample silent wav data URI — enough to satisfy the gesture unlock.
+    el.src =
+      "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=";
+    void el.play().then(() => el.pause()).catch(() => { /* blocked: greeting will retry on mount */ });
+  } catch { /* no Audio ctor (SSR/test): no-op */ }
+}
+
 export async function playRandomGreeting(): Promise<GreetingHandle | null> {
   const manifest = await loadManifest();
   if (!manifest || manifest.clips.length === 0) return null;
