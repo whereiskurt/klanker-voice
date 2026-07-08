@@ -1290,11 +1290,13 @@ export default function Live({ client, sessionMaxSeconds, onEndChat }: LiveProps
 Append to `src/screens/live.css` (add; keep existing rules the orb relies on):
 
 ```css
-/* voice-flow-redesign: compact orb header band + bottom action bar. */
-.live-orb { position: absolute; top: 0; left: 0; right: 0; height: 176px; z-index: 1; }
-.live-orb canvas { max-height: 176px; }
+/* voice-flow-redesign: compact orb header band + bottom action bar. Heights
+   come from the shared tokens introduced in Task 2 (--stage-orb-header /
+   --stage-action-bar) so this band and the transcript's inset stay in sync. */
+.live-orb { position: absolute; top: 0; left: 0; right: 0; height: var(--stage-orb-header); z-index: 1; }
+.live-orb canvas { max-height: var(--stage-orb-header); }
 .live-bar {
-  position: absolute; bottom: 0; left: 0; right: 0; height: 96px; z-index: 6;
+  position: absolute; bottom: 0; left: 0; right: 0; height: var(--stage-action-bar); z-index: 6;
   display: flex; align-items: center; justify-content: space-between; padding: 0 var(--lg);
   background: linear-gradient(to top, color-mix(in srgb, var(--stage-edge) 95%, transparent), transparent);
 }
