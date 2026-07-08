@@ -19,5 +19,6 @@ export default defineConfig({
     // chain entirely and runs the same component tests.
     environment: "happy-dom",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    setupFiles: ["./vitest.setup.ts"],
   },
 });
