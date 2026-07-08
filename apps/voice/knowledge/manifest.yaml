@@ -200,7 +200,22 @@ topics:
           do-not-say) promoted directly into the pack; topology confirmed
           against the repo's Virtual Lab Design (KVM).png diagram.
 
-  # klanker-voice (self): candidate next topic (Amendment 3-D: fed by Phase
-  # 8's own docs/architecture work). Append an entry here (+ a matching
-  # router/topic-map.yaml entry) once its pack lands -- this file's shape
-  # does not change, only APPEND.
+  - id: klanker-voice
+    spoken_name: "klanker-voice, the voice agent you're talking to"
+    pack: klanker-voice.md
+    sources:
+      - path: docs/superpowers/specs/2026-07-04-klanker-voice-design.md
+        kind: docs
+        public: true
+        skip_if_missing: true
+        note: >-
+          Design-spec SEED only. The pack is HAND-AUTHORED public-safe (no
+          account IDs, internal hostnames, cost specifics, or unshipped
+          roadmap) -- NOT auto-generated. A future `make knowledge` refresh
+          MUST re-scrub against the persona's never-say list before writing;
+          klanker-voice ships pack-only (no BM25 index) to avoid chunking
+          sensitive design text into retrieval.
+
+  # Any further topics: append the same shape here (+ a matching
+  # router/topic-map.yaml entry) -- this file's shape does not change, only
+  # APPEND.

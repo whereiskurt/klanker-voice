@@ -64,6 +64,14 @@ async def test_kvmlab_and_kvm_spelled_out():
     assert await _f("a kvm host") == "a kay vee em host"
 
 
+async def test_kv_and_kv_cli_spelled_out_without_touching_kvm():
+    # kv mirrors km: bare kv -> "klanker voice", "kv CLI" -> "klanker voice
+    # tool" (article composes), and kv must NOT fire inside kvm / kvmlab.
+    assert await _f("run kv now") == "run klanker voice now"
+    assert await _f("the kv CLI is slick") == "the klanker voice tool is slick"
+    assert await _f("the kvm and kvmlab") == "the kay vee em and kay vee em lab"
+
+
 async def test_cli_spelled_out():
     assert await _f("the CLI tool") == "the see elle eye tool"
 

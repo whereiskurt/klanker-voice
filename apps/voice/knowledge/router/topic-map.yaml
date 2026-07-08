@@ -211,6 +211,51 @@ topics:
       - term: " kvm "
         weight: 1                    # weak alone -- generic virtualization term
 
-  # klanker-voice (self) and any further topics: append the same shape here
-  # plus a matching manifest.yaml topic (Amendment 1/5) -- this schema does
-  # not change.
+  - id: klanker-voice
+    spoken_name: "klanker-voice, the voice agent you're talking to"
+    hook: >-
+      The project you're talking to right now -- a public speech-to-speech
+      voice agent (that's KPH) built as a cascaded pipeline: Deepgram
+      speech-to-text, Claude Haiku thinking, ElevenLabs voice, every stage
+      streaming for about a second voice-to-voice with natural barge-in, gated
+      by a magic-link login and run by a little Go CLI called kv.
+    keywords:
+      - term: "klanker voice"
+        weight: 3
+      - term: "klanker-voice"
+        weight: 3
+      - term: "klankervoice"
+        weight: 3
+      - term: "pipecat"
+        weight: 3
+      - term: "kv cli"
+        weight: 2
+      - term: "voice agent"
+        weight: 2
+      - term: "voice pipeline"
+        weight: 2
+      - term: "speech to speech"
+        weight: 2
+      - term: "cascaded pipeline"
+        weight: 2
+      - term: "barge in"
+        weight: 2
+      - term: "deepgram"
+        weight: 2
+      - term: "elevenlabs"
+        weight: 2
+      - term: "eleven labs"
+        weight: 2
+      - term: "how do you work"
+        weight: 2
+      - term: "how were you built"
+        weight: 2
+      - term: "speech to text"
+        weight: 1
+      - term: "text to speech"
+        weight: 1
+      - term: " kv "
+        weight: 1                    # weak alone -- also a common abbreviation
+
+  # Any further topics: append the same shape here plus a matching
+  # manifest.yaml topic (Amendment 1/5) -- this schema does not change.

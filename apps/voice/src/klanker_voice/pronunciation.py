@@ -36,6 +36,12 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     # "kay vee em lab" via two passes leaving a stray "lab".
     (re.compile(r"\bkvmlab\b", re.IGNORECASE), "kay vee em lab"),
     (re.compile(r"\bkvm\b", re.IGNORECASE), "kay vee em"),
+    # kv is the klanker-voice CLI (sibling to km). Mirror the km treatment:
+    # "kv CLI" -> "klanker voice tool" (before the bare kv/CLI rules), bare
+    # "kv" -> "klanker voice". Word-boundary anchored, so kv never fires inside
+    # "kvm" (v->m is not a boundary) or "kvmlab".
+    (re.compile(r"\bkv\s*CLI\b", re.IGNORECASE), "klanker voice tool"),
+    (re.compile(r"\bkv\b", re.IGNORECASE), "klanker voice"),
     # "the klanker maker tool" -- no leading article in the replacement so the
     # sentence's own "the"/"a" composes ("the km CLI" -> "the klanker maker tool").
     (re.compile(r"\bkm\s*CLI\b", re.IGNORECASE), "klanker maker tool"),
