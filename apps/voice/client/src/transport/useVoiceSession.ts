@@ -107,6 +107,12 @@ export function useVoiceSession(): UseVoiceSessionResult {
    * feed the transport retry controller, which exists ONLY for genuine
    * pre-connect ICE/transport failures (D-11). Reset by `start()`/`stop()`. */
   const rejectedRef = useRef(false);
+  /** Latched once the user explicitly ended the session via endChat(). Like
+   * rejectedRef, this swallows any trailing DISCONNECTED/TRANSPORT_ERROR the
+   * vendor transport emits during/after teardown, so an explicit end can never
+   * be stomped to "failed" or arm a background retry (retryController). Reset
+   * by start()/stop(). */
+  const endedRef = useRef(false);
 
   const dispatch = useCallback((event: ConnectionEvent) => {
     setOutcome((current) => connectionReducer(current, event));
@@ -151,6 +157,12 @@ export function useVoiceSession(): UseVoiceSessionResult {
           // swallow the trailing transport noise entirely: no "failed" stomp,
           // and crucially no retryController.reportFailure() (retry is for
           // pre-connect ICE/transport failures only, never a quota reject).
+          return;
+        }
+
+        if (endedRef.current) {
+          // User already ended the chat explicitly (endChat) — swallow trailing
+          // teardown noise entirely: no "failed" stomp, no retry, no second summary.
           return;
         }
 
@@ -240,6 +252,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     wasConnectedRef.current = false;
     connectedAtRef.current = null;
     rejectedRef.current = false;
+    endedRef.current = false;
     dispatch({ type: "REQUEST_MIC" });
 
     const mic = await requestMic();
@@ -279,6 +292,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     wasConnectedRef.current = false;
     connectedAtRef.current = null;
     rejectedRef.current = false;
+    endedRef.current = false;
     dispatch({ type: "RESET" });
   }, [dispatch]);
 
@@ -286,6 +300,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
    * session down and produces a CLEAN session summary so App shows the ended
    * screen. Mirrors the post-connect DISCONNECTED path but on demand. */
   const endChat = useCallback(async () => {
+    endedRef.current = true;
     const elapsedSeconds =
       connectedAtRef.current != null ? Math.max(0, (Date.now() - connectedAtRef.current) / 1000) : 0;
     // Clear the connected latch BEFORE disconnecting so the trailing transport

@@ -71,3 +71,50 @@ describe("useVoiceSession greeting decoupling (voice-flow-redesign Task 9)", () 
     unmount();
   });
 });
+
+describe("useVoiceSession — endChat latches against trailing teardown noise (hardening)", () => {
+  it("swallows a trailing TRANSPORT_ERROR after endChat() — no 'failed' stomp, no retry, exactly one clean summary", async () => {
+    vi.mocked(requestMic).mockResolvedValue(grantedMic());
+
+    let capturedOnEvent!: (event: ConnectionEvent) => void;
+    vi.mocked(createVoiceSession).mockImplementation((options) => {
+      capturedOnEvent = options.onEvent;
+      return {
+        client: {} as never,
+        connect: async () => { capturedOnEvent({ type: "CONNECTED" }); },
+        // Real vendor teardown: disconnect() itself resolves cleanly, but the
+        // transport can still emit a trailing event asynchronously afterward
+        // (simulated below by calling capturedOnEvent directly) -- exactly the
+        // race endChat's latch exists to guard against.
+        disconnect: async () => {},
+      };
+    });
+
+    const { result, unmount } = renderHook(() => useVoiceSession());
+
+    await act(async () => { await result.current.start(); });
+    await waitFor(() => expect(result.current.outcome.state).toBe("connected"));
+
+    await act(async () => { await result.current.endChat(); });
+
+    // endChat's own clean summary + RESET have landed.
+    expect(result.current.outcome.state).toBe("idle");
+    expect(result.current.sessionSummary?.reason).toBe("clean");
+
+    // The vendor transport's trailing teardown noise arrives AFTER endChat has
+    // already resolved -- must be swallowed entirely by endedRef.
+    act(() => { capturedOnEvent({ type: "TRANSPORT_ERROR" }); });
+
+    // Not stomped to "failed" -- still the idle outcome endChat's RESET produced.
+    expect(result.current.outcome.state).not.toBe("failed");
+    expect(result.current.outcome.state).toBe("idle");
+    // No background reconnect was armed.
+    expect(result.current.retryStatus.kind).toBe("idle");
+    expect(vi.mocked(createVoiceSession)).toHaveBeenCalledTimes(1);
+    // The summary is still exactly the one clean summary endChat produced --
+    // not overwritten/duplicated by the trailing event.
+    expect(result.current.sessionSummary?.reason).toBe("clean");
+
+    unmount();
+  });
+});
