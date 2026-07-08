@@ -47,6 +47,10 @@
   --hit-cta: 96px; /* mic CTA minimum hit area */
   --hit-min: 44px; /* retry/reconnect/HUD-toggle/gate-CTA minimum */
 
+  /* --- Live-stage layout bands (shared by the compact-orb header + action bar) --- */
+  --stage-orb-header: 176px; /* compact orb band height atop the live transcript */
+  --stage-action-bar: 96px;  /* bottom End-chat / countdown bar height */
+
   /* --- Typography: exactly 4 sizes, 2 weights --- */
   --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;

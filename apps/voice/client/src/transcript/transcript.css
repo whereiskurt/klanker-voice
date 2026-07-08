@@ -1,13 +1,13 @@
 /* src/transcript/transcript.css */
-.transcript-wrap { position: absolute; inset: 176px 0 96px; z-index: 2; }
+.transcript-wrap { position: absolute; inset: var(--stage-orb-header) 0 var(--stage-action-bar); z-index: 2; }
 .transcript {
   height: 100%; overflow-y: auto; padding: var(--sm) var(--lg) var(--lg);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
-          mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, var(--stage-core) var(--lg), var(--stage-core) 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, var(--stage-core) var(--lg), var(--stage-core) 100%);
 }
 .turn { margin: var(--md) 0; }
 .turn-chip {
-  display: inline-block; margin-bottom: var(--xs); padding: 2px var(--sm);
+  display: inline-block; margin-bottom: var(--xs); padding: var(--xs) var(--sm);
   border-radius: 999px; font-size: var(--sz-label); font-weight: var(--w-semibold); letter-spacing: 0.06em;
 }
 .turn-chip--user { color: var(--text-secondary); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
