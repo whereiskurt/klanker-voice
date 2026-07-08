@@ -1226,7 +1226,7 @@ Expected: FAIL — `Live` does not accept `onEndChat` / does not call `playRando
 Replace `src/screens/Live.tsx` with:
 
 ```tsx
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { RTVIEvent, type PipecatClient } from "@pipecat-ai/client-js";
 import OrbCanvas from "../orb/OrbCanvas";
 import { useOrbBinding } from "../orb/useOrbBinding";
@@ -1254,6 +1254,10 @@ export interface LiveProps {
 export default function Live({ client, sessionMaxSeconds, onEndChat }: LiveProps) {
   const orb = useOrbBinding(client);
   const [turns, dispatch] = useReducer(transcriptReducer, INITIAL_TRANSCRIPT_STATE);
+  // Freeze the countdown start clock at mount (== "orb appears"). Live
+  // re-renders on every orb-amplitude/transcript frame, so an inline Date.now()
+  // would reset the countdown baseline every render and it would never advance.
+  const [startedAt] = useState<number>(() => Date.now());
 
   // Play the greeting exactly once as the orb appears.
   useEffect(() => {
@@ -1287,7 +1291,7 @@ export default function Live({ client, sessionMaxSeconds, onEndChat }: LiveProps
       <div className="live-bar">
         <button type="button" className="live-endchat" onClick={onEndChat}>End chat</button>
         {sessionMaxSeconds != null && sessionMaxSeconds > 0 ? (
-          <Countdown sessionMaxSeconds={sessionMaxSeconds} startedAt={Date.now()} />
+          <Countdown sessionMaxSeconds={sessionMaxSeconds} startedAt={startedAt} />
         ) : null}
       </div>
       <LatencyHud client={client} />
