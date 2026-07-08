@@ -21,9 +21,6 @@ export type TranscriptEvent =
   | { type: "AGENT_TRANSCRIPT"; text: string }
   | { type: "RESET" };
 
-let nextId = 0;
-const makeId = (): string => `t${nextId++}`;
-
 export function transcriptReducer(state: TranscriptState, event: TranscriptEvent): TranscriptState {
   switch (event.type) {
     case "USER_TRANSCRIPT": {
@@ -32,7 +29,7 @@ export function transcriptReducer(state: TranscriptState, event: TranscriptEvent
       if (tail && tail.speaker === "user" && tail.final === false) {
         return [...state.slice(0, -1), { ...tail, text: event.text, final: event.final }];
       }
-      return [...state, { id: makeId(), speaker: "user", text: event.text, final: event.final }];
+      return [...state, { id: `t${state.length}`, speaker: "user", text: event.text, final: event.final }];
     }
     case "AGENT_TRANSCRIPT": {
       const tail = state[state.length - 1];
@@ -40,7 +37,7 @@ export function transcriptReducer(state: TranscriptState, event: TranscriptEvent
       if (tail && tail.speaker === "agent") {
         return [...state.slice(0, -1), { ...tail, text: `${tail.text} ${event.text}`.trim() }];
       }
-      return [...state, { id: makeId(), speaker: "agent", text: event.text, final: true }];
+      return [...state, { id: `t${state.length}`, speaker: "agent", text: event.text, final: true }];
     }
     case "RESET":
       return INITIAL_TRANSCRIPT_STATE;
