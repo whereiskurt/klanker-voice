@@ -11,7 +11,12 @@
 .live-orb canvas { max-height: var(--stage-orb-header); }
 .live-bar {
   position: absolute; bottom: 0; left: 0; right: 0; height: var(--stage-action-bar); z-index: 6;
-  display: flex; align-items: center; justify-content: space-between; padding: 0 var(--lg);
+  /* End chat + the countdown cluster together on the RIGHT (voice-client UX
+     hardening 260709-aah): the bottom-left corner is owned exclusively by
+     the Latency toggle (.hud-toggle, hud.css, z-index:10) -- a
+     space-between layout put this bar's first child in that same corner,
+     underneath the toggle and unclickable. */
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--md); padding: 0 var(--lg);
   background: linear-gradient(to top, color-mix(in srgb, var(--stage-edge) 95%, transparent), transparent);
 }
 .live-endchat {

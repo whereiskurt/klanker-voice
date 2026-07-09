@@ -61,11 +61,14 @@ export default function Live({ client, sessionMaxSeconds, onEndChat }: LiveProps
     <div className="live">
       <div className="live-orb"><OrbCanvas state={orb.state} amplitude={orb.amplitude} /></div>
       <Transcript turns={turns} />
+      {/* Bottom-right cluster (UX hardening 260709-aah): countdown then End
+          chat, so End chat lands furthest right -- the bottom-left corner is
+          left solely to the Latency toggle (hud.css .hud-toggle, z-index:10). */}
       <div className="live-bar">
-        <button type="button" className="live-endchat" onClick={onEndChat}>End chat</button>
         {sessionMaxSeconds != null && sessionMaxSeconds > 0 ? (
           <Countdown sessionMaxSeconds={sessionMaxSeconds} startedAt={startedAt} />
         ) : null}
+        <button type="button" className="live-endchat" onClick={onEndChat}>End chat</button>
       </div>
       <LatencyHud client={client} />
     </div>
