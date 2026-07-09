@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PipecatClient } from "@pipecat-ai/client-js";
 import { requestMic, type MicError } from "../media/getMic";
 import { getToken } from "../auth/tokenStore";
-import { unlockAudioPlayback } from "../greeting/greetingPlayer";
+import { primeGreeting, unlockAudioPlayback } from "../greeting/greetingPlayer";
 import {
   connectionReducer,
   INITIAL_CONNECTION_OUTCOME,
@@ -279,6 +279,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
     // (after the ceremony). The clip itself is played by Live, not here
     // (voice-flow-redesign: orb appears, THEN KPH greets).
     unlockAudioPlayback();
+    // Arm the REAL greeting Audio element under this same activation (UX
+    // hardening): playRandomGreeting() on Live mount then RESUMES it instead
+    // of playing a fresh, unauthorized element out-of-gesture.
+    primeGreeting();
 
     await beginConnect();
   }, [dispatch, beginConnect]);
