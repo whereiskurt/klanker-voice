@@ -171,6 +171,29 @@ def build_pipeline(
     )
 
 
+def build_ambience_mixer(cfg):  # noqa: ANN001 -- PipelineConfig (avoid import churn)
+    """Build the greenhouse coffee-shop ``SoundfileMixer`` (mixing OFF until the
+    router enables it via ``MixerEnableFrame``), or ``None`` when ambience is
+    disabled or the WAV is missing.
+
+    The output transport MUST set ``audio_out_sample_rate`` to
+    ``cfg.greenhouse.ambience_sample_rate`` to match the WAV -- the mixer does
+    not resample (it silently drops a mismatched file). Shared by server.py and
+    bot.py so both the deployed and local paths get the bed.
+    """
+    gh = cfg.greenhouse
+    if not (gh.ambience_enabled and gh.ambience_file):
+        return None
+    from pipecat.audio.mixers.soundfile_mixer import SoundfileMixer
+
+    return SoundfileMixer(
+        sound_files={gh.ambience_sound: str(gh.ambience_file)},
+        default_sound=gh.ambience_sound,
+        volume=gh.ambience_volume,
+        mixing=False,  # the router turns it on only while greenhouse is active
+    )
+
+
 def build_worker(pipeline: Pipeline, *, observers: list | None = None) -> PipelineWorker:
     """Wrap a pipeline in a PipelineWorker with metrics on from day one.
 

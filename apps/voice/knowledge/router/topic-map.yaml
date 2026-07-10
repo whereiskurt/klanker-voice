@@ -267,7 +267,8 @@ topics:
   - id: greenhouse
     spoken_name: "Kurt's background"
     hidden: true
-    sticky: true                     # once unlocked, HOLDS the floor: every
+    sticky: true
+    ambience: "coffee-shop"          # enable the coffee-shop bed while in recruiting mode                     # once unlocked, HOLDS the floor: every
                                      # question is answered in candidate framing
                                      # until an `exit` phrase releases it.
     # SUPPRESS the router ack ("" = no spoken beat). Greenhouse's LLM opener is

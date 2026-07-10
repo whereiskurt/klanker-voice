@@ -21,25 +21,42 @@ from pipecat.workers.runner import WorkerRunner
 
 from klanker_voice.config import load_config, load_duplex_config
 from klanker_voice.observers import LatencyReportObserver
-from klanker_voice.pipeline import build_pipeline, build_worker, register_greet_first
+from klanker_voice.pipeline import (
+    build_ambience_mixer,
+    build_pipeline,
+    build_worker,
+    register_greet_first,
+)
 
 load_dotenv(override=True)
 
-transport_params = {
-    "webrtc": lambda: TransportParams(audio_in_enabled=True, audio_out_enabled=True),
-    "eval": lambda: EvalTransportParams(audio_in_enabled=True, audio_out_enabled=True),
-}
-
-
 async def bot(runner_args: RunnerArguments):
     """Per-session bot entry point, discovered and invoked by the pipecat runner."""
-    transport = await create_transport(runner_args, transport_params)
-
     cfg = load_config()  # KLANKER_PIPELINE_CONFIG-aware
     # Wire the full-duplex controller locally too (mirrors server.py), so
     # `KLANKER_PIPELINE_CONFIG=configs/voice2.toml uv run python bot.py -t webrtc`
     # runs the emitter/backchannel path for local mic tuning.
     duplex_cfg = load_duplex_config()  # KLANKER_PIPELINE_CONFIG-aware; disabled unless [duplex]
+
+    # Greenhouse coffee-shop bed (260710) for local testing too — mixer OFF until
+    # the router enables it; pin audio_out_sample_rate to the WAV rate.
+    mixer = build_ambience_mixer(cfg)
+    webrtc_params = (
+        TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            audio_out_sample_rate=cfg.greenhouse.ambience_sample_rate,
+            audio_out_mixer=mixer,
+        )
+        if mixer is not None
+        else TransportParams(audio_in_enabled=True, audio_out_enabled=True)
+    )
+    transport_params = {
+        "webrtc": lambda: webrtc_params,
+        "eval": lambda: EvalTransportParams(audio_in_enabled=True, audio_out_enabled=True),
+    }
+    transport = await create_transport(runner_args, transport_params)
+
     built = build_pipeline(cfg, transport, duplex_cfg=duplex_cfg)
     # Every session is measured (D-11): JSON artifact in artifacts/harness/
     # plus a console table at session end, with zero extra flags.

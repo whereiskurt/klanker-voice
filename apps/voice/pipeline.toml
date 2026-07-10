@@ -72,5 +72,12 @@ winddown_warning_seconds = 30      # D-04: lead time before session_max the warn
 goodbye_grace_seconds = 5          # D-05: cap on letting the deterministic goodbye TTS finish before hard-close
 user_silence_timeout = 50          # D-06 layer 2: no user speech for this long (45-60s band) -> teardown
 reconnect_grace_seconds = 12       # D-07: transport-disconnect grace (10-15s band) before teardown
+
 warning_copy = "Just a heads up: we're coming up on the time limit for this chat, so let's start wrapping up."
 goodbye_copy = "That's my cue to go — thanks for chatting, take care!"
+
+[greenhouse]                        # coffee-shop ambient bed for recruiting mode (260710)
+ambience_enabled = true             # SoundfileMixer under the voice while greenhouse is active
+ambience_sound = "coffee-shop"      # assets/ambience/{ambience_sound}.wav (mono, 24kHz)
+ambience_volume = 0.12              # subtle (0.0-1.0); tune live
+ambience_sample_rate = 24000        # must match the WAV + output transport (mixer won't resample)
