@@ -128,6 +128,93 @@ class KnowledgeConfig:
     # field ending in _token(s) as credential-looking material)
 
 
+#: Default backchannel lexicon (full-duplex, 2026-07-10). A user utterance
+#: spoken *while the concierge is talking* that consists ONLY of these short
+#: words (and is no longer than ``max_backchannel_words``) is treated as a
+#: listening cue — "keep going" — not a barge-in, so it never truncates the
+#: bot's turn. Kept deliberately small and unambiguous: every entry must be a
+#: word a listener says to *encourage* the speaker, never one that starts a
+#: real interjection ("wait", "no", "stop" are NOT here — those must barge in).
+DEFAULT_BACKCHANNEL_WORDS: tuple[str, ...] = (
+    "yeah",
+    "yep",
+    "yes",
+    "uh-huh",
+    "uhhuh",
+    "mhm",
+    "mm-hm",
+    "mmhm",
+    "mm",
+    "okay",
+    "ok",
+    "right",
+    "sure",
+    "gotcha",
+    "got",
+    "it",
+    "cool",
+    "nice",
+    "totally",
+    "exactly",
+    "true",
+    "hmm",
+    "oh",
+    "wow",
+    "makes",
+    "sense",
+)
+
+#: Default bot backchannel phrases (full-duplex emitter). When the emitter is
+#: on, the concierge drops one of these — short, sent straight to TTS, never
+#: added to the LLM context — when the visitor pauses mid-thought, so it sounds
+#: like it's actively listening. Rotated round-robin (deterministic) so it
+#: doesn't repeat the same token back to back.
+DEFAULT_EMITTER_PHRASES: tuple[str, ...] = ("mm-hm.", "right.", "yeah.", "gotcha.")
+
+
+@dataclass(frozen=True)
+class DuplexConfig:
+    """The optional ``[duplex]`` table (full-duplex concept, 2026-07-10).
+
+    Loaded independently via :func:`load_duplex_config`, mirroring
+    :class:`QuotaConfig` / :class:`KnowledgeConfig`. Unlike those two,
+    ``[duplex]`` is **optional**: a config file without the table yields the
+    default (``enabled=False``), so the live ``voice1`` pipeline and every
+    existing fixture behave exactly as before. Only the ``voice2`` variant
+    (``configs/voice2.toml``) turns it on.
+
+    Attributes:
+        enabled: Master switch. False -> no ``DuplexController`` is inserted
+            and the pipeline is the shipped half-duplex cascade.
+        backchannel_emitter: When True the concierge emits its own short
+            "mm-hm" listening cues while the visitor talks (higher "we're both
+            live" feel, higher talk-over risk — the 07-08 spec's deferred
+            non-goal, opted into for voice2).
+        max_backchannel_words: An utterance longer than this (in words) is
+            never treated as a backchannel, however it's worded.
+        interruption_hold_ms: How long the controller holds a barge-in
+            interruption while it waits for the first transcript to decide
+            backchannel-vs-real. Genuine interruptions are delayed by at most
+            this (or the time-to-first-partial, whichever is shorter). The one
+            knob that trades barge-in latency for backchannel accuracy — tune
+            live.
+        emitter_min_gap_seconds: Rate-limit: minimum spacing between emitted
+            bot backchannels, so it can't machine-gun "mm-hm".
+        backchannel_words: The listening-cue lexicon (see
+            ``DEFAULT_BACKCHANNEL_WORDS``).
+        emitter_phrases: The bot's own backchannel phrases (see
+            ``DEFAULT_EMITTER_PHRASES``).
+    """
+
+    enabled: bool = False
+    backchannel_emitter: bool = False
+    max_backchannel_words: int = 3
+    interruption_hold_ms: int = 250
+    emitter_min_gap_seconds: float = 4.0
+    backchannel_words: tuple[str, ...] = DEFAULT_BACKCHANNEL_WORDS
+    emitter_phrases: tuple[str, ...] = DEFAULT_EMITTER_PHRASES
+
+
 #: Default D-04 wind-down copy (QUOT-03, 04-05). Lives here — not in a code
 #: comment — so `load_quota_config` can fall back to a real, spoken-ready
 #: string when `pipeline.toml` doesn't override it; the checked-in TOML sets
@@ -411,6 +498,68 @@ def load_knowledge_config(path: Path | str | None = None) -> KnowledgeConfig:
         retrieval_enabled=retrieval_enabled,
         retrieval_top_k=retrieval_top_k,
         retrieval_budget=retrieval_budget,
+    )
+
+
+def _require_str_tuple(name: str, raw: object, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Parse an optional TOML array-of-strings into a lowercased tuple.
+
+    Absent -> ``default``. A present-but-not-a-list value, or any non-string /
+    empty entry, is a loud :class:`ConfigError` (a typo'd ``[duplex]`` list
+    must fail at load, not silently drop entries).
+    """
+    if raw is None:
+        return default
+    if not isinstance(raw, list):
+        raise ConfigError(f"{name} must be a TOML array of strings")
+    out: list[str] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, str) or not item.strip():
+            raise ConfigError(f"{name}[{i}] must be a non-empty string")
+        out.append(item.strip().lower())
+    if not out:
+        raise ConfigError(f"{name} must not be empty when present")
+    return tuple(out)
+
+
+def load_duplex_config(path: Path | str | None = None) -> DuplexConfig:
+    """Parse the OPTIONAL ``[duplex]`` table into a :class:`DuplexConfig`.
+
+    Same file/path resolution as :func:`load_config`. Unlike ``[quota]`` /
+    ``[knowledge]``, ``[duplex]`` is optional: a config file without it returns
+    ``DuplexConfig()`` (disabled), so the shipped ``voice1`` pipeline and every
+    fixture that predates full-duplex are unaffected. Only ``voice2`` sets it.
+    """
+    path = _resolve_config_path(path)
+    data = _load_toml_data(path)
+    table = data.get("duplex")
+    if table is None:
+        return DuplexConfig()
+    if not isinstance(table, dict):
+        raise ConfigError("pipeline.toml [duplex] must be a table")
+
+    return DuplexConfig(
+        enabled=bool(table.get("enabled", False)),
+        backchannel_emitter=bool(table.get("backchannel_emitter", False)),
+        max_backchannel_words=int(
+            _require_positive_under(
+                "duplex.max_backchannel_words", table.get("max_backchannel_words", 3), 20.0
+            )
+        ),
+        interruption_hold_ms=int(
+            _require_range(
+                "duplex.interruption_hold_ms", table.get("interruption_hold_ms", 250), 0.0, 2000.0
+            )
+        ),
+        emitter_min_gap_seconds=_require_range(
+            "duplex.emitter_min_gap_seconds", table.get("emitter_min_gap_seconds", 4.0), 0.0, 60.0
+        ),
+        backchannel_words=_require_str_tuple(
+            "duplex.backchannel_words", table.get("backchannel_words"), DEFAULT_BACKCHANNEL_WORDS
+        ),
+        emitter_phrases=_require_str_tuple(
+            "duplex.emitter_phrases", table.get("emitter_phrases"), DEFAULT_EMITTER_PHRASES
+        ),
     )
 
 

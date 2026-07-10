@@ -18,7 +18,13 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.processors.frameworks.rtvi import RTVIProcessor
 from pipecat.transports.base_transport import BaseTransport
 
-from klanker_voice.config import KnowledgeConfig, PipelineConfig, load_knowledge_config
+from klanker_voice.config import (
+    DuplexConfig,
+    KnowledgeConfig,
+    PipelineConfig,
+    load_knowledge_config,
+)
+from klanker_voice.duplex import DuplexController
 from klanker_voice.factories import (
     build_llm,
     build_stt,
@@ -62,6 +68,7 @@ def build_pipeline(
     *,
     rtvi: RTVIProcessor | None = None,
     knowledge_cfg: KnowledgeConfig | None = None,
+    duplex_cfg: DuplexConfig | None = None,
     remaining_seconds_fn: Callable[[], float | None] | None = None,
 ) -> BuiltPipeline:
     """Assemble the canonical cascade pipeline from config.
@@ -138,9 +145,17 @@ def build_pipeline(
     processors = [transport.input()]
     if rtvi is not None:
         processors.append(rtvi)
+    processors.append(stt)
+    # Full-duplex (voice2): the DuplexController sits between STT and the
+    # router so it sees the STT transcripts, the upstream bot-speaking frames,
+    # AND the source-queued InterruptionFrame *before* it reaches the
+    # aggregator/LLM/TTS — the one spot where a barge-in can be withheld for a
+    # backchannel. Omitted entirely when duplex is disabled (voice1), so the
+    # shipped cascade is byte-for-byte unchanged.
+    if duplex_cfg is not None and duplex_cfg.enabled:
+        processors.append(DuplexController(duplex_cfg))
     processors.extend(
         [
-            stt,
             router,
             user_aggregator,
             llm,

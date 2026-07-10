@@ -43,9 +43,14 @@ from pipecat.transports.smallwebrtc.request_handler import (
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
-from klanker_voice import quota, session
+from klanker_voice import quota, session, variants
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
-from klanker_voice.config import load_config, load_quota_config
+from klanker_voice.config import (
+    load_config,
+    load_duplex_config,
+    load_knowledge_config,
+    load_quota_config,
+)
 from klanker_voice.observers import LatencyReportObserver
 from klanker_voice.pipeline import (
     build_pipeline,
@@ -139,27 +144,46 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def _run_session(connection: SmallWebRTCConnection, lifecycle: SessionLifecycle) -> None:
+async def _run_session(
+    connection: SmallWebRTCConnection,
+    lifecycle: SessionLifecycle,
+    variant: str = variants.DEFAULT_VARIANT,
+) -> None:
     """Build and run the pipeline over an established SmallWebRTC
     connection, wiring the D-04/D-05 spoken wind-down and D-06/D-07 idle-
     teardown layers onto the real worker/transport/context (04-05) —
     :class:`SessionLifecycle` deliberately never holds these references
     itself (module docstring), so this is the one seam that closes the loop
     between its callback hooks and the live pipeline.
+
+    ``variant`` (full-duplex, 2026-07-10) selects which pipeline config the
+    session runs — ``voice1`` (default) is today's ``pipeline.toml``; ``voice2``
+    is ``configs/voice2.toml`` (Flux STT + duplex controller). It only steers
+    the *pipeline* (stt/turn/llm/tts/persona/knowledge/duplex); auth, transport,
+    teardown, and the site-wide budget ``quota`` are variant-independent, so
+    quota is always sourced from the default config.
     """
     transport = SmallWebRTCTransport(
         params=_WEBRTC_TRANSPORT_PARAMS,
         webrtc_connection=connection,
     )
-    cfg = load_config()
-    quota_cfg = load_quota_config()
+    config_path = variants.variant_config_path(variant)  # None -> default pipeline.toml
+    cfg = load_config(config_path)
+    knowledge_cfg = load_knowledge_config(config_path)
+    duplex_cfg = load_duplex_config(config_path)
+    quota_cfg = load_quota_config()  # global budget guardrail — never per-variant
     rtvi = build_rtvi_processor()
     # 07-05 / D-06 time-aware pacing: source the router's remaining_seconds from
     # THIS session's live lifecycle (the same instance that owns the service
     # timer + countdown), so KPH tightens its answers as the session clock runs
     # down. The dev/eval path (bot.py) supplies nothing -> stays None (no cap).
     built = build_pipeline(
-        cfg, transport, rtvi=rtvi, remaining_seconds_fn=lifecycle.remaining_seconds
+        cfg,
+        transport,
+        rtvi=rtvi,
+        knowledge_cfg=knowledge_cfg,
+        duplex_cfg=duplex_cfg,
+        remaining_seconds_fn=lifecycle.remaining_seconds,
     )
     worker = build_worker(
         built.pipeline,
@@ -215,7 +239,9 @@ async def _run_session(connection: SmallWebRTCConnection, lifecycle: SessionLife
 
 
 async def _start_and_run_tracked_session(
-    connection: SmallWebRTCConnection, lifecycle: SessionLifecycle
+    connection: SmallWebRTCConnection,
+    lifecycle: SessionLifecycle,
+    variant: str = variants.DEFAULT_VARIANT,
 ) -> None:
     """Start the session lifecycle (metric + scale-in protection + service
     timer/tick, QUOT-02/INFR-06), run the pipeline, then always stop the
@@ -228,7 +254,7 @@ async def _start_and_run_tracked_session(
     """
     await lifecycle.start()
     try:
-        await _run_session(connection, lifecycle)
+        await _run_session(connection, lifecycle, variant)
     finally:
         await lifecycle.stop()
 
@@ -282,7 +308,10 @@ def _wire_connection_teardown(
 
 
 async def _negotiate_webrtc(
-    body: dict[str, Any], identity: SessionIdentity, gate_result: quota.GateResult
+    body: dict[str, Any],
+    identity: SessionIdentity,
+    gate_result: quota.GateResult,
+    variant: str = variants.DEFAULT_VARIANT,
 ) -> Any:
     """Create/renegotiate the SmallWebRTC connection and return the SDP answer.
 
@@ -313,7 +342,9 @@ async def _negotiate_webrtc(
         # window still reaches release() (voice-concurrency-slot-leak BUG 1).
         _wire_connection_teardown(connection, lifecycle)
         pc_id = connection.pc_id
-        task = asyncio.create_task(_start_and_run_tracked_session(connection, lifecycle))
+        task = asyncio.create_task(
+            _start_and_run_tracked_session(connection, lifecycle, variant)
+        )
         # Retain a strong ref (see SESSION_TASKS) and pop both registries once
         # the session task ends, however it ends.
         SESSION_TASKS[pc_id] = task
@@ -353,6 +384,12 @@ async def offer(request: Request) -> Any:
     if not isinstance(body, dict):
         body = {}
 
+    # Variant selection (full-duplex, 2026-07-10): the browser page (/voice1,
+    # /voice2) posts ?variant=<name>. It's attacker-controllable, so it's
+    # normalized against a fixed allowlist (unknown -> DEFAULT_VARIANT) and only
+    # ever used as a registry key, never a path (see klanker_voice.variants).
+    variant = variants.normalize_variant(request.query_params.get("variant"))
+
     token = _extract_bearer_token(request, body)
     try:
         identity = validate_access_token(token or "")
@@ -371,7 +408,7 @@ async def offer(request: Request) -> Any:
         logger.info(f"/api/offer start_gate rejected sub={identity.sub}: {exc}")
         return JSONResponse(status_code=403, content={"error": "rejected", "detail": str(exc)})
 
-    return await _negotiate_webrtc(body, identity, gate_result)
+    return await _negotiate_webrtc(body, identity, gate_result, variant)
 
 
 @app.patch("/api/offer")
