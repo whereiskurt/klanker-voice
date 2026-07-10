@@ -16,9 +16,13 @@
 
 ## Reading / bookshelf (books Kurt has read and can speak to)
 
-<<PASTE the book list here, OR just send a photo of the bookshelf and KPH will
-transcribe the spines into a list. These become the pack's "Reading / range"
-section — only books actually read, no bluffing.>>
+DONE (2026-07-10): 6 shelf photos transcribed and grouped into greenhouse.md's
+"Reading / range" section (software craft, security/hacker canon, leadership,
+psychology/performance, endurance/running, science/classics) + a note on the
+marathon/trail-ultra medals wall. A few spines were ambiguous — correct or
+extend the list here and it'll be reconciled into the pack:
+
+<<CORRECTIONS / ADDITIONS to the transcribed reading list, if any>>
 
 ## Detailed employment history (the LinkedIn logged-out view gated this)
 
