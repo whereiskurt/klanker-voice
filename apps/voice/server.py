@@ -53,6 +53,7 @@ from klanker_voice.config import (
 )
 from klanker_voice.observers import LatencyReportObserver
 from klanker_voice.pipeline import (
+    build_ambience_mixer,
     build_pipeline,
     build_worker,
     inject_warning_instruction,
@@ -163,15 +164,31 @@ async def _run_session(
     teardown, and the site-wide budget ``quota`` are variant-independent, so
     quota is always sourced from the default config.
     """
-    transport = SmallWebRTCTransport(
-        params=_WEBRTC_TRANSPORT_PARAMS,
-        webrtc_connection=connection,
-    )
     config_path = variants.variant_config_path(variant)  # None -> default pipeline.toml
     cfg = load_config(config_path)
     knowledge_cfg = load_knowledge_config(config_path)
     duplex_cfg = load_duplex_config(config_path)
     quota_cfg = load_quota_config()  # global budget guardrail — never per-variant
+
+    # Greenhouse coffee-shop bed (260710): a per-session SoundfileMixer on the
+    # output transport, OFF until the router enables it while greenhouse is
+    # active. Pin audio_out_sample_rate to the WAV's rate (the mixer won't
+    # resample). No mixer -> the shared default params (byte-identical to before).
+    mixer = build_ambience_mixer(cfg)
+    transport_params = (
+        TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            audio_out_sample_rate=cfg.greenhouse.ambience_sample_rate,
+            audio_out_mixer=mixer,
+        )
+        if mixer is not None
+        else _WEBRTC_TRANSPORT_PARAMS
+    )
+    transport = SmallWebRTCTransport(
+        params=transport_params,
+        webrtc_connection=connection,
+    )
     rtvi = build_rtvi_processor()
     # 07-05 / D-06 time-aware pacing: source the router's remaining_seconds from
     # THIS session's live lifecycle (the same instance that owns the service

@@ -42,7 +42,13 @@ import os
 import re
 from typing import Any, Awaitable, Callable
 
-from pipecat.frames.frames import Frame, TranscriptionFrame, TTSSpeakFrame
+from pipecat.frames.frames import (
+    Frame,
+    MixerEnableFrame,
+    MixerUpdateSettingsFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from klanker_voice.config import KnowledgeConfig, PipelineConfig
@@ -243,6 +249,29 @@ class KnowledgeRouterProcessor(FrameProcessor):
             return [str(a) for a in ack]
         return self._ack_templates
 
+    async def _toggle_ambience(self, prev_topic: str, new_topic: str) -> None:
+        """Enable/disable the greenhouse coffee-shop bed when switching into or
+        out of a topic that declares ``ambience: <sound>`` in the topic-map --
+        only when the session actually built a mixer
+        (``cfg.greenhouse.ambience_enabled``). Mixer control frames flow
+        downstream to the output transport's ``SoundfileMixer``; a no-op when no
+        mixer is present (they pass straight through)."""
+        gh = getattr(self._cfg, "greenhouse", None)
+        if gh is None or not gh.ambience_enabled:
+            return
+        new_amb = self._topic_field(new_topic, "ambience")
+        prev_amb = self._topic_field(prev_topic, "ambience")
+        if new_amb and new_amb != prev_amb:
+            await self.push_frame(
+                MixerUpdateSettingsFrame(
+                    settings={"sound": str(new_amb), "volume": gh.ambience_volume}
+                ),
+                FrameDirection.DOWNSTREAM,
+            )
+            await self.push_frame(MixerEnableFrame(enable=True), FrameDirection.DOWNSTREAM)
+        elif prev_amb and not new_amb:
+            await self.push_frame(MixerEnableFrame(enable=False), FrameDirection.DOWNSTREAM)
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
@@ -297,7 +326,9 @@ class KnowledgeRouterProcessor(FrameProcessor):
         """Swap block1 to ``topic_id``'s pack (+ optional BM25 chunks) and fire
         the spoken ack. Shared by a normal deep-turn switch and a sticky-topic
         release (which passes the exit beat as ``ack_templates``)."""
+        prev_topic = self._active_topic
         self._active_topic = topic_id
+        await self._toggle_ambience(prev_topic, topic_id)
 
         retrieved_chunks = None
         if self._retrieval_index is not None and self._knowledge_cfg.retrieval_enabled:

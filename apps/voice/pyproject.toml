@@ -3,7 +3,7 @@ name = "klanker-voice"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "pipecat-ai[anthropic,deepgram,runner,webrtc]~=1.5.0",
+    "pipecat-ai[anthropic,deepgram,runner,soundfile,webrtc]~=1.5.0",
     "pyjwt[crypto]~=2.13.0",
     "boto3>=1.42",
 ]

@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 #: Env var that overrides the default config path (A/B arm selection).
@@ -94,12 +94,29 @@ class PersonaConfig:
 
 
 @dataclass(frozen=True)
+class GreenhouseConfig:
+    """``[greenhouse]`` — the recruiting easter-egg's coffee-shop ambient bed
+    (2026-07-10). Default OFF: no mixer is built and the router emits no mixer
+    frames, so the live pipeline is byte-for-byte unchanged until enabled.
+
+    ``ambience_file`` is the resolved absolute WAV path (mono, matching
+    ``ambience_sample_rate`` — SoundfileMixer does NOT resample), or ``None`` if
+    the file is missing (then no mixer is built and the feature no-ops)."""
+    ambience_enabled: bool = False
+    ambience_sound: str = "coffee-shop"    # SoundfileMixer sound name
+    ambience_volume: float = 0.12          # subtle bed under the voice (0.0-1.0)
+    ambience_sample_rate: int = 24000      # must match the WAV + output transport
+    ambience_file: Path | None = None
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
     stt: SttConfig
     turn: TurnConfig
     llm: LlmConfig
     tts: TtsConfig
     persona: PersonaConfig
+    greenhouse: "GreenhouseConfig" = field(default_factory=GreenhouseConfig)
     # Display-only per-variant label (subtle live-UI tag, e.g. "KPH(v1)").
     # Trailing default keeps every existing positional/keyword constructor and
     # fixture working. A plain top-level TOML scalar -- read directly from the
@@ -431,7 +448,25 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
     # --- label (display-only, plain top-level scalar) ---
     label = str(data.get("label", "KPH"))
 
-    return PipelineConfig(stt=stt, turn=turn, llm=llm, tts=tts, persona=persona, label=label)
+    # --- greenhouse (coffee-shop ambient bed) ---
+    gh_table = data.get("greenhouse") or {}
+    if not isinstance(gh_table, dict):
+        raise ConfigError("pipeline.toml [greenhouse] must be a table")
+    gh_sound = str(gh_table.get("ambience_sound", "coffee-shop"))
+    gh_file = APP_ROOT / "assets" / "ambience" / f"{gh_sound}.wav"
+    greenhouse = GreenhouseConfig(
+        ambience_enabled=bool(gh_table.get("ambience_enabled", False)),
+        ambience_sound=gh_sound,
+        ambience_volume=_require_range(
+            "greenhouse.ambience_volume", gh_table.get("ambience_volume", 0.12), 0.0, 1.0
+        ),
+        ambience_sample_rate=int(gh_table.get("ambience_sample_rate", 24000)),
+        ambience_file=gh_file if gh_file.is_file() else None,
+    )
+
+    return PipelineConfig(
+        stt=stt, turn=turn, llm=llm, tts=tts, persona=persona, label=label, greenhouse=greenhouse
+    )
 
 
 def _resolve_relative_to(base_dir: Path, raw: str) -> Path:

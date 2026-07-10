@@ -17,6 +17,7 @@ import { useVoiceSession } from "./transport/useVoiceSession";
 import { resolveScreen } from "./flow/resolveScreen";
 import { decideLandAction } from "./flow/landDecision";
 import { isReturningUser, wasSilentTried, markInteractiveTried, wasInteractiveTried } from "./auth/returningStore";
+import { variantOrbHue } from "./transport/variant";
 
 /** Matches auth.py's NO_ACCESS_TIER_ID default — the no-access gate trigger (D-13). */
 const NO_ACCESS_TIER_ID = "no-access";
@@ -43,6 +44,12 @@ export default function App() {
   // boundary announcement isn't delayed by lazy DOM-node creation.
   useEffect(() => {
     ensureLiveRegions();
+  }, []);
+
+  // Per-variant orb tint (KPH v1/v2 visual distinction): set --orb-hue from the
+  // URL variant so the orb canvas hue-rotates (orb.css). One-shot on mount.
+  useEffect(() => {
+    document.documentElement.style.setProperty("--orb-hue", variantOrbHue());
   }, []);
 
   // Forced-auth land sequence (voice-flow-redesign §3.1): an unauthenticated

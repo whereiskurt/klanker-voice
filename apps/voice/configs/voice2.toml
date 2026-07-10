@@ -73,3 +73,9 @@ emitter_min_gap_seconds = 6.0   # min spacing between "mhmm"s within a long turn
 # backchannel_words / emitter_phrases fall back to the curated defaults in
 # config.py (DEFAULT_BACKCHANNEL_WORDS / DEFAULT_EMITTER_PHRASES); override here
 # to tune live without a code change.
+
+[greenhouse]                        # coffee-shop ambient bed for recruiting mode (260710)
+ambience_enabled = true
+ambience_sound = "coffee-shop"
+ambience_volume = 0.12
+ambience_sample_rate = 24000

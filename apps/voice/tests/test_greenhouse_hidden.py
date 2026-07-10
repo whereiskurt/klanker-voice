@@ -67,6 +67,37 @@ def test_greenhouse_is_sticky_with_exit_phrases():
     assert any("interview" in p for p in gh["exit"])
 
 
+async def test_ambience_enabled_entering_greenhouse_and_off_on_exit(monkeypatch):
+    from pipecat.frames.frames import MixerEnableFrame
+
+    # pipeline.toml ships [greenhouse] ambience_enabled = true.
+    router = KnowledgeRouterProcessor(
+        cfg=load_config(),
+        knowledge_cfg=load_knowledge_config(),
+        llm=_FakeLLM(),
+        initial_topic="klanker-maker",
+        fallback_classify=_never_fallback,
+    )
+    assert router._cfg.greenhouse.ambience_enabled is True
+    pushed = []
+
+    async def _capture(frame, direction=None):
+        pushed.append(frame)
+
+    monkeypatch.setattr(router, "push_frame", _capture)
+
+    # Entering greenhouse -> bed ON.
+    await router._handle_utterance("greenhouse")
+    assert router._active_topic == "greenhouse"
+    assert any(isinstance(f, MixerEnableFrame) and f.enable for f in pushed)
+
+    # Exiting -> bed OFF.
+    pushed.clear()
+    await router._handle_utterance("okay, the interview is over")
+    assert router._active_topic == "klanker-maker"
+    assert any(isinstance(f, MixerEnableFrame) and not f.enable for f in pushed)
+
+
 async def test_sticky_holds_until_explicit_exit(monkeypatch):
     router = KnowledgeRouterProcessor(
         cfg=load_config(),
