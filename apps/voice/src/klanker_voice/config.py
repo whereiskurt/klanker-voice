@@ -174,7 +174,11 @@ DEFAULT_BACKCHANNEL_WORDS: tuple[str, ...] = (
 #: added to the LLM context — when the visitor pauses mid-thought, so it sounds
 #: like it's actively listening. Rotated round-robin (deterministic) so it
 #: doesn't repeat the same token back to back.
-DEFAULT_EMITTER_PHRASES: tuple[str, ...] = ("mm-hm.", "right.", "yeah.", "gotcha.")
+#:
+#: 260710 live-tuning: NEUTRAL continuers only ("I'm listening"), never
+#: strong-agreement words like "right." / "yeah." — those read as premature
+#: agreement when the visitor is only a sentence in, which felt jarring.
+DEFAULT_EMITTER_PHRASES: tuple[str, ...] = ("mm-hm.", "mm.", "uh-huh.")
 
 
 @dataclass(frozen=True)
@@ -215,7 +219,7 @@ class DuplexConfig:
     backchannel_emitter: bool = False
     max_backchannel_words: int = 3
     interruption_hold_ms: int = 250
-    emitter_min_gap_seconds: float = 4.0
+    emitter_min_gap_seconds: float = 10.0  # 260710: 4->10, emitter was way too eager
     backchannel_words: tuple[str, ...] = DEFAULT_BACKCHANNEL_WORDS
     emitter_phrases: tuple[str, ...] = DEFAULT_EMITTER_PHRASES
 

@@ -282,14 +282,17 @@ class KnowledgeRouterProcessor(FrameProcessor):
             # (Pitfall 1/2) -- a shallow one-liner or same-topic follow-up.
             return
 
-        await self._commit_switch(
-            topic_id,
-            utterance,
-            ack_templates=self._topic_ack_templates(topic_id) or self._ack_templates,
+        # A topic may SUPPRESS the spoken ack with an explicit empty `ack: ""`
+        # (e.g. greenhouse -- its LLM opener is the sole output, so it also lands
+        # in the chat transcript; a TTSSpeakFrame ack never does).
+        ack_raw = self._topic_field(topic_id, "ack")
+        ack_templates = (
+            None if ack_raw == "" else (self._topic_ack_templates(topic_id) or self._ack_templates)
         )
+        await self._commit_switch(topic_id, utterance, ack_templates=ack_templates)
 
     async def _commit_switch(
-        self, topic_id: str, utterance: str, *, ack_templates: list[str]
+        self, topic_id: str, utterance: str, *, ack_templates: list[str] | None
     ) -> None:
         """Swap block1 to ``topic_id``'s pack (+ optional BM25 chunks) and fire
         the spoken ack. Shared by a normal deep-turn switch and a sticky-topic
@@ -326,14 +329,15 @@ class KnowledgeRouterProcessor(FrameProcessor):
         )
         apply_system_blocks(self._llm, blocks)
 
-        # A topic may override the ack with its own line(s) (topic-map `ack`);
-        # otherwise round-robin the naturalized default set (deterministic) so
-        # back-to-back switches don't repeat the same canned line.
-        template = ack_templates[self._ack_index % len(ack_templates)]
-        self._ack_index += 1
-        ack_text = (
-            template.format(spoken_name=self._spoken_name(topic_id))
-            if "{spoken_name}" in template
-            else template
-        )
-        await self.push_frame(TTSSpeakFrame(text=ack_text, append_to_context=False))
+        # ack_templates None/empty -> the topic suppressed the spoken beat (its
+        # LLM turn is the sole output). Otherwise a custom override or the
+        # round-robin defaults (deterministic, no back-to-back repeat).
+        if ack_templates:
+            template = ack_templates[self._ack_index % len(ack_templates)]
+            self._ack_index += 1
+            ack_text = (
+                template.format(spoken_name=self._spoken_name(topic_id))
+                if "{spoken_name}" in template
+                else template
+            )
+            await self.push_frame(TTSSpeakFrame(text=ack_text, append_to_context=False))

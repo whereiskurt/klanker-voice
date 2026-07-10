@@ -270,10 +270,11 @@ topics:
     sticky: true                     # once unlocked, HOLDS the floor: every
                                      # question is answered in candidate framing
                                      # until an `exit` phrase releases it.
-    # Custom playful switch-ack (overrides the round-robin defaults) -- the
-    # spoken beat the instant recruiting mode unlocks. (Extra wink: Kurt's
-    # current employer is literally Greenhouse Software.)
-    ack: "Did someone say... Greenhouse?! Okay. Let's do this."
+    # SUPPRESS the router ack ("" = no spoken beat). Greenhouse's LLM opener is
+    # the sole output (first-person, assumes recruiting, asks what role) — so it
+    # lands in the chat transcript too, and there's no ack racing the response in
+    # full-duplex (260710: fixes the "missing chat output" on greenhouse).
+    ack: ""
     # Spoken beat when the visitor explicitly ends the interview -> back to the
     # normal (initial) technical topic.
     exit_ack: "Ha — alright, interview's over. Back to the tech."
