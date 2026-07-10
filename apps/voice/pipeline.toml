@@ -31,12 +31,12 @@ model = "claude-haiku-4-5"      # mandatory override: pipecat 1.5.0 defaults to 
 provider = "elevenlabs"
 model = "eleven_flash_v2_5"
 voice_id = "EIDLidDc73oTUWAedVPt"  # "Burt Fundeck" — swap-in 2026-07-07. Replaces "Mark" (UgBBYS2sOqTuMpoF3BR0, temporary). Prior: KPHv1 (6zcBdCPOI1TDYCTSsqUv, Kurt clone, retrained/deleted). IMPORTANT: on any voice_id change, re-run `make -C apps/voice greetings` and commit the new clips — the slick-start greeting drift guard (tests/test_greeting_voice_drift.py, B-04) fails CI otherwise.
-speed = 1.08                    # ElevenLabs WS range 0.7-1.2 (07.1 lab setting 1.0; 260709 nudged to 1.08 — a bit faster)
+speed = 1.02                    # ElevenLabs WS range 0.7-1.2 (07.1 lab setting 1.0; 260709 nudged to 1.08 — a bit faster)
 # 07.1 tunable voice character (ElevenLabs voice_settings, 0.0-1.0), from Kurt's
 # lab screenshot. Applied to BOTH the live voice and the pre-rendered greeting
 # (render_greetings.py reads these same values). Retune here, then re-run
 # `make -C apps/voice greetings` to keep the welcome clip matched.
-stability = 0.32                # lower = more expressive/variable; higher = steadier (260709: 0.4 -> 0.32, more expressive)
+stability = 0.45                # lower = more expressive/variable; higher = steadier (260709: 0.4 -> 0.32, more expressive)
 similarity_boost = 0.85         # fidelity to the source voice
 style = 0.3                     # low = calm; high = over-the-top (260709: 0.1 -> 0.3, more enthusiasm)
 
