@@ -1,6 +1,6 @@
 # apps/voice — developer targets
 
-.PHONY: env greetings ambience knowledge
+.PHONY: env greetings ambience knowledge voice1-local voice2-local
 
 ## env: fetch the three provider API keys from SSM and write .env (D-10)
 env:
@@ -18,3 +18,11 @@ ambience:
 ## knowledge: regenerate curated packs + retrieval indexes from the corpus (D-07)
 knowledge:
 	uv run python scripts/refresh_knowledge.py
+
+## voice1-local: run the shipped half-duplex voice1 pipeline locally (mic UI at http://localhost:7860)
+voice1-local:
+	uv run python bot.py -t webrtc
+
+## voice2-local: run the full-duplex voice2 pipeline locally (Flux + duplex emitter + greenhouse ambience) at http://localhost:7860
+voice2-local:
+	KLANKER_PIPELINE_CONFIG=configs/voice2.toml uv run python bot.py -t webrtc
