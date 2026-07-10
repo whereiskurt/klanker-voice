@@ -267,6 +267,10 @@ topics:
   - id: greenhouse
     spoken_name: "Kurt's background"
     hidden: true
+    # Custom playful switch-ack (overrides the round-robin defaults) -- the
+    # spoken beat the instant recruiting mode unlocks. (Extra wink: Kurt's
+    # current employer is literally Greenhouse Software.)
+    ack: "Did someone say... Greenhouse?! Okay. Let's do this."
     hook: >-
       (hidden) Kurt's professional background / resume -- recruiting mode.
     keywords:

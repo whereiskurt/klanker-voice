@@ -197,6 +197,21 @@ class KnowledgeRouterProcessor(FrameProcessor):
                 return topic.get("spoken_name", topic_id)
         return topic_id
 
+    def _topic_ack_templates(self, topic_id: str) -> list[str] | None:
+        """A topic may override the generic dig-in ack with its own line(s) via
+        a topic-map ``ack`` field (string or list) -- e.g. the greenhouse
+        easter egg's playful "Did someone say... Greenhouse?!" opener. Returns
+        None (use the round-robin defaults) when the topic sets no override."""
+        for topic in self._topic_map.get("topics", []):
+            if topic["id"] == topic_id:
+                ack = topic.get("ack")
+                if isinstance(ack, str) and ack.strip():
+                    return [ack]
+                if isinstance(ack, list) and ack:
+                    return [str(a) for a in ack]
+                return None
+        return None
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
@@ -253,9 +268,15 @@ class KnowledgeRouterProcessor(FrameProcessor):
         )
         apply_system_blocks(self._llm, blocks)
 
-        # Round-robin through the naturalized ack set (deterministic) so
-        # back-to-back topic switches don't repeat the same canned line.
-        template = self._ack_templates[self._ack_index % len(self._ack_templates)]
+        # A topic may override the ack with its own line(s) (topic-map `ack`);
+        # otherwise round-robin the naturalized default set (deterministic) so
+        # back-to-back switches don't repeat the same canned line.
+        templates = self._topic_ack_templates(topic_id) or self._ack_templates
+        template = templates[self._ack_index % len(templates)]
         self._ack_index += 1
-        ack_text = template.format(spoken_name=self._spoken_name(topic_id))
+        ack_text = (
+            template.format(spoken_name=self._spoken_name(topic_id))
+            if "{spoken_name}" in template
+            else template
+        )
         await self.push_frame(TTSSpeakFrame(text=ack_text, append_to_context=False))

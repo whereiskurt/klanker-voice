@@ -50,6 +50,15 @@ def test_hidden_topic_not_in_block0_hooks():
     assert "kurt's background" not in hooks
 
 
+def test_greenhouse_has_custom_playful_switch_ack():
+    kcfg = load_knowledge_config()
+    topic_map = load_topic_map(kcfg)
+    gh = _topic(topic_map, "greenhouse")
+    ack = gh.get("ack")
+    assert isinstance(ack, str) and ack.strip()
+    assert "greenhouse" in ack.lower()  # the playful opener names the magic word
+
+
 def test_hidden_topics_excluded_from_fallback_candidates():
     # The fallback filters `hidden` topics before building its candidate list;
     # verify the filter expression directly (no network / model call).

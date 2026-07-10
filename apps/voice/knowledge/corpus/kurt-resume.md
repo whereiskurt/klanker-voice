@@ -14,6 +14,18 @@
 
 <<PASTE LINKEDIN CONTENT HERE>>
 
+## Reading / bookshelf (books Kurt has read and can speak to)
+
+<<PASTE the book list here, OR just send a photo of the bookshelf and KPH will
+transcribe the spines into a list. These become the pack's "Reading / range"
+section — only books actually read, no bluffing.>>
+
+## Detailed employment history (the LinkedIn logged-out view gated this)
+
+<<PASTE each role: company, title, dates, what you owned, stack, one headline
+outcome. (Public LinkedIn confirmed current employer = Greenhouse Software +
+25+ years; the per-role detail needs your paste.)>>
+
 ## Kurt's answers (fill these in your own words)
 
 - **Target role / level:** <<e.g. Senior/Staff, IC vs lead>>
