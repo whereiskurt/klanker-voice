@@ -19,7 +19,7 @@ from pipecat.runner.utils import create_transport
 from pipecat.transports.base_transport import TransportParams
 from pipecat.workers.runner import WorkerRunner
 
-from klanker_voice.config import load_config
+from klanker_voice.config import load_config, load_duplex_config
 from klanker_voice.observers import LatencyReportObserver
 from klanker_voice.pipeline import build_pipeline, build_worker, register_greet_first
 
@@ -36,7 +36,11 @@ async def bot(runner_args: RunnerArguments):
     transport = await create_transport(runner_args, transport_params)
 
     cfg = load_config()  # KLANKER_PIPELINE_CONFIG-aware
-    built = build_pipeline(cfg, transport)
+    # Wire the full-duplex controller locally too (mirrors server.py), so
+    # `KLANKER_PIPELINE_CONFIG=configs/voice2.toml uv run python bot.py -t webrtc`
+    # runs the emitter/backchannel path for local mic tuning.
+    duplex_cfg = load_duplex_config()  # KLANKER_PIPELINE_CONFIG-aware; disabled unless [duplex]
+    built = build_pipeline(cfg, transport, duplex_cfg=duplex_cfg)
     # Every session is measured (D-11): JSON artifact in artifacts/harness/
     # plus a console table at session end, with zero extra flags.
     worker = build_worker(built.pipeline, observers=[LatencyReportObserver(cfg)])
