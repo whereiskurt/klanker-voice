@@ -175,10 +175,11 @@ DEFAULT_BACKCHANNEL_WORDS: tuple[str, ...] = (
 #: like it's actively listening. Rotated round-robin (deterministic) so it
 #: doesn't repeat the same token back to back.
 #:
-#: 260710 live-tuning: NEUTRAL continuers only ("I'm listening"), never
-#: strong-agreement words like "right." / "yeah." — those read as premature
-#: agreement when the visitor is only a sentence in, which felt jarring.
-DEFAULT_EMITTER_PHRASES: tuple[str, ...] = ("mm-hm.", "mm.", "uh-huh.")
+#: 260710 live-tuning: JUST a subtle "mhmm" — a soft "still here" cue, never
+#: agreement words (right/gotcha/uh-huh/go on all felt like too much). Fired
+#: ONLY mid-turn once the visitor has been talking continuously for a while
+#: (see DuplexConfig.emitter_min_talk_seconds + duplex.py), never on a pause.
+DEFAULT_EMITTER_PHRASES: tuple[str, ...] = ("mm-hm.", "mm.")
 
 
 @dataclass(frozen=True)
@@ -219,7 +220,11 @@ class DuplexConfig:
     backchannel_emitter: bool = False
     max_backchannel_words: int = 3
     interruption_hold_ms: int = 250
-    emitter_min_gap_seconds: float = 10.0  # 260710: 4->10, emitter was way too eager
+    # 260710 emitter redesign: fire a subtle "mhmm" ONLY once the visitor has
+    # been talking continuously for `emitter_min_talk_seconds` (a long stretch,
+    # never a short turn), then at most one per `emitter_min_gap_seconds`.
+    emitter_min_talk_seconds: float = 8.0
+    emitter_min_gap_seconds: float = 6.0
     backchannel_words: tuple[str, ...] = DEFAULT_BACKCHANNEL_WORDS
     emitter_phrases: tuple[str, ...] = DEFAULT_EMITTER_PHRASES
 
@@ -563,8 +568,11 @@ def load_duplex_config(path: Path | str | None = None) -> DuplexConfig:
                 "duplex.interruption_hold_ms", table.get("interruption_hold_ms", 250), 0.0, 2000.0
             )
         ),
+        emitter_min_talk_seconds=_require_range(
+            "duplex.emitter_min_talk_seconds", table.get("emitter_min_talk_seconds", 8.0), 0.0, 60.0
+        ),
         emitter_min_gap_seconds=_require_range(
-            "duplex.emitter_min_gap_seconds", table.get("emitter_min_gap_seconds", 4.0), 0.0, 60.0
+            "duplex.emitter_min_gap_seconds", table.get("emitter_min_gap_seconds", 6.0), 0.0, 60.0
         ),
         backchannel_words=_require_str_tuple(
             "duplex.backchannel_words", table.get("backchannel_words"), DEFAULT_BACKCHANNEL_WORDS

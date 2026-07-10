@@ -115,6 +115,9 @@ class DuplexController(FrameProcessor):
         # Emitter round-robin + rate-limit.
         self._emit_index = 0
         self._last_emit: float | None = None
+        # Start of the current continuous user turn (first partial after a stop);
+        # the emitter only fires once this has run long enough (260710 redesign).
+        self._turn_started_at: float | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -147,6 +150,12 @@ class DuplexController(FrameProcessor):
 
         if isinstance(frame, (InterimTranscriptionFrame, TranscriptionFrame)):
             await self._maybe_decide(frame.text)
+            # Mark the start of a continuous user turn (first partial after a
+            # stop) and, mid-turn, maybe drop a subtle "mhmm" once they've been
+            # going a while (260710 redesign — never on a pause/short turn).
+            if self._turn_started_at is None:
+                self._turn_started_at = self._monotonic()
+            await self._maybe_emit()
             if isinstance(frame, TranscriptionFrame) and self._suppressing:
                 # A backchannel's finalized transcript: swallow it (no user
                 # turn) and end the suppression window — the cue is over.
@@ -156,8 +165,10 @@ class DuplexController(FrameProcessor):
             return
 
         if isinstance(frame, (UserStoppedSpeakingFrame, VADUserStoppedSpeakingFrame)):
+            # Turn ended — reset the long-talk clock so a short turn never
+            # accumulates toward an emit.
+            self._turn_started_at = None
             await self.push_frame(frame, direction)
-            await self._maybe_emit()
             self._suppressing = False
             return
 
@@ -223,6 +234,13 @@ class DuplexController(FrameProcessor):
         if self._bot_speaking:
             return  # never talk over our own turn
         now = self._monotonic()
+        # Only mid a LONG continuous stretch of the visitor talking -- a subtle
+        # "still here" cue, never on a short turn (260710 redesign).
+        if (
+            self._turn_started_at is None
+            or (now - self._turn_started_at) < self._cfg.emitter_min_talk_seconds
+        ):
+            return
         if (
             self._last_emit is not None
             and (now - self._last_emit) < self._cfg.emitter_min_gap_seconds
