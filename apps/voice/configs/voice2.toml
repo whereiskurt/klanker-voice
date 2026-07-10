@@ -41,8 +41,8 @@ model = "claude-haiku-4-5"
 provider = "elevenlabs"
 model = "eleven_flash_v2_5"
 voice_id = "EIDLidDc73oTUWAedVPt"  # "Burt Fundeck" — matches voice1 so greeting clips are shared
-speed = 1.08
-stability = 0.32
+speed = 1.02
+stability = 0.45
 similarity_boost = 0.85
 style = 0.3
 
