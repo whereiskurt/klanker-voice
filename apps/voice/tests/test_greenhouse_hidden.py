@@ -107,13 +107,13 @@ def test_hidden_topic_not_in_block0_hooks():
     assert "kurt's background" not in hooks
 
 
-def test_greenhouse_has_custom_playful_switch_ack():
+def test_greenhouse_ack_is_suppressed():
+    # 260710: greenhouse suppresses the router ack ("") so its first-person LLM
+    # opener is the sole output (also lands in the chat transcript).
     kcfg = load_knowledge_config()
     topic_map = load_topic_map(kcfg)
     gh = _topic(topic_map, "greenhouse")
-    ack = gh.get("ack")
-    assert isinstance(ack, str) and ack.strip()
-    assert "greenhouse" in ack.lower()  # the playful opener names the magic word
+    assert gh.get("ack") == ""
 
 
 def test_hidden_topics_excluded_from_fallback_candidates():
