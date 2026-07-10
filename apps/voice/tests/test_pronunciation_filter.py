@@ -72,8 +72,20 @@ async def test_kv_and_kv_cli_spelled_out_without_touching_kvm():
     assert await _f("the kvm and kvmlab") == "the kay vee em and kay vee em lab"
 
 
-async def test_cli_spelled_out():
-    assert await _f("the CLI tool") == "the see elle eye tool"
+async def test_cli_spoken_as_command():
+    # Standalone CLI reads more naturally as "command" than the robotic
+    # "see elle eye" (260710 pronunciation pass).
+    assert await _f("the CLI tool") == "the command tool"
+
+
+async def test_security_acronyms_pronounced():
+    # 260710 pronunciation pass: certs/acronyms KPH says in greenhouse interview
+    # mode that TTS otherwise mangles.
+    assert await _f("I hold a CISSP") == "I hold a sissp"
+    assert await _f("GCSA from SANS") == "G C S A from SANS"
+    assert await _f("a GIAC cert") == "a JEE-ack cert"
+    assert await _f("OWASP ASVS") == "Oh wasp ASVS"
+    assert await _f("kernel-level eBPF sandboxing") == "kernel-level e b p f sandboxing"
 
 
 async def test_guelph_spelled_out():
