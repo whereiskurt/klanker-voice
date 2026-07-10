@@ -66,7 +66,10 @@ enabled = true
 backchannel_emitter = true      # the concierge drops its own "mm-hm" while you talk (opted-in, 2026-07-10)
 max_backchannel_words = 3       # utterances longer than this always count as a real interruption
 interruption_hold_ms = 250      # how long a barge-in is held while we wait for the first transcript to decide
-emitter_min_gap_seconds = 10.0  # rate-limit on the bot's own backchannels (260710: 4->10, was too eager)
+# Emitter (260710 redesign): a subtle "mhmm" ONLY once you've been talking
+# continuously for emitter_min_talk_seconds, then at most one per gap. Tune live.
+emitter_min_talk_seconds = 8.0  # must be talking THIS long (continuous) before any "mhmm"
+emitter_min_gap_seconds = 6.0   # min spacing between "mhmm"s within a long turn
 # backchannel_words / emitter_phrases fall back to the curated defaults in
 # config.py (DEFAULT_BACKCHANNEL_WORDS / DEFAULT_EMITTER_PHRASES); override here
 # to tune live without a code change.

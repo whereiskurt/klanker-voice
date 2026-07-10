@@ -154,25 +154,40 @@ class TestDuplexController:
 
 @pytest.mark.asyncio
 class TestBackchannelEmitter:
-    async def test_emits_on_user_pause_when_enabled(self):
-        clock = iter([100.0, 100.0])
+    async def test_emits_mid_long_turn(self):
+        # 260710 redesign: the first partial starts the turn (t=100); a later
+        # partial at t=109 (>8s continuous talk) fires one subtle "mhmm".
+        clock = iter([100.0, 100.0, 109.0])
         ctrl = DuplexController(
             _duplex_cfg(backchannel_emitter=True), monotonic=lambda: next(clock)
         )
-        down, _ = await run_test(ctrl, frames_to_send=[UserStoppedSpeakingFrame()])
+        down, _ = await run_test(
+            ctrl, frames_to_send=[_interim("still going"), _interim("and going")]
+        )
         spoken = [f for f in down if isinstance(f, TTSSpeakFrame)]
         assert len(spoken) == 1
         assert spoken[0].text == DEFAULT_EMITTER_PHRASES[0]
 
-    async def test_rate_limited_within_min_gap(self):
-        # Two pauses 1s apart, gap requires 4s -> only the first emits.
-        times = iter([100.0, 100.0, 101.0, 101.0])
+    async def test_no_emit_on_short_turn(self):
+        # Only ~2s of talk then more partials -> below the 8s threshold, silent.
+        clock = iter([100.0, 100.0, 102.0])
         ctrl = DuplexController(
-            _duplex_cfg(backchannel_emitter=True, emitter_min_gap_seconds=4.0),
+            _duplex_cfg(backchannel_emitter=True), monotonic=lambda: next(clock)
+        )
+        down, _ = await run_test(
+            ctrl, frames_to_send=[_interim("quick"), _interim("thought")]
+        )
+        assert not any(isinstance(f, TTSSpeakFrame) for f in down)
+
+    async def test_rate_limited_within_long_turn(self):
+        # Eligible at t=109 (emits); again at t=112 but < 6s gap -> only one.
+        times = iter([100.0, 100.0, 109.0, 112.0])
+        ctrl = DuplexController(
+            _duplex_cfg(backchannel_emitter=True, emitter_min_gap_seconds=6.0),
             monotonic=lambda: next(times),
         )
         down, _ = await run_test(
-            ctrl, frames_to_send=[UserStoppedSpeakingFrame(), UserStoppedSpeakingFrame()]
+            ctrl, frames_to_send=[_interim("a"), _interim("b"), _interim("c")]
         )
         assert len([f for f in down if isinstance(f, TTSSpeakFrame)]) == 1
 

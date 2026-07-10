@@ -13,9 +13,12 @@
    to not compete with the orb, present enough to confirm which variant is
    running during a demo. */
 .live-variant-label {
-  position: absolute; top: var(--xs); right: var(--md); z-index: 2;
-  font-size: 11px; font-weight: var(--w-semibold); letter-spacing: 0.02em;
-  color: var(--text-interim); opacity: 0.6; pointer-events: none; user-select: none;
+  position: absolute; top: var(--sm); right: var(--md); z-index: 7;
+  font-size: 13px; font-weight: var(--w-semibold); letter-spacing: 0.03em;
+  color: var(--text-secondary); opacity: 0.9;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--scrim); backdrop-filter: blur(6px);
+  pointer-events: none; user-select: none;
 }
 .live-bar {
   position: absolute; bottom: 0; left: 0; right: 0; height: var(--stage-action-bar); z-index: 6;
