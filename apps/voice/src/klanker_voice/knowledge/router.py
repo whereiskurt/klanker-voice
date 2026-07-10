@@ -184,6 +184,7 @@ class KnowledgeRouterProcessor(FrameProcessor):
         self._knowledge_cfg = knowledge_cfg
         self._llm = llm
         self._topic_map = load_topic_map(knowledge_cfg)
+        self._initial_topic = initial_topic  # the "normal" topic a sticky-mode exit returns to
         self._active_topic = initial_topic
         self._fallback_classify = fallback_classify or default_haiku_fallback_classify
         self._ack_templates = ack_templates or DEFAULT_ACK_TEMPLATES
@@ -212,6 +213,36 @@ class KnowledgeRouterProcessor(FrameProcessor):
                 return None
         return None
 
+    def _topic_field(self, topic_id: str, key: str) -> Any:
+        for topic in self._topic_map.get("topics", []):
+            if topic["id"] == topic_id:
+                return topic.get(key)
+        return None
+
+    def _is_sticky(self, topic_id: str | None) -> bool:
+        """A ``sticky: true`` topic (e.g. greenhouse recruiting mode) holds the
+        floor once active: the router will not switch away on a normal topic
+        keyword -- only on an explicit exit phrase (see :meth:`_matches_exit`).
+        This keeps KPH in candidate framing for every interview question."""
+        return bool(topic_id) and bool(self._topic_field(topic_id, "sticky"))
+
+    def _matches_exit(self, utterance: str, topic_id: str) -> bool:
+        """True iff the utterance matches one of the sticky topic's ``exit``
+        phrases -- the visitor's explicit "interview's over" release."""
+        phrases = self._topic_field(topic_id, "exit") or []
+        norm = _normalize(utterance)
+        return any(p and _normalize(str(p)) in norm for p in phrases)
+
+    def _exit_ack_templates(self, topic_id: str) -> list[str]:
+        """The spoken beat when a sticky topic is released; falls back to the
+        round-robin defaults if the topic sets no ``exit_ack``."""
+        ack = self._topic_field(topic_id, "exit_ack")
+        if isinstance(ack, str) and ack.strip():
+            return [ack]
+        if isinstance(ack, list) and ack:
+            return [str(a) for a in ack]
+        return self._ack_templates
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
@@ -222,6 +253,21 @@ class KnowledgeRouterProcessor(FrameProcessor):
 
     async def _handle_utterance(self, utterance: str) -> None:
         topics = self._topic_map.get("topics", [])
+
+        # Sticky topic held the floor (greenhouse recruiting mode): STAY here for
+        # every question -- a topic keyword mid-interview ("tell me about
+        # klanker-maker") is answered in candidate framing, never yanked back to
+        # the technical pack -- UNTIL the visitor explicitly releases it, which
+        # snaps back to the normal (initial) technical topic with the exit beat.
+        if self._is_sticky(self._active_topic):
+            if self._matches_exit(utterance, self._active_topic):
+                await self._commit_switch(
+                    self._initial_topic,
+                    utterance,
+                    ack_templates=self._exit_ack_templates(self._active_topic),
+                )
+            return
+
         topic_id, _confidence = classify(utterance, self._topic_map)
 
         if topic_id is None:
@@ -236,6 +282,18 @@ class KnowledgeRouterProcessor(FrameProcessor):
             # (Pitfall 1/2) -- a shallow one-liner or same-topic follow-up.
             return
 
+        await self._commit_switch(
+            topic_id,
+            utterance,
+            ack_templates=self._topic_ack_templates(topic_id) or self._ack_templates,
+        )
+
+    async def _commit_switch(
+        self, topic_id: str, utterance: str, *, ack_templates: list[str]
+    ) -> None:
+        """Swap block1 to ``topic_id``'s pack (+ optional BM25 chunks) and fire
+        the spoken ack. Shared by a normal deep-turn switch and a sticky-topic
+        release (which passes the exit beat as ``ack_templates``)."""
         self._active_topic = topic_id
 
         retrieved_chunks = None
@@ -271,8 +329,7 @@ class KnowledgeRouterProcessor(FrameProcessor):
         # A topic may override the ack with its own line(s) (topic-map `ack`);
         # otherwise round-robin the naturalized default set (deterministic) so
         # back-to-back switches don't repeat the same canned line.
-        templates = self._topic_ack_templates(topic_id) or self._ack_templates
-        template = templates[self._ack_index % len(templates)]
+        template = ack_templates[self._ack_index % len(ack_templates)]
         self._ack_index += 1
         ack_text = (
             template.format(spoken_name=self._spoken_name(topic_id))
