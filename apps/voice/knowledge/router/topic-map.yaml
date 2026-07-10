@@ -257,5 +257,47 @@ topics:
       - term: " kv "
         weight: 1                    # weak alone -- also a common abbreviation
 
+  # HIDDEN easter-egg (2026-07-10, SCAFFOLD): "greenhouse" unlocks KPH's
+  # recruiting mode (topics/greenhouse.md). `hidden: true` keeps it OUT of the
+  # block0 knowledge-map hooks (render_topic_hooks skips it) AND out of the
+  # Haiku fallback candidate set (router.default_haiku_fallback_classify filters
+  # it) -- so it is reachable ONLY by an explicit keyword match below, never
+  # advertised, never in the tour (not in manifest tour_priority). Prune the
+  # secondary recruiting keywords if you want it strictly magic-word-only.
+  - id: greenhouse
+    spoken_name: "Kurt's background"
+    hidden: true
+    sticky: true                     # once unlocked, HOLDS the floor: every
+                                     # question is answered in candidate framing
+                                     # until an `exit` phrase releases it.
+    # Custom playful switch-ack (overrides the round-robin defaults) -- the
+    # spoken beat the instant recruiting mode unlocks. (Extra wink: Kurt's
+    # current employer is literally Greenhouse Software.)
+    ack: "Did someone say... Greenhouse?! Okay. Let's do this."
+    # Spoken beat when the visitor explicitly ends the interview -> back to the
+    # normal (initial) technical topic.
+    exit_ack: "Ha — alright, interview's over. Back to the tech."
+    # Explicit release phrases (substring match on the normalized utterance).
+    # Kept forgiving so ASR variants of "interview / interrogation over" land.
+    exit:
+      - "interview over"
+      - "interview s over"
+      - "interview is over"
+      - "interrogation over"
+      - "interrogation s over"
+      - "interrogation is over"
+      - "end the interview"
+      - "stop the interview"
+      - "end the interrogation"
+      - "we re done here"
+      - "were done here"
+    hook: >-
+      (hidden) Kurt's professional background / resume -- recruiting mode.
+    keywords:
+      # ONLY the exact magic word unlocks it -- no recruiting synonyms (a
+      # deliberate easter egg, not a discoverable intent).
+      - term: "greenhouse"
+        weight: 3
+
   # Any further topics: append the same shape here plus a matching
   # manifest.yaml topic (Amendment 1/5) -- this schema does not change.

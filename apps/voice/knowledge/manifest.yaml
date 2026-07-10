@@ -216,6 +216,24 @@ topics:
           klanker-voice ships pack-only (no BM25 index) to avoid chunking
           sensitive design text into retrieval.
 
+  # HIDDEN easter-egg (2026-07-10, SCAFFOLD): "greenhouse" recruiting mode.
+  # Deliberately NOT in tour_priority above (never proactively offered). The
+  # pack is HAND-AUTHORED + public-safe-scrubbed (like klanker-voice), NOT
+  # auto-generated -- a refresh must never dump raw resume PII into system[1].
+  - id: greenhouse
+    spoken_name: "Kurt's background"
+    pack: greenhouse.md
+    sources:
+      - path: apps/voice/knowledge/corpus/kurt-resume.md
+        kind: docs
+        public: true
+        skip_if_missing: true
+        note: >-
+          SEED only. Kurt pastes his resume + comprehensive LinkedIn content
+          here; KPH hand-authors greenhouse.md from it (public-safe scrub),
+          filling the pack's <<FILL FROM RESUME/LINKEDIN>> sections. The
+          technical/portfolio sections are already seeded from public GitHub.
+
   # Any further topics: append the same shape here (+ a matching
   # router/topic-map.yaml entry) -- this file's shape does not change, only
   # APPEND.
