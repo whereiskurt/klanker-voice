@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import server
+from klanker_voice import variants
 from klanker_voice.auth import AuthError, SessionIdentity
 from klanker_voice.webrtc import PublicCandidates
 
@@ -120,10 +121,10 @@ def test_offer_unknown_variant_falls_back_to_default(monkeypatch):
         json={"sdp": "v=0...", "type": "offer"},
     )
     assert response.status_code == 200
-    assert negotiate_mock.await_args.args[3] == "voice1"
+    assert negotiate_mock.await_args.args[3] == variants.DEFAULT_VARIANT
 
 
-def test_offer_no_variant_defaults_to_voice1(monkeypatch):
+def test_offer_no_variant_defaults_to_voice2(monkeypatch):
     negotiate_mock = _offer_capturing_variant(monkeypatch)
     response = client.post(
         "/api/offer",
@@ -131,7 +132,7 @@ def test_offer_no_variant_defaults_to_voice1(monkeypatch):
         json={"sdp": "v=0...", "type": "offer"},
     )
     assert response.status_code == 200
-    assert negotiate_mock.await_args.args[3] == "voice1"
+    assert negotiate_mock.await_args.args[3] == "voice2"
 
 
 async def test_negotiate_webrtc_sets_variant_label(monkeypatch):

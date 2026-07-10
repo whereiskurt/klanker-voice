@@ -25,14 +25,17 @@ from pathlib import Path
 
 from klanker_voice.config import APP_ROOT
 
-#: The live, shipped experience — today's half-duplex cascade. ``None`` means
-#: "the default pipeline.toml", i.e. exactly ``load_config()`` with no override,
-#: so voice1 is provably byte-for-byte the current behavior.
-DEFAULT_VARIANT = "voice1"
+#: The default fallback for a no-variant/unknown request (260710-ixf: flipped
+#: to voice2, the full-duplex experience). ``voice1`` (the original half-duplex
+#: cascade) remains fully reachable, explicitly, at ``/voice1`` — this only
+#: changes which variant an UNSPECIFIED request resolves to.
+DEFAULT_VARIANT = "voice2"
 
 #: variant name -> config path relative to APP_ROOT (apps/voice/), or ``None``
 #: for the default pipeline.toml. This is the ONLY place a variant name is
-#: trusted; anything not a key here resolves to DEFAULT_VARIANT.
+#: trusted; anything not a key here resolves to DEFAULT_VARIANT. ``voice1``
+#: still maps to ``None`` (the default pipeline.toml, byte-for-byte the
+#: original shipped behavior); ``voice2`` still maps to its own TOML.
 _VARIANT_CONFIGS: dict[str, str | None] = {
     "voice1": None,
     "voice2": "configs/voice2.toml",

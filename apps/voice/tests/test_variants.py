@@ -22,15 +22,20 @@ def test_unknown_variant_falls_back_to_default():
     assert variants.normalize_variant("voice999") == variants.DEFAULT_VARIANT
     assert variants.normalize_variant(None) == variants.DEFAULT_VARIANT
     assert variants.normalize_variant("") == variants.DEFAULT_VARIANT
-    # Unknown -> default config (None), never a filesystem path.
-    assert variants.variant_config_path("voice999") is None
+    # Unknown -> the default variant's own config path (whatever that is;
+    # DEFAULT_VARIANT is now voice2, so this is configs/voice2.toml, not None).
+    assert variants.variant_config_path("voice999") == variants.variant_config_path(
+        variants.DEFAULT_VARIANT
+    )
 
 
 def test_path_traversal_attempt_is_not_honored():
     # A hostile value is only ever a registry key — it can't escape to a path.
     hostile = "../../../../etc/passwd"
     assert variants.normalize_variant(hostile) == variants.DEFAULT_VARIANT
-    assert variants.variant_config_path(hostile) is None
+    assert variants.variant_config_path(hostile) == variants.variant_config_path(
+        variants.DEFAULT_VARIANT
+    )
 
 
 def test_whitespace_is_trimmed():

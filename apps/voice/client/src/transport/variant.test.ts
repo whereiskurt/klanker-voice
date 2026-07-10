@@ -10,7 +10,7 @@ describe("variantFromPath", () => {
     expect(variantFromPath("/voice1")).toBe("voice1");
   });
 
-  it("defaults the root and unknown paths to voice1", () => {
+  it("defaults the root and unknown paths to voice2", () => {
     expect(variantFromPath("/")).toBe(DEFAULT_VARIANT);
     expect(variantFromPath("")).toBe(DEFAULT_VARIANT);
     expect(variantFromPath("/anything-else")).toBe(DEFAULT_VARIANT);
@@ -19,12 +19,12 @@ describe("variantFromPath", () => {
 });
 
 describe("buildConnectParams variant wiring", () => {
-  it("keeps the bare endpoint for the default variant (voice1 unchanged)", () => {
-    expect(buildConnectParams(null, "voice1").endpoint).toBe("/api/offer");
+  it("keeps the bare endpoint for the default variant (voice2)", () => {
+    expect(buildConnectParams(null, "voice2").endpoint).toBe("/api/offer");
   });
 
-  it("appends ?variant= for a non-default variant", () => {
-    expect(buildConnectParams(null, "voice2").endpoint).toBe("/api/offer?variant=voice2");
+  it("appends ?variant= for a non-default variant (voice1, now explicit)", () => {
+    expect(buildConnectParams(null, "voice1").endpoint).toBe("/api/offer?variant=voice1");
   });
 
   it("still attaches the bearer header", () => {
