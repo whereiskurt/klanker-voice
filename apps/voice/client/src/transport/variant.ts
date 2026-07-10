@@ -28,3 +28,10 @@ export function currentVariant(): string {
   if (typeof window === "undefined") return DEFAULT_VARIANT;
   return variantFromPath(window.location.pathname);
 }
+
+/** Per-variant orb tint (a CSS `hue-rotate` degree string) so v1/v2 read as
+ * visually distinct. voice1 keeps the shipped teal (0deg); voice2 shifts to a
+ * warmer hue. Tune the number here to taste. */
+export function variantOrbHue(variant: string = currentVariant()): string {
+  return variant === "voice2" ? "150deg" : "0deg";
+}

@@ -8,6 +8,9 @@
   height: 100%;
   display: block;
   pointer-events: none;
+  /* Per-variant tint (App sets --orb-hue from the URL variant); 0deg = the
+     shipped teal for voice1, a rotation for voice2 so the two look distinct. */
+  filter: hue-rotate(var(--orb-hue, 0deg));
 }
 
 .orb-canvas--ring {
