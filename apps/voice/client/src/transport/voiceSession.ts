@@ -1,6 +1,7 @@
 import { PipecatClient, type APIRequest, type RTVIEventCallbacks } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import type { ConnectionEvent, OfferRejection } from "./connectionState";
+import { currentVariant, DEFAULT_VARIANT } from "./variant";
 
 /** Same-origin, HTTPS in production -- server.py's only signaling contract. */
 const OFFER_ENDPOINT = "/api/offer";
@@ -20,10 +21,21 @@ const OFFER_ENDPOINT = "/api/offer";
  * path for this transport version; never placed in a URL/query, never
  * logged.
  */
-export function buildConnectParams(token: string | null): APIRequest {
+export function buildConnectParams(
+  token: string | null,
+  variant: string = currentVariant(),
+): APIRequest {
   const headers = new Headers();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  return { endpoint: OFFER_ENDPOINT, headers };
+  // Full-duplex (2026-07-10): steer the session to the page's pipeline variant.
+  // voice1 (default) keeps the exact bare "/api/offer" it always used, so the
+  // shipped path is byte-identical; only /voice2 adds the query param. The
+  // server re-validates the name against its allowlist (klanker_voice.variants).
+  const endpoint =
+    variant && variant !== DEFAULT_VARIANT
+      ? `${OFFER_ENDPOINT}?variant=${encodeURIComponent(variant)}`
+      : OFFER_ENDPOINT;
+  return { endpoint, headers };
 }
 
 function requestUrl(input: RequestInfo | URL): string {

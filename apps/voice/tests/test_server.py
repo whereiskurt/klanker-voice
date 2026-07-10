@@ -89,6 +89,50 @@ def test_offer_rejected_by_start_gate_returns_403(monkeypatch):
     negotiate_mock.assert_not_awaited()
 
 
+def _offer_capturing_variant(monkeypatch):
+    """Stub auth + start_gate + _negotiate_webrtc; return the AsyncMock so the
+    caller can read which variant reached _negotiate_webrtc."""
+    monkeypatch.setattr(server, "validate_access_token", lambda token: VALID_IDENTITY)
+    monkeypatch.setattr(server, "start_gate", lambda identity: "gate-ok")
+    negotiate_mock = AsyncMock(return_value={"sdp": "v=0...", "type": "answer", "pc_id": "pc-1"})
+    monkeypatch.setattr(server, "_negotiate_webrtc", negotiate_mock)
+    return negotiate_mock
+
+
+def test_offer_passes_known_variant_to_negotiation(monkeypatch):
+    negotiate_mock = _offer_capturing_variant(monkeypatch)
+    response = client.post(
+        "/api/offer?variant=voice2",
+        headers={"Authorization": "Bearer some-valid-jwt"},
+        json={"sdp": "v=0...", "type": "offer"},
+    )
+    assert response.status_code == 200
+    # _negotiate_webrtc(body, identity, gate_result, variant) — variant is arg 3.
+    assert negotiate_mock.await_args.args[3] == "voice2"
+
+
+def test_offer_unknown_variant_falls_back_to_default(monkeypatch):
+    negotiate_mock = _offer_capturing_variant(monkeypatch)
+    response = client.post(
+        "/api/offer?variant=not-a-real-variant",
+        headers={"Authorization": "Bearer some-valid-jwt"},
+        json={"sdp": "v=0...", "type": "offer"},
+    )
+    assert response.status_code == 200
+    assert negotiate_mock.await_args.args[3] == "voice1"
+
+
+def test_offer_no_variant_defaults_to_voice1(monkeypatch):
+    negotiate_mock = _offer_capturing_variant(monkeypatch)
+    response = client.post(
+        "/api/offer",
+        headers={"Authorization": "Bearer some-valid-jwt"},
+        json={"sdp": "v=0...", "type": "offer"},
+    )
+    assert response.status_code == 200
+    assert negotiate_mock.await_args.args[3] == "voice1"
+
+
 def test_extract_bearer_token_prefers_authorization_header():
     request = _fake_request(headers={"authorization": "Bearer header-token"})
 

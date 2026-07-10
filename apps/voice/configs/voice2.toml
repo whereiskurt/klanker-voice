@@ -1,0 +1,70 @@
+# voice2.toml — the full-duplex variant (2026-07-10).
+#
+# Served at /voice2 (one server, variant routing — see klanker_voice.variants
+# and server.py's /api/offer?variant=voice2). Differs from the shipped
+# pipeline.toml (voice1) in exactly two ways:
+#
+#   1. [stt] uses Deepgram Flux — server-side end-of-turn detection that shaves
+#      the endpointing beat and is far less likely to treat a short "mm-hm" as
+#      a turn (RESEARCH: the Nova-3+VAD -> Flux upgrade path). factories.py
+#      installs Flux's ExternalUserTurnStrategies automatically and ignores the
+#      [turn] table for this provider.
+#   2. [duplex] turns on the DuplexController (backchannel-aware barge-in + bot
+#      listening cues). pipeline.toml has no [duplex] table, so voice1 stays the
+#      shipped half-duplex cascade, byte-for-byte.
+#
+# Everything else (llm, tts voice, persona, knowledge) is intentionally
+# identical to pipeline.toml so voice1/voice2 are a clean A/B on interactivity
+# alone. No credential material, ever (D-09) — keys come from .env. Paths are
+# relative to THIS file's directory (configs/), hence the ../ prefixes.
+
+[stt]
+provider = "deepgram-flux"      # server-side EOT; [turn] below is ignored for this provider
+model = "flux-general-en"
+
+[stt.flux]
+eot_threshold = 0.7             # end-of-turn confidence, 0.5-0.9 (Flux default 0.7)
+eager_eot_threshold = 0.0       # 0 = disabled; nonzero trades LLM spend for latency
+
+[turn]                          # ignored when stt.provider = "deepgram-flux" (kept for schema)
+strategy = "smart_turn_v3"
+vad_stop_secs = 0.2
+user_speech_timeout = 0.6
+
+[llm]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+
+[tts]
+provider = "elevenlabs"
+model = "eleven_flash_v2_5"
+voice_id = "EIDLidDc73oTUWAedVPt"  # "Burt Fundeck" — matches voice1 so greeting clips are shared
+speed = 1.08
+stability = 0.32
+similarity_boost = 0.85
+style = 0.3
+
+[persona]
+prompt_path = "../prompts/concierge.md"
+greet_first = false             # client plays a pre-rendered greeting on tap (slick-start)
+
+[knowledge]                                       # Phase 7 router + cached packs (shared with voice1)
+manifest = "../knowledge/manifest.yaml"
+topic_map = "../knowledge/router/topic-map.yaml"
+packs_dir = "../knowledge/topics"
+style_path = "../knowledge/style/kurt-voice.md"
+cache_floor = 4096
+index_dir = "../knowledge/index"
+retrieval_enabled = true
+retrieval_top_k = 4
+retrieval_budget = 1500
+
+[duplex]                        # full-duplex concept — ON for voice2 (voice1 has no [duplex] table)
+enabled = true
+backchannel_emitter = true      # the concierge drops its own "mm-hm" while you talk (opted-in, 2026-07-10)
+max_backchannel_words = 3       # utterances longer than this always count as a real interruption
+interruption_hold_ms = 250      # how long a barge-in is held while we wait for the first transcript to decide
+emitter_min_gap_seconds = 4.0   # rate-limit on the bot's own backchannels
+# backchannel_words / emitter_phrases fall back to the curated defaults in
+# config.py (DEFAULT_BACKCHANNEL_WORDS / DEFAULT_EMITTER_PHRASES); override here
+# to tune live without a code change.
