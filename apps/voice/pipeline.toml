@@ -8,6 +8,8 @@
 # schema boring and stable. A/B arm configs (configs/arm-*.toml) reuse this
 # exact schema and are selected via the KLANKER_PIPELINE_CONFIG env var.
 
+label = "KPH(v1)"  # subtle live-UI display tag (Task 1, 260710-ixf)
+
 [stt]
 provider = "deepgram-nova3"     # "deepgram-nova3" | "deepgram-flux"
 model = "nova-3-general"

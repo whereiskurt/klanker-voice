@@ -100,6 +100,11 @@ class PipelineConfig:
     llm: LlmConfig
     tts: TtsConfig
     persona: PersonaConfig
+    # Display-only per-variant label (subtle live-UI tag, e.g. "KPH(v1)").
+    # Trailing default keeps every existing positional/keyword constructor and
+    # fixture working. A plain top-level TOML scalar -- read directly from the
+    # document, not a [table].
+    label: str = "KPH"
 
 
 @dataclass(frozen=True)
@@ -414,7 +419,10 @@ def load_config(path: Path | str | None = None) -> PipelineConfig:
         greet_first=bool(persona_table.get("greet_first", True)),
     )
 
-    return PipelineConfig(stt=stt, turn=turn, llm=llm, tts=tts, persona=persona)
+    # --- label (display-only, plain top-level scalar) ---
+    label = str(data.get("label", "KPH"))
+
+    return PipelineConfig(stt=stt, turn=turn, llm=llm, tts=tts, persona=persona, label=label)
 
 
 def _resolve_relative_to(base_dir: Path, raw: str) -> Path:

@@ -41,6 +41,10 @@ export interface UseVoiceSessionResult {
    * response the pipeline connects from) or if this connect never reached
    * that point. */
   sessionMaxSeconds: number | null;
+  /** The running variant's display label (e.g. "KPH(v1)"/"KPH(v2)") carried
+   * back on the `/api/offer` answer (Task 1, 260710-ixf); `null` until it
+   * arrives or if this connect never reached that point. Display only. */
+  variantLabel: string | null;
   /** Bounded auto-retry status (CLNT-02, D-11) -- drives `ConnectingRetry`
    * / `UdpBlockedWall` when `outcome.state === "failed"`. */
   retryStatus: RetryStatus;
@@ -86,6 +90,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const [micError, setMicError] = useState<MicError | null>(null);
   const [client, setClient] = useState<PipecatClient | null>(null);
   const [sessionMaxSeconds, setSessionMaxSeconds] = useState<number | null>(null);
+  const [variantLabel, setVariantLabel] = useState<string | null>(null);
   const [retryStatus, setRetryStatus] = useState<RetryStatus>(IDLE_RETRY_STATUS);
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null);
 
@@ -209,6 +214,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
       getToken,
       onEvent: (event) => handleSessionEventRef.current(event),
       onSessionMax: setSessionMaxSeconds,
+      onVariantLabel: setVariantLabel,
     });
     sessionRef.current = session;
     setClient(session.client);
@@ -246,6 +252,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const start = useCallback(async () => {
     setMicError(null);
     setSessionMaxSeconds(null);
+    setVariantLabel(null);
     setSessionSummary(null);
     setRetryStatus(IDLE_RETRY_STATUS);
     retryControllerRef.current?.reset();
@@ -293,6 +300,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     sessionRef.current = null;
     setClient(null);
     setSessionMaxSeconds(null);
+    setVariantLabel(null);
     wasConnectedRef.current = false;
     connectedAtRef.current = null;
     rejectedRef.current = false;
@@ -341,6 +349,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     micError,
     client,
     sessionMaxSeconds,
+    variantLabel,
     retryStatus,
     sessionSummary,
     start,
