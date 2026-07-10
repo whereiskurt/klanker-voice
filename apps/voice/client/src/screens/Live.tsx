@@ -12,6 +12,10 @@ import "./live.css";
 export interface LiveProps {
   client: PipecatClient;
   sessionMaxSeconds: number | null;
+  /** The running variant's display label (e.g. "KPH(v1)"/"KPH(v2)"), sourced
+   * from the connect flow's own `/api/offer` answer (Task 1, 260710-ixf).
+   * Rendered as a subtle, muted tag; nothing renders when null/empty. */
+  variantLabel: string | null;
   /** User tapped "End chat" — App routes this to useVoiceSession.endChat(). */
   onEndChat: () => void;
 }
@@ -23,7 +27,7 @@ export interface LiveProps {
  * exactly "the orb appears" — which is where the KPH greeting now plays
  * (orb-before-greeting; iOS audio was unlocked on the start gesture).
  */
-export default function Live({ client, sessionMaxSeconds, onEndChat }: LiveProps) {
+export default function Live({ client, sessionMaxSeconds, variantLabel, onEndChat }: LiveProps) {
   const orb = useOrbBinding(client);
   const [turns, dispatch] = useReducer(transcriptReducer, INITIAL_TRANSCRIPT_STATE);
 
@@ -59,7 +63,10 @@ export default function Live({ client, sessionMaxSeconds, onEndChat }: LiveProps
 
   return (
     <div className="live">
-      <div className="live-orb"><OrbCanvas state={orb.state} amplitude={orb.amplitude} /></div>
+      <div className="live-orb">
+        <OrbCanvas state={orb.state} amplitude={orb.amplitude} />
+        {variantLabel ? <span className="live-variant-label">{variantLabel}</span> : null}
+      </div>
       <Transcript turns={turns} />
       {/* Bottom-right cluster (UX hardening 260709-aah): countdown then End
           chat, so End chat lands furthest right -- the bottom-left corner is

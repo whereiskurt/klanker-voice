@@ -18,6 +18,8 @@
 # alone. No credential material, ever (D-09) — keys come from .env. Paths are
 # relative to THIS file's directory (configs/), hence the ../ prefixes.
 
+label = "KPH(v2)"  # subtle live-UI display tag (Task 1, 260710-ixf)
+
 [stt]
 provider = "deepgram-flux"      # server-side EOT; [turn] below is ignored for this provider
 model = "flux-general-en"

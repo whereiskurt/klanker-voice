@@ -14,7 +14,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 import server
+from klanker_voice import variants
 from klanker_voice.auth import AuthError, SessionIdentity
+from klanker_voice.webrtc import PublicCandidates
 
 client = TestClient(server.app)
 
@@ -119,10 +121,10 @@ def test_offer_unknown_variant_falls_back_to_default(monkeypatch):
         json={"sdp": "v=0...", "type": "offer"},
     )
     assert response.status_code == 200
-    assert negotiate_mock.await_args.args[3] == "voice1"
+    assert negotiate_mock.await_args.args[3] == variants.DEFAULT_VARIANT
 
 
-def test_offer_no_variant_defaults_to_voice1(monkeypatch):
+def test_offer_no_variant_defaults_to_voice2(monkeypatch):
     negotiate_mock = _offer_capturing_variant(monkeypatch)
     response = client.post(
         "/api/offer",
@@ -130,7 +132,39 @@ def test_offer_no_variant_defaults_to_voice1(monkeypatch):
         json={"sdp": "v=0...", "type": "offer"},
     )
     assert response.status_code == 200
-    assert negotiate_mock.await_args.args[3] == "voice1"
+    assert negotiate_mock.await_args.args[3] == "voice2"
+
+
+async def test_negotiate_webrtc_sets_variant_label(monkeypatch):
+    """_negotiate_webrtc resolves answer["variant_label"] the same way it
+    resolves session_max_seconds — a lightweight, deliberate extra TOML read
+    keyed off the requested variant."""
+    handler_mock = AsyncMock(
+        return_value={"sdp": "v=0...", "type": "answer", "pc_id": "pc-1"}
+    )
+    monkeypatch.setattr(server._webrtc_handler, "handle_web_request", handler_mock)
+    monkeypatch.setattr(
+        server, "gather_public_candidates", lambda: PublicCandidates(public_ip=None)
+    )
+    gate_result = server.quota.GateResult(
+        session_id="sess-1",
+        tier=server.quota.Tier(
+            tier_id="t", session_max_seconds=120, period_max_seconds=600, max_concurrent=2
+        ),
+        session_max_seconds=120,
+        remaining_daily_seconds=600,
+        bypass_accounting=False,
+    )
+
+    answer_v1 = await server._negotiate_webrtc(
+        {"sdp": "v=0...", "type": "offer"}, VALID_IDENTITY, gate_result, "voice1"
+    )
+    assert answer_v1["variant_label"] == "KPH(v1)"
+
+    answer_v2 = await server._negotiate_webrtc(
+        {"sdp": "v=0...", "type": "offer"}, VALID_IDENTITY, gate_result, "voice2"
+    )
+    assert answer_v2["variant_label"] == "KPH(v2)"
 
 
 def test_extract_bearer_token_prefers_authorization_header():

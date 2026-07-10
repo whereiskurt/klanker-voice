@@ -9,6 +9,14 @@
    --stage-action-bar) so this band and the transcript's inset stay in sync. */
 .live-orb { position: absolute; top: 0; left: 0; right: 0; height: var(--stage-orb-header); z-index: 1; }
 .live-orb canvas { max-height: var(--stage-orb-header); }
+/* Task 1 (260710-ixf): a faint per-variant tag, not a badge -- quiet enough
+   to not compete with the orb, present enough to confirm which variant is
+   running during a demo. */
+.live-variant-label {
+  position: absolute; top: var(--xs); right: var(--md); z-index: 2;
+  font-size: 11px; font-weight: var(--w-semibold); letter-spacing: 0.02em;
+  color: var(--text-interim); opacity: 0.6; pointer-events: none; user-select: none;
+}
 .live-bar {
   position: absolute; bottom: 0; left: 0; right: 0; height: var(--stage-action-bar); z-index: 6;
   /* End chat + the countdown cluster together on the RIGHT (voice-client UX

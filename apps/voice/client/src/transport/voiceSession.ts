@@ -80,6 +80,10 @@ export interface CreateVoiceSessionOptions {
    * `tier_id`, not the numeric cap, so the connect flow's own answer is the
    * one source for the client countdown (05-05 key_link). Display only. */
   onSessionMax?: (sessionMaxSeconds: number) => void;
+  /** Fired once with the `variant_label` the `/api/offer` response carries
+   * (Task 1, 260710-ixf) -- sourced from the running variant's TOML (e.g.
+   * "KPH(v1)" / "KPH(v2)"), mirrors `onSessionMax`. Display only. */
+  onVariantLabel?: (label: string) => void;
 }
 
 /**
@@ -121,8 +125,13 @@ function readSessionMaxSeconds(body: unknown): number | null {
   return typeof value === "number" ? value : null;
 }
 
+function readVariantLabel(body: unknown): string | null {
+  const value = (body as { variant_label?: unknown } | null)?.variant_label;
+  return typeof value === "string" ? value : null;
+}
+
 export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSession {
-  const { getToken, onEvent, rtvi, onSessionMax } = options;
+  const { getToken, onEvent, rtvi, onSessionMax, onVariantLabel } = options;
 
   const transport = new SmallWebRTCTransport({
     webrtcRequestParams: buildConnectParams(getToken()),
@@ -202,19 +211,22 @@ export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSes
               /* already tearing down; nothing to recover */
             });
             resolve();
-          } else if (response.ok && onSessionMax) {
+          } else if (response.ok && (onSessionMax || onVariantLabel)) {
             // Non-blocking peek at the answer body for the CLNT-05 countdown
-            // cap (see `onSessionMax` docstring) -- never consumes/mutates
-            // the response the vendor transport still needs to read.
+            // cap (see `onSessionMax` docstring) and the Task-1 variant label
+            // -- never consumes/mutates the response the vendor transport
+            // still needs to read. One `.clone()` serves both reads.
             void response
               .clone()
               .json()
               .then((body: unknown) => {
                 const sessionMax = readSessionMaxSeconds(body);
-                if (sessionMax != null) onSessionMax(sessionMax);
+                if (sessionMax != null && onSessionMax) onSessionMax(sessionMax);
+                const label = readVariantLabel(body);
+                if (label != null && onVariantLabel) onVariantLabel(label);
               })
               .catch(() => {
-                /* non-JSON/odd body -- countdown simply won't render, not fatal */
+                /* non-JSON/odd body -- countdown/label simply won't render, not fatal */
               });
           }
         }

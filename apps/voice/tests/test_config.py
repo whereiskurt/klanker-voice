@@ -45,12 +45,32 @@ def test_real_checked_in_pipeline_toml_round_trips():
     assert 0.7 <= cfg.tts.speed <= 1.2
     assert cfg.persona.prompt_path.is_file()
     assert cfg.persona.prompt_path.name == "concierge.md"
+    assert cfg.label == "KPH(v1)"
 
 
 def test_minimal_fixture_toml_parses(make_config_file):
     cfg = load_config(make_config_file())
     assert cfg.stt.provider == "deepgram-nova3"
     assert cfg.persona.prompt_path.is_file()
+
+
+def test_label_parses_from_top_level_toml_key(make_config_file):
+    # Top-level TOML keys must precede any table header, or the parser
+    # attributes them to the preceding table -- so this inserts before [stt],
+    # not via the trailing `append=` (which would land inside [persona]).
+    path = make_config_file(replace=[('[stt]', 'label = "KPH(v2)"\n\n[stt]')])
+    cfg = load_config(path)
+    assert cfg.label == "KPH(v2)"
+
+
+def test_label_defaults_to_kph_when_absent(make_config_file):
+    cfg = load_config(make_config_file())
+    assert cfg.label == "KPH"
+
+
+def test_real_checked_in_voice2_toml_label():
+    cfg = load_config(APP_ROOT / "configs" / "voice2.toml")
+    assert cfg.label == "KPH(v2)"
 
 
 @pytest.mark.parametrize(

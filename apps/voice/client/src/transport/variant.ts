@@ -1,19 +1,21 @@
 /**
  * Pipeline-variant selection from the page path (full-duplex, 2026-07-10).
  *
- * One deployed site, several front doors: `/voice1` is the shipped half-duplex
- * concierge, `/voice2` the full-duplex experiment. The page derives its variant
- * from the first path segment and sends it to `POST /api/offer?variant=<name>`;
- * the server (klanker_voice.variants) re-validates against its own allowlist,
- * so this is a UX convenience, never the trust boundary.
+ * One deployed site, several front doors: `/voice1` is the original half-duplex
+ * concierge (still explicitly reachable), `/voice2` the full-duplex experience
+ * -- now the DEFAULT for the root URL and any unknown path (260710-ixf). The
+ * page derives its variant from the first path segment and sends it to
+ * `POST /api/offer?variant=<name>`; the server (klanker_voice.variants)
+ * re-validates against its own allowlist, so this is a UX convenience, never
+ * the trust boundary.
  *
  * Keep this allowlist in sync with `_VARIANT_CONFIGS` in
  * `src/klanker_voice/variants.py`.
  */
 
-export const DEFAULT_VARIANT = "voice1";
+export const DEFAULT_VARIANT = "voice2";
 
-const KNOWN_VARIANTS = new Set<string>([DEFAULT_VARIANT, "voice2"]);
+const KNOWN_VARIANTS = new Set<string>(["voice1", "voice2"]);
 
 /** First path segment, lowercased, if it's a known variant; else the default. */
 export function variantFromPath(pathname: string): string {

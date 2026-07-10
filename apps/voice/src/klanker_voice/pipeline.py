@@ -121,10 +121,6 @@ def build_pipeline(
     apply_system_blocks(llm, build_system_blocks(cfg, knowledge_cfg, initial_topic))
 
     context = LLMContext()
-    if not cfg.persona.greet_first:
-        # 07.1: the client already played a spoken greeting on tap — tell the
-        # LLM not to re-introduce itself (see NO_REGREET_KICK_MESSAGE).
-        context.add_message(dict(NO_REGREET_KICK_MESSAGE))
     aggregator_pair = LLMContextAggregatorPair(
         context,
         user_params=build_user_aggregator_params(cfg),
@@ -197,23 +193,6 @@ GREET_KICK_MESSAGE = {
     "role": "developer",
     "content": "Start by concisely introducing yourself.",
 }
-
-#: 07.1 double-greeting fix. When greet_first is false (prod slick-start: the
-#: browser client plays a pre-recorded greeting clip on tap), the LLM tends to
-#: re-introduce itself on its first turn anyway — the visitor hears "Hey, I'm
-#: KPH…" twice. Seeding this developer message into the context makes the
-#: no-second-greeting instruction immediate and turn-local, which the persona
-#: system prompt alone did not reliably enforce.
-NO_REGREET_KICK_MESSAGE = {
-    "role": "developer",
-    "content": (
-        "The visitor has ALREADY heard your spoken greeting — a short pre-recorded "
-        "clip played the instant they connected. Do NOT greet them, say hi, or "
-        "introduce yourself again; a second greeting is a jarring echo. When they "
-        "speak, answer their first message directly and get straight to the substance."
-    ),
-}
-
 
 async def greet_now(worker: PipelineWorker, context: LLMContext) -> None:
     """Kick the context and queue an LLMRunFrame so K greets immediately (D-04)."""

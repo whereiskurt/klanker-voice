@@ -209,7 +209,12 @@ export default function App() {
     case "live":
       return (
         <div className="stage">
-          <Live client={voice.client!} sessionMaxSeconds={voice.sessionMaxSeconds} onEndChat={() => void voice.endChat()} />
+          <Live
+            client={voice.client!}
+            sessionMaxSeconds={voice.sessionMaxSeconds}
+            variantLabel={voice.variantLabel}
+            onEndChat={() => void voice.endChat()}
+          />
         </div>
       );
     case "ready":

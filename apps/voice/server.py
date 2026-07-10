@@ -371,6 +371,12 @@ async def _negotiate_webrtc(
         # client's own answer parsing (T-05-05-T: display-only, the server's
         # own service timer remains the authoritative hard-stop).
         answer["session_max_seconds"] = gate_result.session_max_seconds
+        # Display-only per-variant label (subtle live-UI tag, mirrors the
+        # session_max_seconds plumbing above): a lightweight, deliberate extra
+        # TOML parse -- the full pipeline config isn't loaded yet at this point
+        # (that happens later, inside the fire-and-forget _run_session).
+        label_cfg = load_config(variants.variant_config_path(variant))
+        answer["variant_label"] = label_cfg.label
     return answer
 
 
