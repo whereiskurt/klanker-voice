@@ -134,6 +134,11 @@ async def default_haiku_fallback_classify(
     """
     from anthropic import AsyncAnthropic
 
+    # Hidden topics (e.g. the `greenhouse` recruiting easter-egg) are reachable
+    # ONLY by an explicit keyword match in `classify`, never by fuzzy Haiku
+    # intent-classification -- otherwise an unrelated utterance could get routed
+    # into a hidden pack. Exclude them from the fallback candidate set.
+    topics = [t for t in topics if not t.get("hidden")]
     valid_ids = {t["id"] for t in topics}
     if not valid_ids:
         return None

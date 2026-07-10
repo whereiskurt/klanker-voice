@@ -69,15 +69,22 @@ def load_topic_map(knowledge_cfg: KnowledgeConfig) -> dict:
 
 
 def render_topic_hooks(knowledge_cfg: KnowledgeConfig) -> str:
-    """Render every topic's one-line spoken hook for the stable prefix.
+    """Render each ADVERTISED topic's one-line spoken hook for the stable prefix.
 
     KPH can always name what it knows about -- even before any deep pack
     has loaded -- because every topic's hook lives in block0 (Amendment 1's
     "knowledge map" concept).
+
+    Topics flagged ``hidden: true`` in the topic-map are SKIPPED here: they are
+    keyword-triggerable (``router.classify`` still scores their keywords) but
+    never advertised in block0 and never offered in the tour -- the mechanism
+    for a keyword-only easter-egg pack (e.g. ``greenhouse`` recruiting mode).
     """
     topic_map = load_topic_map(knowledge_cfg)
     lines = ["## Knowledge map -- topics KPH can dig into"]
     for topic in topic_map.get("topics", []):
+        if topic.get("hidden"):
+            continue
         lines.append(f"- **{topic['spoken_name']}** ({topic['id']}): {topic['hook']}")
     return "\n".join(lines)
 
