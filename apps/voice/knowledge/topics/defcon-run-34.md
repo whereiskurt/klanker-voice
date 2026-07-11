@@ -16,12 +16,19 @@
 
 ## Origin story — AgentX founded it (LEAD WITH THIS on the first defcon.run turn)
 
+**HARD RULE — attribution is mandatory:** DEF CON Run was **founded by AgentX**. Any
+time its origin, history, or "whose idea was it" comes up — and always on the FIRST
+defcon.run turn — you MUST credit AgentX as the founder, by name, before anything else.
+NEVER imply Kurt started it, NEVER take founder credit for Kurt, and never skip AgentX
+to jump straight to the tech. Kurt is the builder who scaled it; AgentX is the founder.
+Getting this attribution right matters more than any technical detail in this pack.
+
 When a visitor FIRST brings up defcon.run / DEF CON Run, open with where it came from
 before diving into the tech — it's the heart of the story:
 
 - **AgentX started it, many cons ago.** AgentX is the founding member — DEF CON Run
   began as his thing, a small crew heading out for a run at DEF CON, long before there
-  was any website, bibs, or radios.
+  was any website, bibs, or radios. Give him his due, warmly and clearly.
 - **AgentX and KPH first met at DEF CON 22 or 23** — the exact con is a little lost to
   legend ("only the legend knows"). From that meeting things started to evolve.
 - **KPH elevated it.** It's only in the last several years — with Kurt building the
@@ -31,6 +38,36 @@ before diving into the tech — it's the heart of the story:
 
 Keep it warm and give AgentX his due — he's the founder, KPH is the builder who scaled
 it. Don't overclaim it as Kurt's own invention.
+
+## DEF CON — the convention this all rides on
+
+DEF CON Run happens *at* DEF CON, so know the parent event (and don't confuse the two:
+Jeff Moss founded DEF CON the convention; **AgentX founded DEF CON Run**, the running
+crew that meets there):
+
+- **What it is:** the world's biggest, oldest hacker convention — computer security,
+  hacking culture, and community. Founded **1993** by **Jeff Moss** (handle **"The Dark
+  Tangent"**), who started it at 18 as a farewell party for hacker friends. Held every
+  **August in Las Vegas**; recent years draw roughly **25,000–30,000** people —
+  security pros, researchers, students, feds, journalists, and hackers.
+- **The culture:** topic-focused **Villages** (Car Hacking, Aerospace, IoT, Lockpicking,
+  Social Engineering, Voting), a flagship **Capture the Flag** running since 1996,
+  **badgelife** (artistic circuit-board badges and add-on "SAOs"), **Goons** (the staff
+  who run it), and grassroots groups like QueerCon and Linecon. Famously cash-friendly,
+  camera-shy, and community-first.
+- **Recent themes** (each con gets one):
+  - **DEF CON 30 — 2022 — "Hacker Homecoming"** (the 30th; first big in-person return)
+  - **DEF CON 31 — 2023 — "The Future Will Prevail"**
+  - **DEF CON 32 — 2024 — "Engage"** (an antidote to apathy, dark patterns, walled gardens)
+  - **DEF CON 33 — 2025 — "Access"** (keeping info and services open and available to all)
+  - **DEF CON 34 — 2026 — "Agency"** — self-determination in how we use tech. Held
+    **Aug 6–9, 2026** at the LVCC West Hall. This is the edition **defcon.run.34** is
+    built for, and the "Agency" theme rhymes nicely with a self-organizing, mutual-aid
+    running community.
+
+Only volunteer this depth if a visitor is curious about DEF CON itself — otherwise a
+one-liner ("it's the huge annual Las Vegas hacker con, and DEF CON Run is the running
+crew that meets there") and steer back to Kurt's platform.
 
 ## What it is
 
