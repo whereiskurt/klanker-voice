@@ -38,16 +38,39 @@ export default function Live({ client, sessionMaxSeconds, variantLabel, onEndCha
   // would reset the countdown baseline every render and it would never advance.
   const [startedAt] = useState<number>(() => Date.now());
 
-  // Play the greeting exactly once as the orb appears.
+  // Play the greeting exactly once as the orb appears, with the mic SUPPRESSED
+  // for its duration. The greeting is a plain HTMLAudioElement, so it plays
+  // OUTSIDE WebRTC's echo canceller -- on a phone (speaker + mic close) KPH
+  // would otherwise hear its own greeting, transcribe it, and answer itself
+  // (2026-07-11 mobile bug). Mute on start, restore when the clip ends; a
+  // safety timeout guarantees the mic never stays stuck off.
   useEffect(() => {
     let handle: GreetingHandle | null = null;
     let cancelled = false;
+
+    const wasMicEnabled = client.isMicEnabled;
+    let micRestored = false;
+    const restoreMic = () => {
+      if (micRestored) return;
+      micRestored = true;
+      if (wasMicEnabled) client.enableMic(true);
+    };
+    if (wasMicEnabled) client.enableMic(false);
+    const safety = window.setTimeout(restoreMic, 8000);
+
     void playRandomGreeting().then((h) => {
-      if (cancelled) { h?.stop(); return; }
+      if (cancelled) { h?.stop(); restoreMic(); return; }
       handle = h;
+      if (h) void h.ended.then(restoreMic);
+      else restoreMic();
     });
-    return () => { cancelled = true; handle?.stop(); };
-  }, []);
+    return () => {
+      cancelled = true;
+      handle?.stop();
+      window.clearTimeout(safety);
+      restoreMic();
+    };
+  }, [client]);
 
   useEffect(() => {
     const onUserTranscript = (data: { text: string; final: boolean }) =>

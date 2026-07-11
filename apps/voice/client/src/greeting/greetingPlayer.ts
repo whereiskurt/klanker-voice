@@ -105,6 +105,15 @@ export function primeGreeting(): void {
     if (typeof Audio === "undefined") return;
     const clip = manifestCache.clips[Math.floor(Math.random() * manifestCache.clips.length)];
     const audio = new Audio(`/greetings/${clip.file}`);
+    // Arm SILENTLY via volume 0 (NOT muted). Mobile Safari does not reliably
+    // honor a `pause()` chained off `play().then()` inside the gesture, so the
+    // arming play would otherwise be AUDIBLE during the ceremony -- the user
+    // hears the greeting once here and again on the Live-mount resume (mobile
+    // double-greeting + self-feedback bug, 2026-07-11). Volume 0 keeps it an
+    // unmuted play (so WebKit still "blesses" the element for the later
+    // out-of-gesture resume) while guaranteeing silence even if pause no-ops.
+    // `playRandomGreeting()` restores volume to 1 when it resumes.
+    audio.volume = 0;
     // Store the primed element regardless of whether the arming play()
     // itself resolves -- a rejected arm doesn't preclude a later resume
     // attempt (and the failure is still surfaced below either way).
@@ -132,6 +141,8 @@ export async function playRandomGreeting(): Promise<GreetingHandle | null> {
     audio.addEventListener("ended", finish);
     audio.addEventListener("error", finish);
 
+    // Restore audibility: the element was armed at volume 0 in primeGreeting().
+    audio.volume = 1;
     audio.currentTime = 0;
     void audio.play().catch((err: unknown) => {
       reportGreetingFailure(err);

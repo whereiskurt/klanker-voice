@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import Live from "./Live";
 
@@ -39,6 +39,22 @@ describe("Live", () => {
       <Live client={makeClient()} sessionMaxSeconds={null} variantLabel="KPH(v1)" onEndChat={() => {}} />,
     );
     expect(screen.getByText("KPH(v1)")).toBeInTheDocument();
+  });
+
+  it("suppresses the mic while the greeting plays, then restores it (mobile-feedback fix)", async () => {
+    const enableMic = vi.fn();
+    const handlers: Record<string, (d: unknown) => void> = {};
+    const client = {
+      on: (evt: string, cb: (d: unknown) => void) => { handlers[evt] = cb; },
+      off: () => {},
+      isMicEnabled: true,
+      enableMic,
+    } as never;
+    render(<Live client={client} sessionMaxSeconds={null} variantLabel={null} onEndChat={() => {}} />);
+    // Muted on mount so the greeting can't feed back into the mic.
+    expect(enableMic).toHaveBeenCalledWith(false);
+    // Restored once the greeting's `ended` promise resolves.
+    await waitFor(() => expect(enableMic).toHaveBeenCalledWith(true));
   });
 
   it("renders no variant label element when null", () => {
