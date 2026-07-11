@@ -1,0 +1,64 @@
+/* src/compose/compose.css — the live text compose bar (Option 3).
+   Centered, pinned just ABOVE the bottom action-bar band so it never collides
+   with the mute button / End chat / latency toggle. A rounded pill that starts
+   one line and grows a few lines to fit pasted text, then scrolls. */
+.live-compose {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--stage-action-bar) + var(--sm));
+  z-index: 9;
+  width: min(680px, calc(100% - 2 * var(--lg)));
+  display: flex;
+  align-items: flex-end;
+  gap: var(--xs);
+  padding: 4px 4px 4px var(--md);
+  border-radius: 22px;
+  border: 1px solid var(--border-subtle);
+  background: var(--scrim);
+  backdrop-filter: blur(8px);
+}
+
+.live-compose:focus-within {
+  border-color: var(--accent);
+}
+
+.live-compose-input {
+  flex: 1 1 auto;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--sz-body);
+  line-height: 1.4;
+  padding: 8px 0;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.live-compose-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
+.live-compose-send {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--stage-core);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  transition: opacity 120ms ease;
+}
+
+.live-compose-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
