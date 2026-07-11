@@ -63,6 +63,7 @@ topics:
   - id: defcon-run-34
     spoken_name: "DEFCON dot run, thirty-four"
     ambience: "conference"           # busy conference-hallway bed while on this topic
+    ambience_volume: 0.11            # diffuse hall wash needs more gain than the cafe bed (0.06) to register
     hook: >-
       Kurt's DEF CON Run community platform -- sign up, plan Las Vegas run
       routes in a real GPX editor, GPS check in, and flash a Meshtastic

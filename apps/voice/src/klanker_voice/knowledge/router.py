@@ -267,9 +267,15 @@ class KnowledgeRouterProcessor(FrameProcessor):
             return
         new_amb = self._topic_field(new_topic, "ambience")
         if new_amb:
+            # Per-topic volume override: a diffuse bed (a big-hall crowd wash)
+            # needs more gain to register under the voice than a bed with sharp
+            # transients (cafe cup clinks / espresso hiss), so a topic may set
+            # its own `ambience_volume`; else fall back to the global default.
+            topic_vol = self._topic_field(new_topic, "ambience_volume")
+            volume = float(topic_vol) if isinstance(topic_vol, (int, float)) else gh.ambience_volume
             await self.push_frame(
                 MixerUpdateSettingsFrame(
-                    settings={"sound": str(new_amb), "volume": gh.ambience_volume}
+                    settings={"sound": str(new_amb), "volume": volume}
                 ),
                 FrameDirection.DOWNSTREAM,
             )
