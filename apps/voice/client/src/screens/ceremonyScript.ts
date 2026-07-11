@@ -3,10 +3,10 @@
  * "hold" line shown until the real connection lands. */
 export const CEREMONY_SCRIPT: { line: string; sub: string }[] = [
   { line: "Initializing…", sub: "Waking-up the mic" },
-  { line: "Sending KPH a FAX…", sub: "Sending /the/ signal" },
-  { line: "Checking the Meshtastic radio…", sub: "Negotiating the connection" },
-  { line: "[crackle][crackle]…", sub: "Almost there" },
-  { line: "KPH coming in from a run…", sub: "Waiting for KPH to pick up" },
+  { line: "FAXing …", sub: "Sending /the/ signal" },
+  { line: "Meshtasing …", sub: "Negotiating the connection" },
+  { line: "[snap][crackle][pop]…", sub: "Almost there" },
+  { line: "COMING IN HOT! …", sub: "Waiting for KPH to pick up" },
 ];
 
 /** Per-line dwell. Total floor ≈ LINE_MS * CEREMONY_SCRIPT.length. */
