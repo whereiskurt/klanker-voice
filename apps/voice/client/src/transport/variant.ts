@@ -35,3 +35,11 @@ export function currentVariant(): string {
 export function variantOrbHue(variant: string = currentVariant()): string {
   return variant === "voice2" ? "150deg" : "0deg";
 }
+
+/** Client-side display label for the current page's variant (derived from the
+ * URL). Used as an immediate fallback for the server's `variant_label` so the
+ * KPH(v1)/KPH(v2) tag ALWAYS shows, even if the /api/offer answer-peek didn't
+ * land. */
+export function variantDisplayLabel(variant: string = currentVariant()): string {
+  return variant === "voice1" ? "KPH(v1)" : "KPH(v2)";
+}
