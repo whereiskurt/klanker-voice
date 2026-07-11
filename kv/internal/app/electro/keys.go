@@ -8,8 +8,14 @@
 //
 //	AccessCode  primary pk: "code#${code}"    sk: "code#"
 //	            gsi1    pk: "accesscodes#"    sk: "code#${code}"
+//	            gsi2    pk: "bypass#${bypassToken}" sk: "bypass#"  (SPARSE, bypass /join)
 //	Tier        primary pk: "tier#${tierId}"  sk: "tier#"
 //	            gsi1    pk: "tiers#"          sk: "tier#${tierId}"
+//
+// The AccessCode gsi2 (byBypassToken) index powers the bypass /join auto-login
+// feature (2026-07-10-bypass-join-login-design). It is SPARSE: only codes with
+// a bypassToken set carry gsi2pk/gsi2sk. `kv code bypass` SETs both with these
+// exact templates; the webapp's resolveBypassToken queries this index.
 //
 // `code` and `tierId` are normalized lowercase+trim identically to the
 // webapp's `normalizeCode()` (access-code.ts) and the Tier entity's `set`
@@ -37,6 +43,7 @@ const (
 	EDBVersion           = "1"
 
 	GSI1IndexName = "gsi1pk-gsi1sk-index"
+	GSI2IndexName = "gsi2pk-gsi2sk-index"
 )
 
 // NormalizeCode lowercases+trims a raw code exactly like the webapp's
@@ -74,6 +81,21 @@ func AccessCodeGSI1PK() string {
 // AccessCodeGSI1SK builds the AccessCode gsi1 sort key: "code#${code}".
 func AccessCodeGSI1SK(code string) string {
 	return "code#" + NormalizeCode(code)
+}
+
+// AccessCodeGSI2PK builds the AccessCode gsi2 (byBypassToken) partition key:
+// "bypass#${bypassToken}". The bypass token is a random base62 string and is
+// NOT case-normalized (unlike code/tierId) — it is an opaque secret whose case
+// is significant, matching the webapp entity's plain "bypass#${bypassToken}"
+// template (no `set` transform on bypassToken).
+func AccessCodeGSI2PK(bypassToken string) string {
+	return "bypass#" + bypassToken
+}
+
+// AccessCodeGSI2SK is the AccessCode gsi2 sort key: the constant "bypass#"
+// (empty composite in the ElectroDB template).
+func AccessCodeGSI2SK() string {
+	return "bypass#"
 }
 
 // --- Tier key templates ---
