@@ -102,10 +102,16 @@ export const AccessCode = new Entity(
         index: "gsi2pk-gsi2sk-index",
         pk: {
           field: "gsi2pk",
+          // casing "none": bypassToken is a CASE-SIGNIFICANT opaque secret, and
+          // the `kv code bypass` CLI writes gsi2pk raw (mixed case). ElectroDB
+          // lowercases keys by DEFAULT, so without this the query for
+          // "bypass#OQbBWkkDPBS5" would look up "bypass#oqbbwkkdpbs5" and never
+          // match the item — the /join route would 404 every valid token.
+          casing: "none",
           composite: ["bypassToken"],
           template: "bypass#${bypassToken}",
         },
-        sk: { field: "gsi2sk", composite: [], template: "bypass#" },
+        sk: { field: "gsi2sk", composite: [], template: "bypass#", casing: "none" },
       },
     },
   },
