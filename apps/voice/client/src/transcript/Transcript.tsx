@@ -15,23 +15,49 @@ export interface TranscriptProps {
 export default function Transcript({ turns }: TranscriptProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
+  // Live mirror of `pinned` so the follow-effect reads the current value
+  // without re-subscribing, and a record of the last scrollTop so onScroll can
+  // tell a genuine user scroll-up from our own tail-follow landing short.
+  const pinnedRef = useRef(true);
+  const lastTopRef = useRef(0);
 
+  const setPinnedState = (next: boolean) => {
+    pinnedRef.current = next;
+    setPinned(next);
+  };
+
+  // Follow the tail whenever pinned and content grows. Deliberately NOT gated
+  // through React state: it reads pinnedRef so a burst of turns (e.g. streamed
+  // agent chunks, or a reconnect flush after an error) always re-follows.
   useEffect(() => {
-    if (pinned && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [turns, pinned]);
+    const el = scrollRef.current;
+    if (!el || !pinnedRef.current) return;
+    el.scrollTop = el.scrollHeight;
+    lastTopRef.current = el.scrollTop;
+  }, [turns]);
 
+  // Only a genuine UPWARD user scroll unpins. A downward move — including our
+  // own programmatic follow that lost a race with freshly-appended content and
+  // landed above the true bottom — can only ever (re-)pin. That asymmetry is
+  // the fix for auto-scroll latching off mid-session (it used to set
+  // pinned=false on any stale "not at bottom" measurement and never recover).
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    const scrolledUp = el.scrollTop < lastTopRef.current - 4;
+    lastTopRef.current = el.scrollTop;
+    if (atBottom) setPinnedState(true);
+    else if (scrolledUp) setPinnedState(false);
   };
 
   const jumpToLatest = () => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-    setPinned(true);
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+      lastTopRef.current = el.scrollTop;
+    }
+    setPinnedState(true);
   };
 
   return (

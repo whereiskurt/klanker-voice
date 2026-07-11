@@ -1,13 +1,16 @@
-"""Render the greenhouse "coffee shop" ambient bed via ElevenLabs Sound Effects.
+"""Render per-topic ambient beds via ElevenLabs Sound Effects.
 
-Writes a MONO 24 kHz WAV (the SmallWebRTC/ElevenLabs output rate) that
-`SoundfileMixer` can mix UNDER KPH's voice while recruiting mode is active.
-The mixer does NOT resample, so the rate/channels must match exactly (mono,
-24000 Hz) or the bed silently won't play.
+Each bed is a MONO 24 kHz WAV (the SmallWebRTC/ElevenLabs output rate) that
+``SoundfileMixer`` mixes UNDER KPH's voice while a topic that declares
+``ambience: <name>`` is active (see knowledge/router/topic-map.yaml + router.py).
+The mixer does NOT resample, so rate/channels must match exactly.
 
-Run:  make -C apps/voice ambience   (or) .venv/bin/python scripts/render_ambience.py
+To beat loop-detection, each bed is STITCHED from several ElevenLabs SFX clips
+(22s max each) into one longer loop (~LOOP_CLIPS * 22s).
 
-Billed ElevenLabs call. Idempotent-ish: overwrites the output WAV each run.
+Run:  make -C apps/voice ambience            # all beds
+      .venv/bin/python scripts/render_ambience.py coffee-shop   # one bed
+Billed ElevenLabs call. The API key needs the `sound_generation` permission.
 """
 from __future__ import annotations
 
@@ -24,17 +27,70 @@ from dotenv import load_dotenv
 APP_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(APP_ROOT / ".env")
 
-OUT_WAV = APP_ROOT / "assets" / "ambience" / "coffee-shop.wav"
-TARGET_RATE = 24000  # must match the output transport (SoundfileMixer won't resample)
-
-PROMPT = (
-    "Cozy but busy coffee shop ambience: soft indistinct background chatter, the "
-    "occasional hiss and steam of an espresso machine, gentle clinks of ceramic "
-    "cups and saucers, distant milk frothing, warm room tone. No music, no "
-    "clearly intelligible words. Steady, loopable."
-)
-DURATION_SECONDS = 22.0  # ElevenLabs SFX max
+OUT_DIR = APP_ROOT / "assets" / "ambience"
+TARGET_RATE = 24000       # must match the output transport (mixer won't resample)
+CLIP_SECONDS = 22.0       # ElevenLabs SFX max per call
+LOOP_CLIPS = 3            # stitch this many -> ~66s loop (harder to detect)
 PROMPT_INFLUENCE = 0.4
+
+#: name -> generation prompt. The name is the SoundfileMixer sound + the
+#: topic-map `ambience:` value.
+AMBIENCE: dict[str, str] = {
+    "coffee-shop": (
+        "Cozy but busy coffee shop ambience: soft indistinct background chatter, "
+        "the occasional hiss and steam of an espresso machine, gentle clinks of "
+        "ceramic cups and saucers, distant milk frothing, warm room tone. No "
+        "music, no clearly intelligible words. Steady, loopable."
+    ),
+    "conference": (
+        "Busy tech-conference hallway ambience inside a large convention center: "
+        "a wash of many distant overlapping conversations, footsteps on hard "
+        "floors, the odd distant laugh, a faint far-off PA murmur, big open-hall "
+        "reverb — a lively casino-floor / city-crowd energy. No music, no clearly "
+        "intelligible words. Steady, loopable."
+    ),
+}
+
+
+def _render_clip(api_key: str, prompt: str, out_mp3: Path) -> None:
+    resp = requests.post(
+        "https://api.elevenlabs.io/v1/sound-generation",
+        headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+        json={
+            "text": prompt,
+            "duration_seconds": CLIP_SECONDS,
+            "prompt_influence": PROMPT_INFLUENCE,
+            "loop": True,
+            "output_format": "mp3_44100_128",
+        },
+        timeout=120,
+    )
+    if resp.status_code != 200:
+        raise SystemExit(f"ElevenLabs SFX failed: HTTP {resp.status_code} {resp.text[:300]}")
+    out_mp3.write_bytes(resp.content)
+
+
+def render(name: str, prompt: str, api_key: str) -> None:
+    print(f"generating '{name}' bed ({LOOP_CLIPS} x {CLIP_SECONDS:.0f}s) via ElevenLabs SFX…")
+    tmp = Path(tempfile.mkdtemp())
+    clips = []
+    for i in range(LOOP_CLIPS):
+        mp3 = tmp / f"{name}-{i}.mp3"
+        _render_clip(api_key, prompt, mp3)
+        clips.append(mp3)
+    # Concatenate the clips, then convert to mono / 24kHz / 16-bit WAV.
+    concat_list = tmp / "list.txt"
+    concat_list.write_text("".join(f"file '{c}'\n" for c in clips))
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_wav = OUT_DIR / f"{name}.wav"
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+         "-f", "concat", "-safe", "0", "-i", str(concat_list),
+         "-ac", "1", "-ar", str(TARGET_RATE), "-sample_fmt", "s16", str(out_wav)],
+        check=True,
+    )
+    shutil.rmtree(tmp, ignore_errors=True)
+    print(f"wrote {out_wav} (mono, {TARGET_RATE} Hz, ~{LOOP_CLIPS * CLIP_SECONDS:.0f}s loop)")
 
 
 def main() -> int:
@@ -43,40 +99,14 @@ def main() -> int:
         print("ELEVENLABS_API_KEY not set — run `make -C apps/voice env` first.", file=sys.stderr)
         return 1
     if not shutil.which("ffmpeg"):
-        print("ffmpeg not found — needed to convert to mono 24 kHz WAV.", file=sys.stderr)
+        print("ffmpeg not found — needed to stitch + convert to mono 24kHz WAV.", file=sys.stderr)
         return 1
-
-    print(f"generating coffee-shop ambience ({DURATION_SECONDS}s) via ElevenLabs SFX…")
-    resp = requests.post(
-        "https://api.elevenlabs.io/v1/sound-generation",
-        headers={"xi-api-key": api_key, "Content-Type": "application/json"},
-        json={
-            "text": PROMPT,
-            "duration_seconds": DURATION_SECONDS,
-            "prompt_influence": PROMPT_INFLUENCE,
-            "loop": True,  # seamless loop for a continuous bed
-            "output_format": "mp3_44100_128",
-        },
-        timeout=120,
-    )
-    if resp.status_code != 200:
-        print(f"ElevenLabs SFX failed: HTTP {resp.status_code} {resp.text[:300]}", file=sys.stderr)
-        return 1
-
-    OUT_WAV.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-        tmp.write(resp.content)
-        tmp_mp3 = tmp.name
-
-    # Convert to exactly mono / 24 kHz / 16-bit PCM WAV (mixer requirement).
-    subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-         "-i", tmp_mp3, "-ac", "1", "-ar", str(TARGET_RATE), "-sample_fmt", "s16",
-         str(OUT_WAV)],
-        check=True,
-    )
-    os.unlink(tmp_mp3)
-    print(f"wrote {OUT_WAV} (mono, {TARGET_RATE} Hz)")
+    which = sys.argv[1:] or list(AMBIENCE)
+    for name in which:
+        if name not in AMBIENCE:
+            print(f"unknown ambience '{name}' (have: {', '.join(AMBIENCE)})", file=sys.stderr)
+            return 1
+        render(name, AMBIENCE[name], api_key)
     return 0
 
 

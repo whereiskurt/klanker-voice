@@ -172,25 +172,38 @@ def build_pipeline(
 
 
 def build_ambience_mixer(cfg):  # noqa: ANN001 -- PipelineConfig (avoid import churn)
-    """Build the greenhouse coffee-shop ``SoundfileMixer`` (mixing OFF until the
-    router enables it via ``MixerEnableFrame``), or ``None`` when ambience is
-    disabled or the WAV is missing.
+    """Build the per-topic ``SoundfileMixer`` (mixing OFF until the router
+    enables it via ``MixerEnableFrame``), or ``None`` when ambience is disabled
+    or no bed WAV is present.
+
+    ALL beds under ``assets/ambience/*.wav`` are registered (keyed by filename
+    stem, e.g. ``coffee-shop`` / ``conference``) so the router can hot-swap
+    between them with ``MixerUpdateSettingsFrame(settings={"sound": <name>})``
+    as topics change — the topic-map's ``ambience:`` value is exactly that stem.
 
     The output transport MUST set ``audio_out_sample_rate`` to
-    ``cfg.greenhouse.ambience_sample_rate`` to match the WAV -- the mixer does
+    ``cfg.greenhouse.ambience_sample_rate`` to match the WAVs -- the mixer does
     not resample (it silently drops a mismatched file). Shared by server.py and
-    bot.py so both the deployed and local paths get the bed.
+    bot.py so both the deployed and local paths get the beds.
     """
     gh = cfg.greenhouse
     if not (gh.ambience_enabled and gh.ambience_file):
         return None
     from pipecat.audio.mixers.soundfile_mixer import SoundfileMixer
 
+    # Discover every rendered bed beside the resolved default file so a new
+    # `assets/ambience/<name>.wav` becomes available to a topic with no code
+    # change (config.ambience_file is APP_ROOT/assets/ambience/<sound>.wav).
+    ambience_dir = gh.ambience_file.parent
+    sound_files = {wav.stem: str(wav) for wav in sorted(ambience_dir.glob("*.wav"))}
+    # Guarantee the configured default is registered even if globbing missed it.
+    sound_files.setdefault(gh.ambience_sound, str(gh.ambience_file))
+
     return SoundfileMixer(
-        sound_files={gh.ambience_sound: str(gh.ambience_file)},
+        sound_files=sound_files,
         default_sound=gh.ambience_sound,
         volume=gh.ambience_volume,
-        mixing=False,  # the router turns it on only while greenhouse is active
+        mixing=False,  # the router turns it on only while an ambience topic is active
     )
 
 
