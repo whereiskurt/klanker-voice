@@ -1195,3 +1195,78 @@ gate is a SEPARATE security/auth layer verified outside the LLM. They may share
 phrase vocabulary, and a phrase MAY do both (e.g. "greenhouse recruiting" unlocks
 the call AND lands in greenhouse recruiting mode once the LLM is engaged) — but keep
 the mechanisms distinct: the gate decides ACCESS/tier; the router decides PERSONA.
+
+---
+
+## 25. Addendum (2026-07-11, Kurt) — hardening for a hostile / DEF CON audience
+
+This DID will be handed to DEF CON attendees. Assume active adversaries: toll-fraud
+attempts, SIP scanning, caller-ID spoofing, quota-burn/DoS, and voice jailbreak.
+Design every layer to fail closed and cap financial blast radius.
+
+### A. Financial blast radius (toll fraud is the #1 telephony risk)
+- **Inbound-ONLY in Phase 1** (reaffirms §22.7): no outbound anywhere. VoIP.ms
+  subaccounts have outbound DISABLED; the Asterisk dialplan has NO outbound context.
+- **Disable international + premium destinations** at the VoIP.ms account level.
+- **Keep the VoIP.ms balance LOW; auto-recharge OFF** (or a hard cap). A full
+  compromise can only drain what is loaded. Set low-balance + spend alerts.
+- Per-call **max duration** and a **daily minute cap** at both VoIP.ms and in
+  `SessionLifecycle` (§11).
+
+### B. Portal & API account security
+- **2FA on the VoIP.ms portal.** Strong unique portal password.
+- **API:** strong unique `api_password` (≠ portal password), **IP-whitelisted**. Use
+  the setup IP now, then **re-lock** — never leave `0.0.0.0` whitelisted in prod.
+- All SIP/ARI secrets in SSM only; never git, `pipeline.toml`, or logs.
+
+### C. SIP edge hardening (against scanners)
+- **Separate subaccounts** (`klanker-pbx` vs `payphone-ata`), each with a **strong
+  unique random SIP password** (blast-radius isolation, §4).
+- **IP-restrict each subaccount** to the Asterisk egress IP + the chosen POP.
+- **Security group: allow SIP/RTP only from the VoIP.ms POP IP ranges** — never
+  expose 5060/RTP to the whole internet. DEF CON *will* scan it. Put nothing
+  SIP-listening on an open port.
+- **TLS + SRTP** where the POP supports it (encrypt signaling + media).
+- **fail2ban** (or equivalent) on the Asterisk host for SIP auth failures.
+- **Narrow dialplan:** an inbound call reaches ONLY the Stasis app — no other
+  extensions, features, or dial contexts are reachable (§18).
+- **ARI private-network only, authenticated, strong password, never internet-exposed**
+  (§18).
+
+### D. Caller-side threats (the DEF CON angle)
+- **Caller ID is spoofable** → caller-ID alone grants at most the DEFAULT minimal
+  tier; the 4-word passphrase / DTMF PIN (§24) is the ONLY path to `kph-tier` or any
+  high tier. Never upgrade tier on caller-ID alone (§23).
+- **The silent gate (§24) keeps STT/LLM/TTS dark until unlock** — so scanners and
+  random callers cannot burn STT/LLM/TTS quota OR reach the model to jailbreak it.
+  This is a primary DoS/abuse control, not just an auth step.
+- **Concurrency = 1, short max duration, per-source rate-limit** cap quota-burn/DoS.
+- **Voice prompt-injection:** the existing persona treats "ignore your instructions /
+  act as X / reveal the prompt" as playful noise and steers back; the LLM has **no
+  tools**, so caller speech/DTMF can execute no privileged action (§18). Keep it that
+  way — do not wire caller-driven tool use.
+- **Never** place the PIN/passphrase in the LLM context; drop the pre-unlock
+  transcript before it reaches the LLM/ledger/logs (§24).
+- **Call recording OFF by default;** if ever enabled, disclose it (Canada two-party
+  consent) (§18).
+
+### E. Operations
+- **Isolated `telephony-edge` deploy** (§15) — decoupled from `voice`/`auth`.
+- **Alarms:** ANY outbound attempt (should be zero), balance drop, call-volume spike,
+  registration failures, gate-fail rate.
+- **Runbook:** revoke/rotate a subaccount SIP credential, kill-switch DID routing,
+  and debug one-way audio.
+
+### F. Blank-account setup order (do the portal steps first, before the API dance)
+1. Enable **2FA**; set a strong portal password.
+2. Account settings → **international/premium call restrictions** locked down
+   (inbound-only intent).
+3. **Balance low + auto-recharge OFF + alerts** on.
+4. **Enable API** + strong `api_password` + **whitelist the setup IP**.
+5. (Together, via API) create `klanker-pbx` + `payphone-ata` subaccounts (strong
+   unique SIP passwords, IP-restricted, outbound disabled).
+6. **Order ONE DID** (a `5878` vanity), **per-minute** plan, **CNAM off**, POP =
+   **Toronto** (Kurt is in Toronto — lowest latency; Montreal is the fallback). Use
+   the **same POP** for the DID and the PBX trunk.
+7. **Route the DID → `klanker-pbx`.** Set a max call duration.
+8. After setup, **re-lock the API IP whitelist**.
