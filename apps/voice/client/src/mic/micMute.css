@@ -1,0 +1,48 @@
+/* src/mic/micMute.css — the obvious, always-visible live mic toggle.
+   Centered in the bottom action-bar band (the left corner is the latency
+   toggle, the right cluster is countdown + End chat), so it reads as the
+   primary in-session control without colliding with either. */
+.mic-mute {
+  position: absolute;
+  bottom: calc((var(--stage-action-bar) - var(--hit-min)) / 2);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sm);
+  min-height: var(--hit-min);
+  padding: 0 var(--lg);
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  background: var(--scrim);
+  color: var(--text-primary);
+  font-size: var(--sz-label);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(6px);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.mic-mute:hover { border-color: var(--text-secondary); }
+
+/* Muted = loud, unmistakable state: filled destructive pill + soft pulse so a
+   presenter can tell at a glance the room mic is off. */
+.mic-mute--muted {
+  color: #fff;
+  background: var(--destructive);
+  border-color: var(--destructive);
+  animation: mic-mute-pulse 1.6s ease-in-out infinite;
+}
+
+.mic-mute-icon { display: inline-flex; }
+
+@keyframes mic-mute-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--destructive) 55%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--destructive) 0%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mic-mute--muted { animation: none; }
+}

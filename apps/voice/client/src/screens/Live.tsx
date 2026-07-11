@@ -7,6 +7,7 @@ import { transcriptReducer, INITIAL_TRANSCRIPT_STATE } from "../transcript/trans
 import { playRandomGreeting, type GreetingHandle } from "../greeting/greetingPlayer";
 import Countdown from "../timer/Countdown";
 import LatencyHud from "../hud/LatencyHud";
+import MicMuteButton from "../mic/MicMuteButton";
 import "./live.css";
 
 export interface LiveProps {
@@ -77,6 +78,7 @@ export default function Live({ client, sessionMaxSeconds, variantLabel, onEndCha
         ) : null}
         <button type="button" className="live-endchat" onClick={onEndChat}>End chat</button>
       </div>
+      <MicMuteButton client={client} />
       <LatencyHud client={client} />
     </div>
   );
