@@ -43,11 +43,12 @@ AMBIENCE: dict[str, str] = {
         "music, no clearly intelligible words. Steady, loopable."
     ),
     "conference": (
-        "Busy tech-conference hallway ambience inside a large convention center: "
-        "a wash of many distant overlapping conversations, footsteps on hard "
-        "floors, the odd distant laugh, a faint far-off PA murmur, big open-hall "
-        "reverb — a lively casino-floor / city-crowd energy. No music, no clearly "
-        "intelligible words. Steady, loopable."
+        "Cavernous convention-center hall from inside a moving crowd: footsteps "
+        "and shoe squeaks on hard polished floors, rolling suitcase wheels "
+        "trundling past, a boomy far-off PA announcement echoing under a high "
+        "ceiling, huge open-hall reverb, a diffuse distant crowd murmur. Airy, "
+        "spacious, clearly a giant hall — NOT a cafe: no espresso machine, no "
+        "cups, no music, no intelligible words. Steady, loopable."
     ),
 }
 
