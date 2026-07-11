@@ -250,18 +250,23 @@ class KnowledgeRouterProcessor(FrameProcessor):
         return self._ack_templates
 
     async def _toggle_ambience(self, prev_topic: str, new_topic: str) -> None:
-        """Enable/disable the greenhouse coffee-shop bed when switching into or
-        out of a topic that declares ``ambience: <sound>`` in the topic-map --
-        only when the session actually built a mixer
-        (``cfg.greenhouse.ambience_enabled``). Mixer control frames flow
-        downstream to the output transport's ``SoundfileMixer``; a no-op when no
-        mixer is present (they pass straight through)."""
+        """Drive the ambient bed to EXACTLY the scene we're now in.
+
+        Reconciling (idempotent), not differential: on every committed switch we
+        set the mixer to the new topic's ``ambience: <sound>`` bed and enable it,
+        or disable mixing outright when the new topic declares none. Because it
+        depends only on ``new_topic`` (never on ``prev_topic``), it self-heals a
+        missed transition and can NEVER leave a stale bed layered under a new
+        scene -- the SoundfileMixer plays one ``_current_sound`` at a time, so
+        pointing it at the new bed is what "stops the old one". Only fires on a
+        real switch (see ``_commit_switch``), and is a no-op when the session
+        built no mixer (``ambience_enabled`` off -- frames pass straight through).
+        """
         gh = getattr(self._cfg, "greenhouse", None)
         if gh is None or not gh.ambience_enabled:
             return
         new_amb = self._topic_field(new_topic, "ambience")
-        prev_amb = self._topic_field(prev_topic, "ambience")
-        if new_amb and new_amb != prev_amb:
+        if new_amb:
             await self.push_frame(
                 MixerUpdateSettingsFrame(
                     settings={"sound": str(new_amb), "volume": gh.ambience_volume}
@@ -269,7 +274,8 @@ class KnowledgeRouterProcessor(FrameProcessor):
                 FrameDirection.DOWNSTREAM,
             )
             await self.push_frame(MixerEnableFrame(enable=True), FrameDirection.DOWNSTREAM)
-        elif prev_amb and not new_amb:
+        else:
+            # No bed for this scene -> silence any bed that was playing.
             await self.push_frame(MixerEnableFrame(enable=False), FrameDirection.DOWNSTREAM)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
