@@ -12,9 +12,13 @@ pieces is Plan 02.
 
 from __future__ import annotations
 
+from klanker_voice.telephony.media import PcmFramer, ulaw_decode, ulaw_encode
 from klanker_voice.telephony.types import RtpMediaSession, TelephonyTransportParams
 
 __all__ = [
     "TelephonyTransportParams",
     "RtpMediaSession",
+    "ulaw_decode",
+    "ulaw_encode",
+    "PcmFramer",
 ]
