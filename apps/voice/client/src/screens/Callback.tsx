@@ -27,6 +27,30 @@ export default function Callback({ onAuthenticated }: CallbackProps) {
     let cancelled = false;
 
     async function run() {
+      // Bypass /join auto-login (2026-07-10-bypass-join-login-design): the auth
+      // app's /join route mints an anonymous OIDC token and 302-redirects here
+      // with it in the URL FRAGMENT (#access_token=...&anon=1). When present,
+      // ingest it directly and fully short-circuit the PKCE code exchange —
+      // there is no `code`/`state`/verifier round-trip for this path. The
+      // fragment (unlike a query string) never reaches the server or a Referer
+      // header, keeping the bearer token out of access logs.
+      const rawHash = window.location.hash.startsWith("#")
+        ? window.location.hash.slice(1)
+        : window.location.hash;
+      const bypassToken = new URLSearchParams(rawHash).get("access_token");
+      if (bypassToken) {
+        try {
+          setToken(bypassToken); // throws if the token isn't a well-formed JWT
+          markReturningUser();
+          // Scrub the token from the address bar / history before proceeding.
+          window.history.replaceState({}, "", "/");
+          if (!cancelled) onAuthenticated();
+        } catch {
+          if (!cancelled) setError("Sign-in didn't complete. Please try again.");
+        }
+        return;
+      }
+
       const params = new URLSearchParams(window.location.search);
       const errorParam = params.get("error");
       if (errorParam === "login_required" || errorParam === "interaction_required") {

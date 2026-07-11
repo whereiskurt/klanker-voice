@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -125,7 +127,112 @@ func ExpireAccessCode(ctx context.Context, client *dynamodb.Client, table, code 
 	return nil
 }
 
-// NewCodeCmd builds the "kv code" parent command with create/list/expire
+// bypassTokenAlphabet is the base62 charset (a-zA-Z0-9) for bypass /join
+// tokens. base62 keeps tokens URL-safe with no escaping needed in the
+// /use1/join/<token> path segment.
+const bypassTokenAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// bypassTokenLength is the number of base62 chars in a bypass token.
+// 12 chars of base62 ≈ 71 bits of entropy — unguessable for a shared,
+// operator-issued conference link, while staying short enough to paste.
+const bypassTokenLength = 12
+
+// generateBypassToken returns a cryptographically-random 12-char base62 token.
+// Uses rejection sampling over the largest multiple of len(alphabet) so the
+// distribution is unbiased (no modulo bias).
+func generateBypassToken() (string, error) {
+	const n = byte(len(bypassTokenAlphabet)) // 62
+	maxUnbiased := byte(256 - (256 % int(n))) // 248: reject bytes >= 248
+	out := make([]byte, 0, bypassTokenLength)
+	buf := make([]byte, 1)
+	for len(out) < bypassTokenLength {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("generate bypass token: %w", err)
+		}
+		if buf[0] >= maxUnbiased {
+			continue // reject to avoid modulo bias
+		}
+		out = append(out, bypassTokenAlphabet[buf[0]%n])
+	}
+	return string(out), nil
+}
+
+// EnableBypass turns on bypass /join for a code: it generates a fresh random
+// bypass token and UpdateItems the code's primary item, SETting bypassEnabled,
+// bypassToken, and the sparse gsi2 key attributes (gsi2pk/gsi2sk) so the
+// webapp's resolveBypassToken query finds it. Calling it again ROTATES the
+// token (overwrites with a new one). Returns the new token.
+func EnableBypass(ctx context.Context, client *dynamodb.Client, table, code string) (string, error) {
+	if err := validateCodeCharset(code); err != nil {
+		return "", err
+	}
+	token, err := generateBypassToken()
+	if err != nil {
+		return "", err
+	}
+	_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(table),
+		Key: map[string]types.AttributeValue{
+			"pk": &types.AttributeValueMemberS{Value: electro.AccessCodePK(code)},
+			"sk": &types.AttributeValueMemberS{Value: electro.AccessCodeSK()},
+		},
+		UpdateExpression: aws.String(
+			"SET bypassEnabled = :t, bypassToken = :tok, gsi2pk = :g2pk, gsi2sk = :g2sk",
+		),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":t":    &types.AttributeValueMemberBOOL{Value: true},
+			":tok":  &types.AttributeValueMemberS{Value: token},
+			":g2pk": &types.AttributeValueMemberS{Value: electro.AccessCodeGSI2PK(token)},
+			":g2sk": &types.AttributeValueMemberS{Value: electro.AccessCodeGSI2SK()},
+		},
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("enable bypass for code %q: %w", code, err)
+	}
+	return token, nil
+}
+
+// bypassJoinURL builds the shareable auto-login URL an operator hands out. The
+// /join route lives on the AUTH app (Next.js App Router route), mounted under
+// the region basePath — so the canonical URL is
+// https://auth.klankermaker.ai/use1/join/<token>. Origin/region are overridable
+// via KV_AUTH_ORIGIN / REGION_SHORT for non-prod deployments.
+func bypassJoinURL(token string) string {
+	origin := os.Getenv("KV_AUTH_ORIGIN")
+	if origin == "" {
+		origin = "https://auth.klankermaker.ai"
+	}
+	region := os.Getenv("REGION_SHORT")
+	if region == "" {
+		region = "use1"
+	}
+	return fmt.Sprintf("%s/%s/join/%s", origin, region, token)
+}
+
+// DisableBypass turns off bypass /join for a code: it REMOVEs bypassEnabled,
+// bypassToken, and the gsi2 key attributes, dropping the code out of the sparse
+// byBypassToken index so any existing /join link 404s immediately.
+func DisableBypass(ctx context.Context, client *dynamodb.Client, table, code string) error {
+	if err := validateCodeCharset(code); err != nil {
+		return err
+	}
+	_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(table),
+		Key: map[string]types.AttributeValue{
+			"pk": &types.AttributeValueMemberS{Value: electro.AccessCodePK(code)},
+			"sk": &types.AttributeValueMemberS{Value: electro.AccessCodeSK()},
+		},
+		UpdateExpression:    aws.String("REMOVE bypassEnabled, bypassToken, gsi2pk, gsi2sk"),
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+	})
+	if err != nil {
+		return fmt.Errorf("disable bypass for code %q: %w", code, err)
+	}
+	return nil
+}
+
+// NewCodeCmd builds the "kv code" parent command with create/list/expire/bypass
 // subcommands (KV-01).
 func NewCodeCmd(cfg *Config) *cobra.Command {
 	codeCmd := &cobra.Command{
@@ -216,6 +323,55 @@ func NewCodeCmd(cfg *Config) *cobra.Command {
 		},
 	}
 	codeCmd.AddCommand(expire)
+
+	var (
+		bypassDisable bool
+		bypassRotate  bool
+	)
+	bypass := &cobra.Command{
+		Use:   "bypass <code>",
+		Short: "Enable, rotate, or disable the bypass /join auto-login link for a code",
+		Long: "Manage the per-code bypass /join auto-login token.\n\n" +
+			"  kv code bypass <code>            enable bypass (mint a token) and print the URL\n" +
+			"  kv code bypass <code> --rotate   mint a NEW token (invalidates the old link)\n" +
+			"  kv code bypass <code> --disable  turn bypass off (the /join link 404s)\n\n" +
+			"The shareable URL points at the auth app's /join route:\n" +
+			"  https://auth.klankermaker.ai/use1/join/<token>",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if bypassDisable && bypassRotate {
+				return fmt.Errorf("--disable and --rotate are mutually exclusive")
+			}
+			client, err := cfg.DynamoClient(c.Context())
+			if err != nil {
+				return err
+			}
+			code := args[0]
+			if bypassDisable {
+				if err := DisableBypass(c.Context(), client, cfg.Table, code); err != nil {
+					return err
+				}
+				fmt.Fprintf(c.OutOrStdout(), "disabled bypass for code %q\n", electro.NormalizeCode(code))
+				return nil
+			}
+			// enable (default) or rotate — both call EnableBypass, which mints a
+			// fresh token (rotate is just an explicit re-enable that overwrites).
+			token, err := EnableBypass(c.Context(), client, cfg.Table, code)
+			if err != nil {
+				return err
+			}
+			verb := "enabled"
+			if bypassRotate {
+				verb = "rotated"
+			}
+			fmt.Fprintf(c.OutOrStdout(), "%s bypass for code %q\n", verb, electro.NormalizeCode(code))
+			fmt.Fprintf(c.OutOrStdout(), "join URL: %s\n", bypassJoinURL(token))
+			return nil
+		},
+	}
+	bypass.Flags().BoolVar(&bypassDisable, "disable", false, "disable bypass /join for this code")
+	bypass.Flags().BoolVar(&bypassRotate, "rotate", false, "rotate to a fresh token (invalidates the previous link)")
+	codeCmd.AddCommand(bypass)
 
 	return codeCmd
 }

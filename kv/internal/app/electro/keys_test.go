@@ -76,6 +76,35 @@ func TestKeyCompat_AccessCode(t *testing.T) {
 	}
 }
 
+// TestKeyCompat_AccessCodeGSI2 asserts the AccessCode gsi2 (byBypassToken) key
+// strings equal the FINAL templates from access-code.ts:
+//
+//	gsi2 pk: "bypass#${bypassToken}"   sk: "bypass#"
+//
+// The bypass token is an opaque secret and is NOT case-normalized — case is
+// significant, matching the webapp entity's plain template (no `set` transform).
+func TestKeyCompat_AccessCodeGSI2(t *testing.T) {
+	if got := GSI2IndexName; got != "gsi2pk-gsi2sk-index" {
+		t.Errorf("GSI2IndexName = %q, want %q", got, "gsi2pk-gsi2sk-index")
+	}
+	if got := AccessCodeGSI2SK(); got != "bypass#" {
+		t.Errorf("AccessCodeGSI2SK() = %q, want %q", got, "bypass#")
+	}
+	cases := []struct {
+		token string
+		want  string
+	}{
+		{"aB3xY", "bypass#aB3xY"},
+		{"MixedCase123", "bypass#MixedCase123"}, // case preserved (not normalized)
+		{"loweronly", "bypass#loweronly"},
+	}
+	for _, tc := range cases {
+		if got := AccessCodeGSI2PK(tc.token); got != tc.want {
+			t.Errorf("AccessCodeGSI2PK(%q) = %q, want %q", tc.token, got, tc.want)
+		}
+	}
+}
+
 // TestKeyCompat_CaseCrossCheck proves a kv write of an uppercase code keys
 // IDENTICALLY to a webapp write of the lowercase form — the exact scenario
 // that would silently hide a code from login if normalization diverged.
