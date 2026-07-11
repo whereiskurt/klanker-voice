@@ -27,6 +27,15 @@ ENV VITE_OIDC_ISSUER=${VITE_OIDC_ISSUER} \
     VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE} \
     VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI}
 
+# Build stamp (VERSION concept) — short git SHA + UTC build time, baked into
+# the bundle so the running UI shows exactly which build it is (client/src/
+# version.ts). CI passes both via --build-arg (build-voice.yml); a local build
+# passes neither and falls back to "dev".
+ARG VITE_APP_VERSION=dev
+ARG VITE_APP_BUILT_AT=
+ENV VITE_APP_VERSION=${VITE_APP_VERSION} \
+    VITE_APP_BUILT_AT=${VITE_APP_BUILT_AT}
+
 # Dependency layer first (its own cache layer) so app-code edits don't bust
 # the slower npm-install cache — same rationale as the uv sync split below.
 COPY client/package.json client/package-lock.json ./
