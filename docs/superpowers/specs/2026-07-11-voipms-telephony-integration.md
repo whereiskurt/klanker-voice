@@ -1079,3 +1079,52 @@ Stop after Phase A and report the exact files changed and test results.
 6. **Caller ID is metadata, not authentication.**
 7. **Phase 1 is inbound-only and must not become an open calling relay.**
 8. **The ATA/payphone needs no special integration with Klanker beyond being able to call the DID.**
+
+---
+
+## 23. Addendum (2026-07-11, Kurt) — pre-established phone → code → tier identity
+
+Refines §11. Rather than treating a PSTN call as an anonymous unauthenticated
+`pstn:<caller-id>` subject, telephony **reuses the existing auth token logic** —
+the same access-code → tier → minted-OIDC-token path the just-shipped bypass
+`/join` feature uses. A phone number is pre-mapped to an existing access code.
+
+**Flow:**
+
+1. **Pre-establish a phone → code mapping.** A known caller ID maps to an existing
+   access code. Example: `5195551010` → code `defcon34`.
+2. **Resolve code → tier** with the existing `resolveAccessCode(code)` (auth app,
+   `apps/auth/webapp/src/entities/access-code.ts`).
+3. **Mint a token** carrying that tier via the existing minting path
+   (`apps/auth/webapp/src/lib/bypass-token.ts` `mintAnonToken`): RS256, signed with
+   `OIDC_JWKS`, `aud = voice`, namespaced `tier_id`/`group` claims — validates in
+   the voice service unchanged. Suggested `sub = "tel:<code>:<uuid>"` (mirrors
+   bypass `anon:<code>:<uuid>`).
+4. The telephone session then flows through the SAME `start_gate` /
+   `SessionLifecycle` / quota as a browser session — no independent telephone auth
+   or timer (consistent with §11 and §22.5).
+
+**`kph-tier` (unlimited):** a `Tier` row with effectively unlimited
+`sessionMaxSeconds` / `periodMaxSeconds` / `maxConcurrent` — Kurt's own access
+(his number / payphone → `defcon34` → `kph-tier`). Other numbers/DIDs map to the
+constrained tiers of §11 (1 concurrent, ~10 min, small daily cap).
+
+**Data model — reuse the bypass-join pattern:** add a `phone` attribute + a sparse
+GSI (e.g. `byPhone`, pk `phone#<E.164>`) to the `AccessCode` entity — a direct
+mirror of the `bypassToken` / `byBypassToken` gsi2 work (remember: ElectroDB
+LOWERCASES keys by default, so normalize the phone to a canonical E.164 digit form
+before it becomes a key; casing is moot for digits but normalization matters).
+Add a `kv code phone <code> --add <e164>` operator command mirroring
+`kv code bypass`. The caller-ID lookup + mint live in the auth app (or a shared
+helper); the Asterisk controller passes the **normalized** caller ID (§13).
+
+**SECURITY CAVEAT (do not skip):** caller ID is **spoofable** on the PSTN, so a
+phone → tier grant trusts a spoofable identifier (tension with §22.6 "caller ID is
+metadata, not authentication"). For a private prototype with tight caps this is an
+acceptable risk — BUT binding the **unlimited `kph-tier`** to caller ID *alone* is
+dangerous (anyone spoofing `5195551010` would get unlimited metered access).
+Recommendation: caller-ID-only mapping is fine for **low/capped** tiers; require a
+**second factor** (DTMF PIN or a short spoken passphrase verified OUTSIDE the LLM,
+per §11) before granting `kph-tier` or any high/unlimited tier. Unknown caller IDs →
+a default minimal tier or reject — never an open grant. The LLM must never decide
+authentication (§18).
