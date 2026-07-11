@@ -1128,3 +1128,53 @@ Recommendation: caller-ID-only mapping is fine for **low/capped** tiers; require
 per §11) before granting `kph-tier` or any high/unlimited tier. Unknown caller IDs →
 a default minimal tier or reject — never an open grant. The LLM must never decide
 authentication (§18).
+
+---
+
+## 24. Addendum (2026-07-11, Kurt) — call-answer security gate ("unlock, then talk")
+
+Implements the §23 second factor. On answer the agent **stays silent** — no
+greeting, no LLM turn, no TTS — until the caller proves access via **EITHER**
+factor (both supported; either one unlocks). The silence is intentional: a caller
+who does not know the ritual hears nothing and hangs up; no prompt is given (fits
+the private/covert intent of the phrase examples). An optional single neutral tone
+on answer is allowed if a fully dead line proves too confusing in testing.
+
+**Factor 1 — DTMF PIN, within 10 s of answer.** Caller enters a keypad PIN;
+Asterisk surfaces digits via ARI DTMF events; the controller compares to
+`TELEPHONY_ACCESS_PIN` (SSM). Handled at the Asterisk/controller layer — never in
+the LLM. 10 s window from answer.
+
+**Factor 2 — spoken safe phrase, during the gate.** STT runs during the gate so the
+phrase can be caught, but its transcript feeds a **gate matcher, NOT the LLM**. The
+matcher compares the normalized transcript (lowercase, punctuation/whitespace
+folded) against one or more safe phrases from SSM (`TELEPHONY_SAFE_PHRASES`, a
+list — e.g. "greenhouse recruiting", "with greenhouse", "on behalf of edward
+snowden"). A substring/phrase match unlocks. Verified OUTSIDE the LLM (§18).
+
+**Quiet-gate mechanics:**
+- The pipeline is built only far enough to run STT (+ receive DTMF) during the gate;
+  OUTPUT is suppressed (no `greet_now()`, no LLM, no TTS). Caller hears silence.
+- **On unlock:** grant the caller's tier (§23 — a passing gate is what upgrades a
+  caller-ID-mapped capped tier to `kph-tier`/high tiers; which PIN/phrase → which
+  tier is pre-established), THEN run the normal path — `greet_now()` + LLM + TTS.
+  The greeting fires HERE, not before (consistent with §12 "don't greet before
+  ready").
+- **Fail-closed (§17/§18):** if neither factor lands within the bounded window
+  (DTMF 10 s; overall gate ~20-30 s, configurable), play a short static
+  goodbye/unavailable and **hang up** — never leave a silent open call burning PSTN
+  charges. This gate runs BEFORE building the expensive STT/LLM/TTS turn loop where
+  possible; at minimum the LLM/TTS never engage until unlock.
+
+**Config/secrets:** add `require_gate`, `gate_dtmf_window_seconds = 10`,
+`gate_total_window_seconds` to the `[telephony]` block (non-secret). `TELEPHONY_ACCESS_PIN`
+and `TELEPHONY_SAFE_PHRASES` are SSM-only — never git, `pipeline.toml`, or logs, and
+never injected into the LLM context (§18). Log unlock events by method
+(`dtmf`/`phrase`) + call ID, but never the PIN or the matched phrase text.
+
+**Relationship to the existing `greenhouse` keyword:** that is a persona/topic
+unlock INSIDE the knowledge router (`greenhouse` → recruiting mode); this telephony
+gate is a SEPARATE security/auth layer verified outside the LLM. They may share
+phrase vocabulary, and a phrase MAY do both (e.g. "greenhouse recruiting" unlocks
+the call AND lands in greenhouse recruiting mode once the LLM is engaged) — but keep
+the mechanisms distinct: the gate decides ACCESS/tier; the router decides PERSONA.
