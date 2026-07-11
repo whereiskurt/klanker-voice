@@ -1,0 +1,23 @@
+/* src/version/versionStamp.css — the always-on build stamp.
+   Top-left corner is unused on every screen (the orb header is centered, the
+   latency toggle is bottom-left), so it never collides with a control. Faint
+   by default, a touch brighter on hover; tiny hit area so it can't intercept
+   interaction. */
+.version-stamp {
+  position: fixed;
+  top: 6px;
+  left: 8px;
+  z-index: 20;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary, #8a8f98);
+  opacity: 0.4;
+  cursor: default;
+  user-select: text;
+  transition: opacity 120ms ease;
+}
+
+.version-stamp:hover {
+  opacity: 0.85;
+}
