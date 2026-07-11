@@ -56,6 +56,8 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bCISSP\b", re.IGNORECASE), "sissp"),
     (re.compile(r"\bOWASP\b", re.IGNORECASE), "Oh wasp"),
     (re.compile(r"\bebpf\b", re.IGNORECASE), "e b p f"),
+    (re.compile(r"\bAI agentf\b", re.IGNORECASE), "AI"),
+    (re.compile(r"\bMiTM\b", re.IGNORECASE), "man in the middle"),
 ]
 
 
