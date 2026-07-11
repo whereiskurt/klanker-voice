@@ -45,6 +45,23 @@ per the resampler's own docstring) -- D-06:
   step (see PATTERNS "Critical Notes" / the "two distinct params objects"
   and "resample once" notes).
 
+Interruption flushing (D-07, spec Sec10)
+-----------------------------------------
+``BaseOutputTransport`` does NOT expose a directly-overridable
+``handle_interruptions`` method on the transport class itself -- that hook
+lives on its private inner ``MediaSender`` (dispatched from
+``process_frame``'s ``InterruptionFrame`` branch via ``_handle_frame``, per
+the installed pipecat 1.5.0 source). ``TelephonyOutputTransport`` therefore
+overrides ``process_frame`` to detect ``InterruptionFrame`` AFTER delegating
+to ``super().process_frame(...)`` (so the base class's own queued-audio
+reset / bot-stopped-speaking bookkeeping still runs first, exactly as D-07
+requires), then flushes this module's own outbound telephony buffer (the
+queued-but-unsent PCM tail not yet framed/packetized) -- NO second
+VAD/endpointing system is added; the existing pipeline ``InterruptionFrame``
+(Deepgram/Flux turn strategy) stays fully authoritative. This is a
+documented precision-fix over the plan's literal "override
+handle_interruptions" phrasing -- see 10-02-SUMMARY.md Deviations.
+
 Lifecycle / terminal close (D-08, spec Sec6.8)
 ------------------------------------------------
 ``TelephonyTransport`` registers exactly ``on_client_connected`` /
@@ -62,10 +79,6 @@ does not special-case reconnection at all). ``stop()``/``cancel()``/
 ``cleanup()`` on each processor all route through one idempotent
 ``_teardown()``.
 
-Interruption flushing (D-07, spec Sec10) is wired in Task 2 --
-``TelephonyOutputTransport.flush``/``TelephonyTransport.flush_output_audio``
-are stubbed below until then.
-
 Deferred to a Phase-11 live eval: the live Deepgram-transcribes ->
 ElevenLabs-responds round trip needs real API keys + network and is
 explicitly NOT an offline gate (spec Sec19-B; ROADMAP Phase 10 SC4 scope
@@ -80,10 +93,13 @@ from pipecat.audio.utils import create_stream_resampler
 from pipecat.frames.frames import (
     CancelFrame,
     EndFrame,
+    Frame,
     InputAudioRawFrame,
+    InterruptionFrame,
     OutputAudioRawFrame,
     StartFrame,
 )
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.transports.base_input import BaseInputTransport
 from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import BaseTransport, TransportParams
@@ -251,10 +267,37 @@ class TelephonyOutputTransport(BaseOutputTransport):
         return True
 
     async def flush(self) -> None:
-        """D-07 (Task 2): drop any buffered-but-incomplete outbound PCM tail.
-        Stubbed here -- Task 2 wires this to the interruption path; see
-        10-02-SUMMARY.md."""
-        raise NotImplementedError("D-07 interruption flush lands in Task 2")
+        """D-07: drop any buffered-but-incomplete outbound PCM tail so stale
+        audio doesn't bleed into the caller's next turn after a barge-in.
+        The framer is stateful across ``write_audio_frame`` calls (D-02);
+        replacing it discards exactly that incomplete tail (never-yet-sent
+        audio) with no effect on already-written RTP."""
+        self._framer = PcmFramer(samples_per_packet=self._telephony_params.samples_per_packet)
+
+    async def handle_interruptions(self, frame: InterruptionFrame) -> None:
+        """D-07 flush hook, invoked from :meth:`process_frame` below.
+
+        Installed pipecat 1.5.0 has NO directly-overridable
+        ``handle_interruptions`` on ``BaseOutputTransport`` itself -- that
+        hook lives on the private per-destination ``MediaSender`` and is
+        already invoked (with its own queued-audio reset / bot-stopped-
+        speaking bookkeeping) from inside ``super().process_frame(...)``
+        below, BEFORE this method runs. This method only extends that with
+        the telephony-specific flush (this module's own outbound PCM tail).
+        No extra turn-detection/endpointing logic is introduced -- it only
+        reacts to the ``InterruptionFrame`` the pipeline already emits.
+        """
+        await self.flush()
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        """Delegate to the base class first (D-07: its own queued-audio
+        reset / bot-stopped-speaking bookkeeping for this InterruptionFrame
+        runs there), then run the telephony-specific flush hook. No extra
+        turn-detection/endpointing logic is introduced here -- this only
+        reacts to the ``InterruptionFrame`` the pipeline already emits."""
+        await super().process_frame(frame, direction)
+        if isinstance(frame, InterruptionFrame):
+            await self.handle_interruptions(frame)
 
     async def _teardown(self) -> None:
         if self._torn_down:
@@ -353,7 +396,8 @@ class TelephonyTransport(BaseTransport):
         await self._call_event_handler("on_client_disconnected", None)
 
     async def flush_output_audio(self) -> None:
-        """D-07 signature (spec Sec10, Task 2): flush the queued outbound
-        telephony audio on caller barge-in. Stubbed as a no-op here -- Task 2
-        wires this to the interruption path; see 10-02-SUMMARY.md."""
-        return None
+        """D-07 signature (spec Sec10): flush the queued outbound telephony
+        audio on caller barge-in. A no-op if ``output()`` was never
+        constructed (nothing has been sent yet)."""
+        if self._output is not None:
+            await self._output.flush()
