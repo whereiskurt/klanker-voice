@@ -25,8 +25,7 @@ A transport-neutral shared call runtime, `apps/voice/src/klanker_voice/call_runt
 <decisions>
 ## Implementation Decisions (LOCKED by spec §6 / §21 / §22)
 
-### D-01 — Target API shape (spec §6)
-`call_runtime.py` exposes a narrow, transport-neutral API. Target shape from the spec:
+- **D-01 — Target API shape (spec §6)**`call_runtime.py` exposes a narrow, transport-neutral API. Target shape from the spec:
 
 ```python
 @dataclass
@@ -45,31 +44,24 @@ async def create_call_session(
 
 The exact names/dataclass fields are the planner's to reconcile against what actually exists in the code (e.g. the current worker/identity types). `CallIdentity` may be introduced as a thin abstraction now OR deferred — but if introduced, keep it minimal (Phase 12/§11/§23 fills in phone→code→tier). The `channel` value is `"webrtc"` for this phase; `"pstn"` is reserved for later.
 
-### D-02 — What to extract (grounded in the current `server.py`, 506 lines)
-The reusable, transport-neutral core to move into `call_runtime.py`:
+- **D-02 — What to extract (grounded in the current `server.py`, 506 lines)**The reusable, transport-neutral core to move into `call_runtime.py`:
 - `_run_session(...)` (server.py ~L149) — builds ambience mixer, pipeline via `build_pipeline`, RTVI observer, teardown observers; wires warning/stop callbacks and the `on_client_connected`/`on_client_disconnected` greeting + teardown handlers.
 - `_start_and_run_tracked_session(...)` (server.py ~L259) — the run/track wrapper.
 - The `SessionLifecycle` construction + callback wiring currently inside `_negotiate_webrtc` → `_connection_callback` (server.py ~L347).
 
-### D-03 — What STAYS WebRTC-specific (do NOT generalize into the shared runtime)
-- `_negotiate_webrtc` / `_connection_callback` (aiortc/ICE/`SmallWebRTCConnection` signaling).
+- **D-03 — What STAYS WebRTC-specific (do NOT generalize into the shared runtime)**- `_negotiate_webrtc` / `_connection_callback` (aiortc/ICE/`SmallWebRTCConnection` signaling).
 - `_wire_connection_teardown(connection, lifecycle)` (server.py ~L280) — the reconnect-race teardown that maps `SmallWebRTCConnection` `closed`/`on_client_disconnected` to `lifecycle.release()`. Its race-handling comments (server.py ~L294–L324: heartbeat-lease lingering, `restart_pc` renegotiation, brand-new `session_id` on reconnect) are WebRTC-transport-specific. Preserve them EXACTLY where they are; the shared runtime must not absorb this logic. (Spec §5 `webrtc.py` note: introduce transport-specific modules rather than branching shared code.)
 - `_extract_bearer_token`, `start_gate` HTTP wrapper, `offer`/`ice_candidate` FastAPI routes, SPA mount.
 
-### D-04 — Behavior that MUST be preserved verbatim (spec §21.5)
-quota start-gate behavior · `SessionLifecycle` (service-timer hard-stop, ActiveSessions CloudWatch metric, ECS scale-in protection, accounting ticks) · observers (RTVI, LatencyReport, Teardown) · greeting behavior (`greet_now()` / `greet_first` guard from Phase 05.2) · warning + goodbye (`TTSSpeakFrame`) callbacks · reconnect grace behavior · RTVI processing · ambience-mixer behavior (`build_ambience_mixer`) · all existing metrics and teardown guarantees.
+- **D-04 — Behavior that MUST be preserved verbatim (spec §21.5)**quota start-gate behavior · `SessionLifecycle` (service-timer hard-stop, ActiveSessions CloudWatch metric, ECS scale-in protection, accounting ticks) · observers (RTVI, LatencyReport, Teardown) · greeting behavior (`greet_now()` / `greet_first` guard from Phase 05.2) · warning + goodbye (`TTSSpeakFrame`) callbacks · reconnect grace behavior · RTVI processing · ambience-mixer behavior (`build_ambience_mixer`) · all existing metrics and teardown guarantees.
 
-### D-05 — Idempotent single close path (spec §6.10, §8)
-`CallSession.close()` is idempotent — calling it twice, or a close racing a lifecycle hard-stop / worker failure / transport disconnect, releases the lifecycle exactly ONCE. This mirrors `SessionLifecycle`'s existing "one idempotent release path" guarantee; the runtime wraps it so both WebRTC teardown and (later) SIP hangup funnel through the same close.
+- **D-05 — Idempotent single close path (spec §6.10, §8)**`CallSession.close()` is idempotent — calling it twice, or a close racing a lifecycle hard-stop / worker failure / transport disconnect, releases the lifecycle exactly ONCE. This mirrors `SessionLifecycle`'s existing "one idempotent release path" guarantee; the runtime wraps it so both WebRTC teardown and (later) SIP hangup funnel through the same close.
 
-### D-06 — Telephony reconnect semantics noted, not implemented (spec §6.8, §8, §11)
-For telephony a hangup is terminal (no browser-style reconnect grace). This phase does NOT implement that, but the extracted API must not bake the WebRTC reconnect-grace assumption into the shared core such that a future terminal-close transport can't opt out. Keep reconnect handling in the WebRTC wiring (D-03), not the runtime.
+- **D-06 — Telephony reconnect semantics noted, not implemented (spec §6.8, §8, §11)**For telephony a hangup is terminal (no browser-style reconnect grace). This phase does NOT implement that, but the extracted API must not bake the WebRTC reconnect-grace assumption into the shared core such that a future terminal-close transport can't opt out. Keep reconnect handling in the WebRTC wiring (D-03), not the runtime.
 
-### D-07 — Tests (spec §21.7)
-Add focused tests proving: (a) transport-neutral construction of a `CallSession` around a fake/stub `BaseTransport` without WebRTC request handling; (b) `close()` is idempotent; (c) lifecycle `release()` occurs on worker termination AND on transport termination; (d) the existing WebRTC path behavior is unchanged (existing lifecycle/quota/greeting/teardown suites still green). Prefer reusing existing test fakes (`test_session.py` and the quota/greeting suites already stub much of this).
+- **D-07 — Tests (spec §21.7)**Add focused tests proving: (a) transport-neutral construction of a `CallSession` around a fake/stub `BaseTransport` without WebRTC request handling; (b) `close()` is idempotent; (c) lifecycle `release()` occurs on worker termination AND on transport termination; (d) the existing WebRTC path behavior is unchanged (existing lifecycle/quota/greeting/teardown suites still green). Prefer reusing existing test fakes (`test_session.py` and the quota/greeting suites already stub much of this).
 
-### D-08 — Deliverable note (spec §21.9)
-Produce a short architecture note describing the extracted seam and explicit notes about any existing coupling that prevented a clean extraction (e.g. anything in `_run_session` that turned out to be WebRTC-aware).
+- **D-08 — Deliverable note (spec §21.9)**Produce a short architecture note describing the extracted seam and explicit notes about any existing coupling that prevented a clean extraction (e.g. anything in `_run_session` that turned out to be WebRTC-aware).
 
 ### Claude's Discretion
 - Exact module/function/dataclass names and whether `CallIdentity` is introduced now vs. deferred to Phase 12.
