@@ -44,6 +44,7 @@ from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.workers.runner import WorkerRunner
 
 from klanker_voice import quota, session, variants
+from klanker_voice import version as server_version
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
 from klanker_voice.config import (
     load_config,
@@ -394,6 +395,12 @@ async def _negotiate_webrtc(
         # (that happens later, inside the fire-and-forget _run_session).
         label_cfg = load_config(variants.variant_config_path(variant))
         answer["variant_label"] = label_cfg.label
+        # Server/pipeline build stamp (VERSION concept V2): the short git SHA of
+        # the running ECS image, so the UI can show `pipe:<sha>` next to its own
+        # `ui:<sha>` and confirm the pipeline (not just the CloudFront assets)
+        # rolled to this commit. Additive key, same ignore-unknown contract.
+        answer["server_version"] = server_version.APP_VERSION
+        answer["server_built_at"] = server_version.APP_BUILT_AT
     return answer
 
 

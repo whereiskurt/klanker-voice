@@ -57,9 +57,13 @@ jobs:
         env:
           IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.SITE_LABEL }}-voice-app:${{ github.sha }}
         run: |
+          SHORT_SHA="$(echo "$GITHUB_SHA" | cut -c1-7)"
+          BUILT_AT="$(date -u +%Y-%m-%dT%H:%MZ)"
           docker build \
-            --build-arg VITE_APP_VERSION="$(echo "$GITHUB_SHA" | cut -c1-7)" \
-            --build-arg VITE_APP_BUILT_AT="$(date -u +%Y-%m-%dT%H:%MZ)" \
+            --build-arg VITE_APP_VERSION="$SHORT_SHA" \
+            --build-arg VITE_APP_BUILT_AT="$BUILT_AT" \
+            --build-arg APP_VERSION="$SHORT_SHA" \
+            --build-arg APP_BUILT_AT="$BUILT_AT" \
             -t "$IMAGE" apps/voice
           docker push "$IMAGE"
           echo "## Voice Image Pushed" >> $GITHUB_STEP_SUMMARY

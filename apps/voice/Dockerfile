@@ -49,6 +49,15 @@ RUN npm run build
 # not the pipecat dev runner).
 FROM python:3.12-slim
 
+# Server/pipeline build stamp (VERSION concept V2) — the running image's commit
+# SHA + UTC build time, read by klanker_voice.version and returned in the
+# /api/offer answer so the UI can show `pipe:<sha>` next to `ui:<sha>`. Same
+# --build-arg values CI passes to the client stage's VITE_APP_* (build-voice.yml).
+ARG APP_VERSION=dev
+ARG APP_BUILT_AT=
+ENV APP_VERSION=${APP_VERSION} \
+    APP_BUILT_AT=${APP_BUILT_AT}
+
 # aiortc/audio system deps (CLAUDE.md container note): opus + vp8/vp9 codec
 # libraries for WebRTC media, ffmpeg for PyAV's underlying codec libraries.
 #
