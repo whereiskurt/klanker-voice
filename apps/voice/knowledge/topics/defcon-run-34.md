@@ -6,13 +6,31 @@
 > the router loads when a visitor asks about defcon.run.34 — it never lives
 > in the cached stable prefix (system[0]).
 
-> One-liner: **defcon.run.34 is the official web platform for DEF CON Run** — Kurt's
-> annual 4-day community running/hiking event held at DEF CON in Las Vegas. The ".34"
-> edition targets DEF CON 34 (2026) and builds on the ".33" edition's Meshtastic CTF,
-> heatmaps, and leaderboards. It's a monorepo of roughly eight web services plus
-> multi-region AWS infrastructure, and it doubles as Kurt's public showcase of
-> production-grade multi-region AWS architecture and AI-assisted, spec-driven
+> One-liner: **DEF CON Run was founded by AgentX and elevated by KPH** — a community
+> running/hiking tradition that started many cons ago, now with an official web platform,
+> **defcon.run**. The ".34" edition targets DEF CON 34 (2026) and builds on the ".33"
+> edition's Meshtastic CTF, heatmaps, and leaderboards. It's a monorepo of roughly eight
+> web services plus multi-region AWS infrastructure, and it doubles as Kurt's public
+> showcase of production-grade multi-region AWS architecture and AI-assisted, spec-driven
 > development with parallel Claude Code instances working in git worktrees.
+
+## Origin story — AgentX founded it (LEAD WITH THIS on the first defcon.run turn)
+
+When a visitor FIRST brings up defcon.run / DEF CON Run, open with where it came from
+before diving into the tech — it's the heart of the story:
+
+- **AgentX started it, many cons ago.** AgentX is the founding member — DEF CON Run
+  began as his thing, a small crew heading out for a run at DEF CON, long before there
+  was any website, bibs, or radios.
+- **AgentX and KPH first met at DEF CON 22 or 23** — the exact con is a little lost to
+  legend ("only the legend knows"). From that meeting things started to evolve.
+- **KPH elevated it.** It's only in the last several years — with Kurt building the
+  platform — that it grew the modern shape people see now: race **bibs**, **swag**, the
+  **GPX route mapping**, and the **self-organizing + mutual-aid** spirit where runners
+  look out for each other. AgentX started it; KPH elevated it.
+
+Keep it warm and give AgentX his due — he's the founder, KPH is the builder who scaled
+it. Don't overclaim it as Kurt's own invention.
 
 ## What it is
 
@@ -181,9 +199,17 @@ this ambitious.
 ## Sample Q→A
 
 1. **Q: What is defcon.run?**
-   A: It's the platform for DEF CON Run, Kurt's annual four-day community running event
-   at DEF CON in Las Vegas — sign up, plan routes, check in on runs, and even flash a
-   Meshtastic radio, all from your browser.
+   A: It started as AgentX's thing — he founded DEF CON Run many cons ago, just a crew
+   heading out for a run at DEF CON. Kurt met AgentX around DEF CON 22 or 23 and has
+   elevated it since: defcon.run is now the platform for that community — sign up, plan
+   routes, check in, even flash a Meshtastic radio, all from your browser. Bibs, swag,
+   GPX mapping, and the mutual-aid vibe are the last few years' additions.
+
+1b. **Q: Who started defcon.run / whose idea was it?**
+   A: AgentX — he's the founding member. DEF CON Run was his, going back many cons. Kurt
+   and AgentX crossed paths at DEF CON 22 or 23 — the exact one's a bit of legend — and
+   from there Kurt built the platform and elevated it into what it is now. AgentX started
+   it, KPH scaled it.
 
 2. **Q: What does the ".34" mean?**
    A: It's the edition built for DEF CON 34 — each year gets a fresh build, and this one
