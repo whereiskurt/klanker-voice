@@ -1145,12 +1145,28 @@ Asterisk surfaces digits via ARI DTMF events; the controller compares to
 `TELEPHONY_ACCESS_PIN` (SSM). Handled at the Asterisk/controller layer — never in
 the LLM. 10 s window from answer.
 
-**Factor 2 — spoken safe phrase, during the gate.** STT runs during the gate so the
-phrase can be caught, but its transcript feeds a **gate matcher, NOT the LLM**. The
-matcher compares the normalized transcript (lowercase, punctuation/whitespace
-folded) against one or more safe phrases from SSM (`TELEPHONY_SAFE_PHRASES`, a
-list — e.g. "greenhouse recruiting", "with greenhouse", "on behalf of edward
-snowden"). A substring/phrase match unlocks. Verified OUTSIDE the LLM (§18).
+**Factor 2 — spoken 4-word passphrase (all 4 within the 10 s window).** SSM stores a
+set of **4 secret words** (`TELEPHONY_PASSPHRASE_WORDS`). During the gate, STT runs
+and the matcher checks whether **all 4 words are present** in the normalized
+transcript — **order-independent**, so the caller may bury them anywhere across a
+couple of natural sentences (e.g. "yeah, I'm calling about the *greenhouse* — tell
+*Edward* the *snowden* report *shipped*"). All 4 seen within the window → unlock.
+Matching is set-membership on lower-cased tokens, done OUTSIDE the LLM (§18); do not
+require them to be contiguous or in order. This is the primary/recommended mode
+(buried + order-free = deniable; a single fixed phrase is easier to overhear).
+
+**Never-recognized / never-echoed guarantees (hard requirements):**
+- The 4 words live ONLY in SSM. They are **never** placed in the LLM context —
+  before OR after unlock — never in the greeting/persona/system prompt, never in any
+  provider request. The bot cannot echo what it never receives.
+- **Redact before anywhere:** the pre-unlock transcript contains the secret words,
+  so it is NOT forwarded to the LLM and NOT written to the transcript ledger or logs
+  verbatim — drop the pre-unlock transcript entirely (or scrub the 4 words from it)
+  before it leaves the gate. Post-unlock conversation flows normally.
+- The matcher never logs which words matched, the words themselves, or the raw
+  unlock utterance. Log only `unlocked{method:"passphrase", call_id}`.
+- Compare via constant-ish set membership on normalized tokens; never surface a
+  per-word "3 of 4 matched" oracle to the caller (silent until all 4 land).
 
 **Quiet-gate mechanics:**
 - The pipeline is built only far enough to run STT (+ receive DTMF) during the gate;
@@ -1160,17 +1176,18 @@ snowden"). A substring/phrase match unlocks. Verified OUTSIDE the LLM (§18).
   tier is pre-established), THEN run the normal path — `greet_now()` + LLM + TTS.
   The greeting fires HERE, not before (consistent with §12 "don't greet before
   ready").
-- **Fail-closed (§17/§18):** if neither factor lands within the bounded window
-  (DTMF 10 s; overall gate ~20-30 s, configurable), play a short static
-  goodbye/unavailable and **hang up** — never leave a silent open call burning PSTN
-  charges. This gate runs BEFORE building the expensive STT/LLM/TTS turn loop where
-  possible; at minimum the LLM/TTS never engage until unlock.
+- **Fail-closed (§17/§18):** if neither factor lands within the window (10 s,
+  configurable), play a short static goodbye/unavailable and **hang up** — never
+  leave a silent open call burning PSTN charges. STT runs during the gate (needed to
+  catch the words); the LLM/TTS never engage until unlock, so the expensive turn
+  loop is only built after a pass.
 
-**Config/secrets:** add `require_gate`, `gate_dtmf_window_seconds = 10`,
-`gate_total_window_seconds` to the `[telephony]` block (non-secret). `TELEPHONY_ACCESS_PIN`
-and `TELEPHONY_SAFE_PHRASES` are SSM-only — never git, `pipeline.toml`, or logs, and
-never injected into the LLM context (§18). Log unlock events by method
-(`dtmf`/`phrase`) + call ID, but never the PIN or the matched phrase text.
+**Config/secrets:** add to the `[telephony]` block (non-secret):
+`require_gate = true`, `gate_mode = "either"` (`"passphrase"` | `"pin"` |
+`"either"`), `gate_window_seconds = 10`. SSM-only (never git/`pipeline.toml`/logs,
+never in LLM context §18): `TELEPHONY_ACCESS_PIN` (DTMF) and
+`TELEPHONY_PASSPHRASE_WORDS` (the 4 words). Log unlock events by method
+(`dtmf`/`passphrase`) + call ID only — never the PIN, the words, or the utterance.
 
 **Relationship to the existing `greenhouse` keyword:** that is a persona/topic
 unlock INSIDE the knowledge router (`greenhouse` → recruiting mode); this telephony
