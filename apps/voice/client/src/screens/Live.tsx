@@ -8,6 +8,7 @@ import { playRandomGreeting, type GreetingHandle } from "../greeting/greetingPla
 import Countdown from "../timer/Countdown";
 import LatencyHud from "../hud/LatencyHud";
 import MicMuteButton from "../mic/MicMuteButton";
+import ComposeBar from "../compose/ComposeBar";
 import "./live.css";
 
 export interface LiveProps {
@@ -78,6 +79,10 @@ export default function Live({ client, sessionMaxSeconds, variantLabel, onEndCha
         ) : null}
         <button type="button" className="live-endchat" onClick={onEndChat}>End chat</button>
       </div>
+      <ComposeBar
+        client={client}
+        onLocalEcho={(text) => dispatch({ type: "USER_TRANSCRIPT", text, final: true })}
+      />
       <MicMuteButton client={client} />
       <LatencyHud client={client} />
     </div>

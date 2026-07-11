@@ -1,7 +1,9 @@
 /* src/transcript/transcript.css */
 .transcript-wrap { position: absolute; inset: var(--stage-orb-header) 0 var(--stage-action-bar); z-index: 2; }
 .transcript {
-  height: 100%; overflow-y: auto; padding: var(--sm) var(--lg) var(--lg);
+  /* extra bottom padding so the newest turn scrolls clear of the compose bar
+     (src/compose/compose.css), which floats just above the action bar. */
+  height: 100%; overflow-y: auto; padding: var(--sm) var(--lg) 64px;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, var(--stage-core) var(--lg), var(--stage-core) 100%);
           mask-image: linear-gradient(to bottom, transparent 0, var(--stage-core) var(--lg), var(--stage-core) 100%);
 }
