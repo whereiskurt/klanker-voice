@@ -84,6 +84,10 @@ export interface CreateVoiceSessionOptions {
    * (Task 1, 260710-ixf) -- sourced from the running variant's TOML (e.g.
    * "KPH(v1)" / "KPH(v2)"), mirrors `onSessionMax`. Display only. */
   onVariantLabel?: (label: string) => void;
+  /** Fired once with the `server_version` the `/api/offer` response carries
+   * (VERSION V2) -- the running ECS image's git SHA, so the UI can show
+   * `pipe:<sha>` next to its own build SHA. Display only. */
+  onServerVersion?: (version: string) => void;
 }
 
 /**
@@ -130,8 +134,13 @@ function readVariantLabel(body: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function readServerVersion(body: unknown): string | null {
+  const value = (body as { server_version?: unknown } | null)?.server_version;
+  return typeof value === "string" ? value : null;
+}
+
 export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSession {
-  const { getToken, onEvent, rtvi, onSessionMax, onVariantLabel } = options;
+  const { getToken, onEvent, rtvi, onSessionMax, onVariantLabel, onServerVersion } = options;
 
   const transport = new SmallWebRTCTransport({
     webrtcRequestParams: buildConnectParams(getToken()),
@@ -211,11 +220,11 @@ export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSes
               /* already tearing down; nothing to recover */
             });
             resolve();
-          } else if (response.ok && (onSessionMax || onVariantLabel)) {
+          } else if (response.ok && (onSessionMax || onVariantLabel || onServerVersion)) {
             // Non-blocking peek at the answer body for the CLNT-05 countdown
-            // cap (see `onSessionMax` docstring) and the Task-1 variant label
-            // -- never consumes/mutates the response the vendor transport
-            // still needs to read. One `.clone()` serves both reads.
+            // cap (see `onSessionMax` docstring), the Task-1 variant label, and
+            // the VERSION-V2 pipeline SHA -- never consumes/mutates the response
+            // the vendor transport still needs to read. One `.clone()` serves all.
             void response
               .clone()
               .json()
@@ -224,9 +233,11 @@ export function createVoiceSession(options: CreateVoiceSessionOptions): VoiceSes
                 if (sessionMax != null && onSessionMax) onSessionMax(sessionMax);
                 const label = readVariantLabel(body);
                 if (label != null && onVariantLabel) onVariantLabel(label);
+                const serverVersion = readServerVersion(body);
+                if (serverVersion != null && onServerVersion) onServerVersion(serverVersion);
               })
               .catch(() => {
-                /* non-JSON/odd body -- countdown/label simply won't render, not fatal */
+                /* non-JSON/odd body -- countdown/label/version simply won't render, not fatal */
               });
           }
         }
