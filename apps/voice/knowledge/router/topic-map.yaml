@@ -62,6 +62,7 @@ topics:
 
   - id: defcon-run-34
     spoken_name: "DEFCON dot run, thirty-four"
+    ambience: "conference"           # busy conference-hallway bed while on this topic
     hook: >-
       Kurt's DEF CON Run community platform -- sign up, plan Las Vegas run
       routes in a real GPX editor, GPS check in, and flash a Meshtastic

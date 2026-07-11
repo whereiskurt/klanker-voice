@@ -79,5 +79,5 @@ goodbye_copy = "That's my cue to go — thanks for chatting, take care!"
 [greenhouse]                        # coffee-shop ambient bed for recruiting mode (260710)
 ambience_enabled = true             # SoundfileMixer under the voice while greenhouse is active
 ambience_sound = "coffee-shop"      # assets/ambience/{ambience_sound}.wav (mono, 24kHz)
-ambience_volume = 0.12              # subtle (0.0-1.0); tune live
+ambience_volume = 0.06              # subtle (0.0-1.0); tune live
 ambience_sample_rate = 24000        # must match the WAV + output transport (mixer won't resample)
