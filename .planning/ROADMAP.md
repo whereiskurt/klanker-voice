@@ -368,7 +368,9 @@ Plans:
 **Goal:** Recorded telephone audio traverses the real Klanker pipeline without SIP — add a PCMU (G.711 μ-law) codec, an RTP parser/packetizer, and the Pipecat-compatible `TelephonyTransport` (input/output processors, stateful 8 kHz↔pipeline-rate resampling, interruption flush). (Spec Phase B, §7–§10 / §19-B.)
 **Requirements**: TBD
 **Depends on:** Phase 9
-**Plans:** 0 plans
+**Plans:** 2 plans
+- [ ] 10-01-PLAN.md — PCMU μ-law codec + RFC 3550 RTP parser/packetizer + offline in-memory RtpMediaSession + known-vector tests (Wave 1)
+- [ ] 10-02-PLAN.md — TelephonyTransport (input/output processors, per-direction 8 kHz boundary resampler, interruption flush, fire-once events) + §19-B offline pipeline-traversal proof (Wave 2)
 **Success Criteria** (what must be TRUE):
 
   1. PCMU decode/encode pass known vectors; RTP sequence/timestamp/SSRC handling tolerates reordering, duplicates, and a single missing 20 ms packet (silence insertion acceptable)
