@@ -347,7 +347,7 @@ Plans:
 **Goal:** Extract a transport-neutral shared call runtime (`apps/voice/src/klanker_voice/call_runtime.py`) from `server.py` so both the existing WebRTC path and future telephony construct, run, and idempotently close one live voice session through the same seam — a behavior-preserving refactor with the browser voice path unchanged. (Spec Phase A, §6 / §19-A / §21.)
 **Requirements**: none (telephony milestone has no REQ-IDs yet — coverage driven by the 6 success criteria + CONTEXT D-01..D-08)
 **Depends on:** Phase 5 (the deployed WebRTC voice path being refactored)
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 **Success Criteria** (what must be TRUE):
 
   1. `call_runtime.py` exposes a narrow API to construct, run, and idempotently close a session around an arbitrary Pipecat `BaseTransport` (the spec §6 `CallSession` / `create_call_session(*, transport, identity, cfg, channel, metadata)` shape), owning quota-gate → ambience → `build_pipeline(cfg, transport)` → observers → `SessionLifecycle` → callbacks → greeting → one idempotent close path
@@ -359,7 +359,7 @@ Plans:
 
 Plans:
 
-- [ ] 09-01-PLAN.md — Extract transport-neutral `call_runtime.py` (CallSession/create_call_session), convert the WebRTC `/api/offer` path to it, focused tests + architecture note (behavior-preserving refactor)
+- [x] 09-01-PLAN.md — Extract transport-neutral `call_runtime.py` (CallSession/create_call_session), convert the WebRTC `/api/offer` path to it, focused tests + architecture note (behavior-preserving refactor)
 
 **Waves:** 1 → {09-01}
 
