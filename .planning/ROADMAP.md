@@ -376,7 +376,7 @@ Plans:
   1. PCMU decode/encode pass known vectors; RTP sequence/timestamp/SSRC handling tolerates reordering, duplicates, and a single missing 20 ms packet (silence insertion acceptable)
   2. `TelephonyTransport` emits correct Pipecat `InputAudioRawFrame`s from RTP and PCMU RTP from `OutputAudioRawFrame`s, with a stateful streaming resampler at the 8 kHz boundary (no per-frame drift)
   3. Interruption flushes the output queue (≤20–60 ms application buffer); `stop()` is idempotent and the disconnect event fires exactly once
-  4. Recorded telephone audio (WAV → synthetic RTP) is transcribed by the existing Deepgram service and a response returns through ElevenLabs — no Asterisk, no live SIP (spec §19-B exit criterion)
+  4. Recorded telephone audio (WAV → synthetic RTP) traverses the real `build_pipeline` end-to-end **offline** — RTP → `InputAudioRawFrame` in, `OutputAudioRawFrame` → captured PCMU RTP out — with no Asterisk and no live SIP (spec §19-B exit criterion). This is a hermetic path-traversal proof (no real provider APIs / network); the live Deepgram→ElevenLabs round-trip over telephone audio is deferred to a Phase 11 live eval (per CONTEXT D-08/D-10 — Phase B builds no providers).
 
 ### Phase 11: VoIP.ms Telephony — Local Asterisk Edge
 
