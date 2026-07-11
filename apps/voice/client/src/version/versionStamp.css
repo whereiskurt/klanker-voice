@@ -21,3 +21,11 @@
 .version-stamp:hover {
   opacity: 0.85;
 }
+
+/* pipe (server/pipeline) segment: same quiet tone as the UI segment when they
+   agree; flagged when the pipeline is a different build than the loaded UI
+   (a deploy mid-roll — assets on CloudFront but ECS not yet rolled). */
+.version-stamp-pipe--mismatch {
+  color: var(--destructive, #e5484d);
+  font-weight: 600;
+}

@@ -11,6 +11,7 @@ import {
 } from "./connectionState";
 import { createVoiceSession, type VoiceSession } from "./voiceSession";
 import { createRetryController, IDLE_RETRY_STATUS, type RetryController, type RetryStatus } from "./retryPolicy";
+import { setServerVersion } from "../version/serverVersionStore";
 
 /** A clean or provider-error end of a session that had actually reached
  * "connected" (CLNT-07, D-14) -- distinct from a pre-connect "rejected"
@@ -215,6 +216,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
       onEvent: (event) => handleSessionEventRef.current(event),
       onSessionMax: setSessionMaxSeconds,
       onVariantLabel: setVariantLabel,
+      // Publish the pipeline SHA to the global build-stamp store (VERSION V2);
+      // the root-mounted <VersionStamp/> subscribes to it. Not React state here
+      // because the stamp lives outside this hook's component tree.
+      onServerVersion: setServerVersion,
     });
     sessionRef.current = session;
     setClient(session.client);
