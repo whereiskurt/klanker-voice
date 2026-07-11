@@ -369,8 +369,14 @@ Plans:
 **Requirements**: TBD
 **Depends on:** Phase 9
 **Plans:** 2 plans
+**Wave 1**
+
 - [ ] 10-01-PLAN.md — PCMU μ-law codec + RFC 3550 RTP parser/packetizer + offline in-memory RtpMediaSession + known-vector tests (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 10-02-PLAN.md — TelephonyTransport (input/output processors, per-direction 8 kHz boundary resampler, interruption flush, fire-once events) + §19-B offline pipeline-traversal proof (Wave 2)
+
 **Success Criteria** (what must be TRUE):
 
   1. PCMU decode/encode pass known vectors; RTP sequence/timestamp/SSRC handling tolerates reordering, duplicates, and a single missing 20 ms packet (silence insertion acceptable)
