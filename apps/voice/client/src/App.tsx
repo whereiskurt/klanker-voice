@@ -17,7 +17,7 @@ import { useVoiceSession } from "./transport/useVoiceSession";
 import { resolveScreen } from "./flow/resolveScreen";
 import { decideLandAction } from "./flow/landDecision";
 import { isReturningUser, wasSilentTried, markInteractiveTried, wasInteractiveTried } from "./auth/returningStore";
-import { variantOrbHue } from "./transport/variant";
+import { variantOrbHue, variantDisplayLabel } from "./transport/variant";
 
 /** Matches auth.py's NO_ACCESS_TIER_ID default — the no-access gate trigger (D-13). */
 const NO_ACCESS_TIER_ID = "no-access";
@@ -219,7 +219,7 @@ export default function App() {
           <Live
             client={voice.client!}
             sessionMaxSeconds={voice.sessionMaxSeconds}
-            variantLabel={voice.variantLabel}
+            variantLabel={voice.variantLabel ?? variantDisplayLabel()}
             onEndChat={() => void voice.endChat()}
           />
         </div>
