@@ -144,6 +144,24 @@ locals {
           {
             name      = "TELEPHONY_PASSPHRASE_WORDS"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/telephony/passphrase_words"
+          },
+          # The telephony pipeline runs IN this container (Phase-9
+          # call_runtime): after gate unlock it builds the same
+          # STT/LLM/TTS cascade the voice service runs, so it needs the
+          # same three metered-API keys (surfaced by the first live call:
+          # gate unlocked, then pipeline build crashed on the missing
+          # Deepgram key and the caller got silence).
+          {
+            name      = "DEEPGRAM_API_KEY"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/deepgram/api_key"
+          },
+          {
+            name      = "ANTHROPIC_API_KEY"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/anthropic/api_key"
+          },
+          {
+            name      = "ELEVENLABS_API_KEY"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/elevenlabs/api_key"
           }
         ]
 
