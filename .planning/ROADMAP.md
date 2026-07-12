@@ -387,9 +387,19 @@ Plans:
 ### Phase 11: VoIP.ms Telephony — Local Asterisk Edge
 
 **Goal:** A local SIP softphone call holds a full conversation with the agent through Asterisk — add the Asterisk configs (PJSIP/ARI/dialplan), an ARI/Stasis call controller that creates external-media channels + mixing bridges, and the call registry, wiring hangup to `lifecycle.release()`. (Spec Phase C, §7 / §13 / §19-C, plus the silent answer-gate §24 verified outside the LLM.)
-**Requirements**: TBD
+**Requirements**: none (coverage driven by success criteria 1-4 + CONTEXT decisions D-01..D-09)
 **Depends on:** Phase 10
-**Plans:** 0 plans
+**Plans:** 7 plans
+
+Plans:
+- [ ] 11-01-PLAN.md — [telephony] config loader + credential-regex widening (D-09)
+- [ ] 11-02-PLAN.md — Asterisk configs (inbound-only Stasis, private ARI) + docker-compose harness (D-01, D-07)
+- [ ] 11-03-PLAN.md — socket-backed RtpMediaSession behind the Phase-10 Protocol (D-03)
+- [ ] 11-04-PLAN.md — raw-aiohttp ARI client (REST + events WS) (D-06)
+- [ ] 11-05-PLAN.md — AsteriskCallController + ActiveCall registry + idempotent teardown + §16 lifecycle tests (D-02)
+- [ ] 11-06-PLAN.md — the silent §24 answer-gate: GateProcessor + passphrase/PIN + redaction boundary + fail-closed (D-05)
+- [ ] 11-07-PLAN.md — standalone telephony entrypoint + SIPp fake-media CI test + manual §19-C proof (D-08, D-07)
+
 **Success Criteria** (what must be TRUE):
 
   1. Asterisk configs (`pjsip.conf`, `ari.conf`, `extensions.conf`) exist with a narrow inbound-only Stasis dialplan; ARI is authenticated and private-only
