@@ -20,11 +20,17 @@ dependency "ecs_task" {
 
   mock_outputs = {
     task_definition_arns = {
-      "auth"  = "arn:aws:ecs:us-east-1:123456789012:task-definition/auth-use1-example-site:1"
-      "voice" = "arn:aws:ecs:us-east-1:123456789012:task-definition/voice-use1-example-site:1"
+      "auth"           = "arn:aws:ecs:us-east-1:123456789012:task-definition/auth-use1-example-site:1"
+      "voice"          = "arn:aws:ecs:us-east-1:123456789012:task-definition/voice-use1-example-site:1"
+      "telephony-edge" = "arn:aws:ecs:us-east-1:123456789012:task-definition/telephony-edge-use1-example-site:1"
     }
   }
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy"]
+  # deep_map_only: state outputs win per-key, but mock keys missing from the
+  # live state map (telephony-edge until the first ecs-task apply) fill in so
+  # plan doesn't hard-fail with "Invalid index" (same Phase-12 bootstrap issue
+  # as the network dependency's shallow merge above — map-valued this time).
+  mock_outputs_merge_strategy_with_state = "deep_map_only"
 }
 
 dependency "ecs_cluster" {
