@@ -435,14 +435,24 @@ Plans:
   4. Fail-closed behavior holds: a scanner/unknown caller who fails the gate burns no STT/LLM/TTS quota and gets a static goodbye + hangup; Klanker unavailable → static unavailable message, never a silent open call
 
 Plans:
+**Wave 1**
 
 - [ ] 12-01-PLAN.md — `kv voipms` API automation + operator provisioning runbook (§25.F order) (D-03) [Wave 1]
 - [ ] 12-02-PLAN.md — Auth §23 mint path: E.164 normalization + sparse byPhone GSI + resolvePhoneToCode + private no-oracle /tel route + tests (D-02) [Wave 1]
 - [ ] 12-03-PLAN.md — `kv code phone` + electro gsi3 byPhone key writers + normalization-parity tests (D-05) [Wave 1]
 - [ ] 12-04-PLAN.md — Asterisk VoIP.ms registration trunk (inbound-only, ulaw-only) + render extension + config-lint tests (D-01) [Wave 1]
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 12-05-PLAN.md — [BLOCKING] provision byPhone GSI live on kmv-auth-electro + seed kph-tier/baseline tier/Kurt→defcon34 (D-05) [Wave 2]
 - [ ] 12-06-PLAN.md — Controller wiring: caller-ID→/tel mint→entitled tier composed with the unchanged §24 gate + fail-closed (D-02/D-05/D-04) [Wave 2]
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 12-07-PLAN.md — Minimal secure telephony-edge deploy: POP-locked SG + SSM valueFrom + Dockerfile (D-01/D-04) [Wave 3]
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 12-08-PLAN.md — Manual §19-D cellular proof (D-06) [Wave 4]
 
 **Waves:** 1 → {12-01, 12-02, 12-03, 12-04} → 2 → {12-05, 12-06} → 3 → {12-07} → 4 → {12-08}
