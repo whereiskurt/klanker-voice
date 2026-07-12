@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import aiohttp
+from loguru import logger
 
 #: An async event handler: takes the parsed ARI event dict, returns nothing.
 EventHandler = Callable[[dict[str, Any]], Awaitable[None]]
@@ -166,3 +167,63 @@ class AriClient:
     async def destroy_bridge(self, bridge_id: str) -> None:
         """``DELETE /ari/bridges/{id}``."""
         await self._request("DELETE", f"/ari/bridges/{bridge_id}")
+
+    # --- Events WebSocket dispatch (Task 2) --------------------------------
+
+    def on(self, event_type: str, handler: EventHandler) -> None:
+        """Register ``handler`` to be awaited for every event whose
+        ``event["type"]`` equals ``event_type``. Registering again for the
+        same ``event_type`` replaces the previous handler."""
+        self._handlers[event_type] = handler
+
+    async def run(self) -> None:
+        """Connect to ``GET /ari/events?app={app_name}&subscribeAll=true``
+        and dispatch every JSON text frame to its registered handler by
+        ``event["type"]``.
+
+        - An event type with no registered handler is ignored (debug-logged),
+          never crashes the loop.
+        - A handler raising an exception is caught and logged; the loop
+          continues -- one bad event never kills call control
+          (T-11-04-02).
+        - A WS close/error frame causes ``run()`` to return cleanly (no
+          infinite tight-loop) -- reconnection policy stays with the caller
+          for this phase (R6).
+
+        DTMF accumulation is deliberately NOT handled here (Landmine 5): ARI
+        delivers ``ChannelDtmfReceived`` as one event per digit, and the
+        controller (Plan 05) is the layer that accumulates digits across its
+        own gate window -- this client only ferries the parsed event dict.
+        """
+        session = self._require_session()
+        url = f"{self._base_url}/ari/events"
+        params = {"app": self._app_name, "subscribeAll": "true"}
+        async with session.ws_connect(url, params=params) as ws:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    await self._dispatch(msg)
+                elif msg.type in (
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSED,
+                    aiohttp.WSMsgType.CLOSING,
+                    aiohttp.WSMsgType.ERROR,
+                ):
+                    break
+                # any other frame type (BINARY/PING/PONG/...) is ignored --
+                # ARI only ever sends JSON text frames for events.
+
+    async def _dispatch(self, msg: aiohttp.WSMessage) -> None:
+        try:
+            event = msg.json()
+        except (ValueError, TypeError):
+            logger.debug("ari: dropped malformed event frame")
+            return
+        event_type = event.get("type") if isinstance(event, dict) else None
+        handler = self._handlers.get(event_type) if event_type else None
+        if handler is None:
+            logger.debug(f"ari: no handler registered for event type {event_type!r}")
+            return
+        try:
+            await handler(event)
+        except Exception:  # noqa: BLE001 - one bad handler must not kill call control (T-11-04-02)
+            logger.exception(f"ari: handler for {event_type!r} raised")
