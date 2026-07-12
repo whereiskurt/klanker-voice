@@ -15,7 +15,9 @@ infra (all Phase 12-14).
 | `pjsip.conf` | One `udp` transport + one softphone endpoint, ulaw-only (`disallow=all` / `allow=ulaw`), `context=from-klanker-inbound`. |
 | `extensions.conf` | The single `[from-klanker-inbound]` context: `Answer()` -> `Stasis(klanker)` -> `Hangup()`. No outbound context, no `Dial()`, ever (§25.A). |
 | `rtp.conf` | Narrow `10000-10020` RTP port range matching what `docker-compose.yml` publishes. |
-| `docker-compose.yml` | The dev harness: a single pinned-version `asterisk` service. |
+| `docker-compose.yml` | The dev harness: `asterisk-config-render` (renders secrets), a pinned-version `asterisk` service, and `klanker-telephony` (the standalone controller, shared netns). |
+| `render_configs.py` | Renders `ari.conf`/`pjsip.conf`'s `${VAR}` placeholders with real secrets from `.env` into gitignored `.rendered/` -- run by the `asterisk-config-render` service. |
+| `.gitignore` | Ignores `.rendered/` (real secrets, never commit). |
 | `.env.example` | Placeholders for the six telephony secrets (D-09) -- copy to `.env`, never commit real values. |
 
 ## Bring-up
@@ -24,8 +26,17 @@ infra (all Phase 12-14).
 cd apps/voice/asterisk
 cp .env.example .env   # fill in local-dev-only values; .env is gitignored
 docker compose config  # validates the compose file
-docker compose up
+docker compose up      # config-render -> Asterisk -> the Klanker telephony
+                        # controller, all wired together in one command
 ```
+
+A plain `docker compose up` now brings up the FULL wired stack: the
+`asterisk-config-render` sidecar substitutes real secrets from `.env` into
+gitignored `.rendered/{ari,pjsip}.conf`, `asterisk` starts against those
+rendered configs, and `klanker-telephony` (the standalone controller)
+connects to it over private ARI -- no extra manual step. Run
+`docker compose up asterisk` instead if you only want the edge without the
+controller (e.g. to run the controller yourself on the host for debugging).
 
 ## Module smoke check
 
@@ -56,33 +67,30 @@ never committed. `ari.conf` and `pjsip.conf` reference
 the env var the value comes from, matching D-09's "secrets never
 hardcoded" posture. Production secret provisioning (SSM) is Phase 14.
 
-**Known limitation (flagged, not required by this plan):** Asterisk's own
-`.conf` parser does not perform `${VAR}` shell-style substitution -- unlike
-docker-compose's own `environment:` block (which *does* interpolate host
-env vars, used above for the container's own env), the two `.conf` files
-above need their `${...}` placeholders replaced with real values before
-`docker compose up` if you need a genuinely authenticated ARI session (e.g.
-`sed -i '' "s/\${ASTERISK_ARI_PASSWORD}/$(grep ASTERISK_ARI_PASSWORD .env | cut -d= -f2)/" ari.conf`
-against a local, gitignored copy -- never edit and commit the tracked
-file with a real value). This plan's own verification (config lint +
-`docker compose config` + the module smoke check above) does not require a
-live ARI HTTP round-trip. Wiring a real substitution step (entrypoint
-`envsubst`, or a small local render script) is a discretionary follow-up
-for whichever later plan first needs the controller to actually
-authenticate against ARI over the network.
+**RESOLVED (was: `${VAR}` substitution is documentation-only).** Asterisk's
+own `.conf` parser does not perform `${VAR}` shell-style substitution --
+unlike docker-compose's own `environment:` block (which *does* interpolate
+host env vars, used above for the render sidecar's own env). This is now
+solved by the `asterisk-config-render` compose service: it runs
+`render_configs.py`, which substitutes real secrets from `.env` into
+gitignored `.rendered/ari.conf` and `.rendered/pjsip.conf` at container
+start (`string.Template.safe_substitute`, so passwords with shell-special
+characters render correctly). The `asterisk` service bind-mounts those
+rendered copies instead of the tracked templates; the tracked `ari.conf`/
+`pjsip.conf` under this directory keep their `${...}` placeholders
+unchanged forever, so `test_asterisk_configs.py`'s lint stays green and no
+real secret is ever committed.
 
-**Also flagged:** `http.conf`'s ARI HTTP server binds to the *container's
-own* `127.0.0.1` (private/loopback, per D-01/§18/§25.C) -- `docker-compose.yml`
-still publishes `8088:8088` for forward compatibility, but a host-run
-process cannot reach it through that published port while bindaddr stays
-loopback-scoped inside the container (this is expected Docker behavior:
-port publishing forwards to a container's routable interface, not its own
-loopback). The standalone telephony controller (D-08) that will actually
-need this connection is a later plan's work; when it lands it will either
-(a) run inside the same compose network, or (b) this file's `bindaddr` will
-move to the container's internal `0.0.0.0` paired with a host-loopback-scoped
-compose publish (`127.0.0.1:8088:8088`) to preserve the same private-only
-guarantee end-to-end. Not required by this plan's scope.
+**RESOLVED (was: ARI loopback-vs-published-port mismatch).** `http.conf`'s
+ARI HTTP server binds to the *container's own* `127.0.0.1` (private/
+loopback, per D-01/§18/§25.C -- this bindaddr is unchanged). The
+`klanker-telephony` service now solves the reachability problem by sharing
+Asterisk's network namespace (`network_mode: "service:asterisk"`), so
+`http://127.0.0.1:8088` resolves correctly *inside* that shared namespace.
+As a direct consequence, ARI is no longer published on the host at all --
+`docker-compose.yml`'s old `8088:8088` publish (which forwarded to a
+non-listening loopback and reached nothing) has been removed entirely, a
+strict tightening of the private-only posture, not a relaxation.
 
 ## Manual §19-C softphone proof
 
@@ -138,75 +146,33 @@ manual proof either.
    space-separated words) in `.env`. Separately, make sure the voice
    app's own `.env` (`make -C apps/voice env`) has real Deepgram/
    Anthropic/ElevenLabs API keys -- this is the one proof that actually
-   spends provider API calls.
+   spends provider API calls. No further manual step is needed: the
+   `asterisk-config-render` service substitutes the real ARI/SIP
+   passwords into gitignored rendered configs automatically at container
+   start (see "Secrets" above).
 
-   Also apply the manual `${VAR}` substitution workaround documented
-   above (`ari.conf`/`pjsip.conf` don't shell-substitute) against a
-   local, gitignored copy of those two files before bringing the stack
-   up, e.g.:
-   ```bash
-   sed -i '' "s/\${ASTERISK_ARI_PASSWORD}/$(grep ASTERISK_ARI_PASSWORD .env | cut -d= -f2)/" ari.conf
-   sed -i '' "s/\${SOFTPHONE_SIP_PASSWORD}/$(grep SOFTPHONE_SIP_PASSWORD .env | cut -d= -f2)/" pjsip.conf
-   ```
-   Never commit either file with a real value substituted in.
-
-2. **Bring up Asterisk.**
+2. **Bring up the full stack.**
    ```bash
    docker compose up
    ```
-   Confirm the module smoke check (above) still passes:
+   One command brings up `asterisk-config-render` -> `asterisk` ->
+   `klanker-telephony`, already wired together over private ARI (the
+   controller reaches `http://127.0.0.1:8088` by sharing Asterisk's own
+   network namespace -- see "Known limitation" notes above, now
+   resolved). Confirm the module smoke check (above) still passes:
    `docker exec klanker-asterisk-dev asterisk -rx 'core show application Stasis'`.
+   Watch the `klanker-telephony-dev` container's logs for the
+   `telephony controller starting: ...` line -- that confirms it
+   connected to ARI successfully.
 
-3. **Resolve the ARI-reachability prerequisite (flagged by 11-02, not
-   yet fixed as of this plan).** `http.conf`'s ARI HTTP server is bound
-   to the *container's own* `127.0.0.1` -- a host-run
-   `klanker_voice.telephony.controller` process cannot reach it through
-   the published `8088:8088` port (Docker forwards published ports to a
-   container's routable interface, not its own loopback). Pick one:
-   - **(a) Run the controller inside the compose network** -- easiest:
-     add a `klanker-telephony` service to `docker-compose.yml` (or
-     `docker compose run` a one-off container built from the voice
-     app's own image) sharing the asterisk service's network namespace
-     (`network_mode: "service:asterisk"`, same pattern the `sipp`
-     service already uses) so `ASTERISK_ARI_URL=http://127.0.0.1:8088`
-     resolves correctly from inside that container.
-   - **(b) Adjust the ARI bind** -- move `http.conf`'s `bindaddr` to the
-     container's internal `0.0.0.0` and pair it with a
-     host-loopback-scoped compose publish (`127.0.0.1:8088:8088`) so a
-     host-run controller process can reach it directly while the
-     private-only guarantee (D-01/§18/§25.C) is preserved end-to-end
-     (still never a public interface). This is the fix a future plan
-     should make permanent if the host-run pattern becomes the norm.
+3. **Register a SIP softphone.** Point Linphone, baresip, or any
+   standard SIP client at `sip:dev-softphone@127.0.0.1:5060` (endpoint
+   `dev-softphone`, username `softphone`) using `SOFTPHONE_SIP_PASSWORD`
+   from `.env`. Place a call to any 2+ digit number (e.g. `1000`) -- the
+   `_X.` inbound pattern in `extensions.conf` routes any such number to
+   `Stasis(klanker)`.
 
-   Either way, this prerequisite must be resolved before step 4 below
-   can make a real ARI connection -- if it isn't, `ari.connect()` will
-   fail to reach Asterisk and this whole proof cannot proceed.
-
-4. **Run the standalone telephony controller** (from wherever you
-   resolved step 3 -- host or inside the compose network):
-   ```bash
-   cd apps/voice
-   KLANKER_PIPELINE_CONFIG=configs/telephony.toml \
-   ASTERISK_ARI_URL=http://127.0.0.1:8088 \
-   ASTERISK_ARI_USERNAME=klanker \
-   ASTERISK_ARI_PASSWORD=... \
-   TELEPHONY_ACCESS_PIN=... \
-   TELEPHONY_PASSPHRASE_WORDS='w1 w2 w3 w4' \
-   uv run python -m klanker_voice.telephony.controller
-   ```
-   (`python -m klanker_voice.telephony` is the equivalent alternate
-   entrypoint -- see `telephony/__main__.py`'s own docstring; both are
-   wired to the same `main()`.) The voice app's own provider keys
-   (Deepgram/Anthropic/ElevenLabs) must already be in `apps/voice/.env`
-   -- `load_dotenv(override=True)` picks them up alongside the
-   telephony-specific env vars above.
-
-5. **Register a SIP softphone.** Point Linphone, baresip, or any
-   standard SIP client at `sip:dev-softphone@127.0.0.1:5060` using
-   `SOFTPHONE_SIP_PASSWORD` from `.env`. Place a call to the inbound
-   extension.
-
-6. **Confirm the gated happy path:**
+4. **Confirm the gated happy path:**
    - The line answers **silently** -- no greeting, no LLM, no TTS yet
      (§24 gate locked, D-05e: no transcription frame reaches the LLM
      while locked).
@@ -220,27 +186,29 @@ manual proof either.
    - **Hang up** from the softphone and confirm a clean disconnect (no
      hung channel, no error in the controller logs).
 
-7. **Confirm the fail-closed path.** Place a second call and stay
+5. **Confirm the fail-closed path.** Place a second call and stay
    silent past `gate_window_seconds` (see `configs/telephony.toml`/
    `[telephony]`). Confirm: a static goodbye plays, then a clean
    hangup, with no `CallSession` ever built (matches
    `test_telephony_integration.py`'s fail-closed assertion, now judged
    by ear over a real SIP leg instead of fake media).
 
-8. **Confirm no resource leaks.** After each call above, check the
-   controller's logs for the single idempotent teardown log line (no
-   double-close, no dangling bridge/`ActiveCall` registry entry). A
-   leaked `externalMedia` channel or mixing bridge would show up as a
-   stale Asterisk-side resource on a subsequent
-   `docker exec ... asterisk -rx 'core show channels'`.
+6. **Confirm no resource leaks.** After each call above, check the
+   `klanker-telephony-dev` container's logs for the single idempotent
+   teardown log line (no double-close, no dangling bridge/`ActiveCall`
+   registry entry). A leaked `externalMedia` channel or mixing bridge
+   would show up as a stale Asterisk-side resource on a subsequent
+   `docker exec klanker-asterisk-dev asterisk -rx 'core show channels'`.
 
 ### Status
 
-This proof has **not yet been run** as of Phase 11 Plan 07 -- the
-execution sandbox that authored this recipe has no running Docker
-daemon, and the human decision was to defer the live run rather than
-fabricate a pass. It is tracked as an outstanding human-verify item in
+This proof has **not yet been run live** -- the execution sandbox that
+authored this recipe has no running Docker daemon, and the human decision
+was to defer the live run rather than fabricate a pass. The recipe itself
+is now one-command (`docker compose up` brings up the fully wired stack,
+no manual ARI-reachability workaround or `${VAR}` substitution step
+remains). It is tracked as an outstanding human-verify item in
 `.planning/STATE.md` (mirrors how prior voice-pipeline phases tracked
 pending live evals, e.g. Phase 5's consolidated live-verification pass
 and Phase 7's live-audio benchmark run) until a human with a working
-Docker daemon and a SIP softphone actually completes steps 1-8 above.
+Docker daemon and a SIP softphone actually completes steps 1-6 above.
