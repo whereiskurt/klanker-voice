@@ -165,3 +165,11 @@ None - no external service configuration required. This module is pure `asyncio`
 ---
 *Phase: 11-voip-ms-telephony-local-asterisk-edge*
 *Completed: 2026-07-12*
+
+## Self-Check: PASSED
+
+- FOUND: apps/voice/src/klanker_voice/telephony/rtp_socket.py
+- FOUND: apps/voice/tests/test_telephony_rtp_socket.py
+- FOUND: bfaf246 (test commit)
+- FOUND: 82e1509 (feat commit)
+- FOUND: 33faf95 (docs commit)
