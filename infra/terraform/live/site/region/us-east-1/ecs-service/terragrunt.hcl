@@ -74,6 +74,13 @@ dependency "network" {
     nlb_arn                          = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/mock-nlb/abc123"
   }
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy"]
+  # Shallow-merge mocks INTO existing state outputs: without this, mocks are
+  # only used when the dependency has no state at all — so a brand-new output
+  # (telephony_edge_security_group_id, added in Phase 12 but not yet applied
+  # to the live network state) hard-fails plan with "Unsupported attribute".
+  # Real state outputs still win wherever they exist; apply is not in the
+  # allowed-commands list above, so applies always require the real output.
+  mock_outputs_merge_strategy_with_state = "shallow"
 }
 
 include "module" {
