@@ -232,6 +232,102 @@ func DisableBypass(ctx context.Context, client *dynamodb.Client, table, code str
 	return nil
 }
 
+// normalizeE164 reproduces apps/auth/webapp/src/lib/phone-normalization.ts's
+// normalizeE164 canonical output rule byte-for-byte (12-RESEARCH.md Pitfall
+// 3: divergent normalization silently breaks the byPhone GSI lookup): strip
+// everything but digits and '+' characters, drop the leading '+' (re-added
+// at the end), drop a leading trunk '0' run, and treat a bare 10-digit
+// North-American local number as needing a prepended country code '1'.
+//
+// Unlike the TS helper — which is a passive ElectroDB `set` transform and
+// must never throw, so it returns "" for blank/unmappable input — this Go
+// helper returns an error on blank/no-digit input: `kv code phone` is an
+// interactive CLI where a rejected number should stop the command, not
+// silently write an empty phone key. For every other input the two
+// normalizers produce byte-identical output (proven by the parity test in
+// code_test.go).
+func normalizeE164(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("phone number must not be blank")
+	}
+
+	var b strings.Builder
+	for _, r := range trimmed {
+		if r == '+' || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	cleaned := b.String()
+	if cleaned == "" {
+		return "", fmt.Errorf("phone number %q contains no digits", raw)
+	}
+
+	cleaned = strings.TrimPrefix(cleaned, "+")
+	cleaned = strings.TrimLeft(cleaned, "0")
+
+	if len(cleaned) == 10 {
+		cleaned = "1" + cleaned
+	}
+
+	return "+" + cleaned, nil
+}
+
+// AddPhoneMapping maps a normalized E.164 phone number to a code: it
+// UpdateItems the code's primary item, SETting phone, phoneEnabled, and the
+// sparse gsi3 key attributes (gsi3pk/gsi3sk) so the webapp's
+// resolvePhoneToCode query finds it. Mirrors EnableBypass exactly. Calling it
+// again on the same code OVERWRITES the mapping with the new phone number.
+func AddPhoneMapping(ctx context.Context, client *dynamodb.Client, table, code, normalizedPhone string) error {
+	if err := validateCodeCharset(code); err != nil {
+		return err
+	}
+	_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(table),
+		Key: map[string]types.AttributeValue{
+			"pk": &types.AttributeValueMemberS{Value: electro.AccessCodePK(code)},
+			"sk": &types.AttributeValueMemberS{Value: electro.AccessCodeSK()},
+		},
+		UpdateExpression: aws.String(
+			"SET phone = :phone, phoneEnabled = :t, gsi3pk = :g3pk, gsi3sk = :g3sk",
+		),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":phone": &types.AttributeValueMemberS{Value: normalizedPhone},
+			":t":     &types.AttributeValueMemberBOOL{Value: true},
+			":g3pk":  &types.AttributeValueMemberS{Value: electro.AccessCodeGSI3PK(normalizedPhone)},
+			":g3sk":  &types.AttributeValueMemberS{Value: electro.AccessCodeGSI3SK()},
+		},
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+	})
+	if err != nil {
+		return fmt.Errorf("add phone mapping for code %q: %w", code, err)
+	}
+	return nil
+}
+
+// RemovePhoneMapping drops a code's phone mapping: it REMOVEs phone,
+// phoneEnabled, and the gsi3 key attributes, dropping the code out of the
+// sparse byPhone index so any caller-ID lookup for its old number stops
+// matching immediately. Mirrors DisableBypass exactly.
+func RemovePhoneMapping(ctx context.Context, client *dynamodb.Client, table, code string) error {
+	if err := validateCodeCharset(code); err != nil {
+		return err
+	}
+	_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(table),
+		Key: map[string]types.AttributeValue{
+			"pk": &types.AttributeValueMemberS{Value: electro.AccessCodePK(code)},
+			"sk": &types.AttributeValueMemberS{Value: electro.AccessCodeSK()},
+		},
+		UpdateExpression:    aws.String("REMOVE phone, phoneEnabled, gsi3pk, gsi3sk"),
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+	})
+	if err != nil {
+		return fmt.Errorf("remove phone mapping for code %q: %w", code, err)
+	}
+	return nil
+}
+
 // NewCodeCmd builds the "kv code" parent command with create/list/expire/bypass
 // subcommands (KV-01).
 func NewCodeCmd(cfg *Config) *cobra.Command {
@@ -372,6 +468,54 @@ func NewCodeCmd(cfg *Config) *cobra.Command {
 	bypass.Flags().BoolVar(&bypassDisable, "disable", false, "disable bypass /join for this code")
 	bypass.Flags().BoolVar(&bypassRotate, "rotate", false, "rotate to a fresh token (invalidates the previous link)")
 	codeCmd.AddCommand(bypass)
+
+	var (
+		phoneAdd    string
+		phoneRemove bool
+	)
+	phone := &cobra.Command{
+		Use:   "phone <code>",
+		Short: "Map or unmap a caller-ID phone number for a code (§23 VoIP.ms mint path)",
+		Long: "Manage the per-code caller-ID phone mapping used by the §23 VoIP.ms\n" +
+			"inbound-DID mint path.\n\n" +
+			"  kv code phone <code> --add <e164>   map a phone number to this code\n" +
+			"  kv code phone <code> --remove       unmap the phone number\n\n" +
+			"The number is normalized to E.164 before it becomes the sparse gsi3\n" +
+			"byPhone key — the exact canonical form the auth-app resolver expects.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if phoneAdd != "" && phoneRemove {
+				return fmt.Errorf("--add and --remove are mutually exclusive")
+			}
+			if phoneAdd == "" && !phoneRemove {
+				return fmt.Errorf("--add <e164> or --remove is required")
+			}
+			client, err := cfg.DynamoClient(c.Context())
+			if err != nil {
+				return err
+			}
+			code := args[0]
+			if phoneRemove {
+				if err := RemovePhoneMapping(c.Context(), client, cfg.Table, code); err != nil {
+					return err
+				}
+				fmt.Fprintf(c.OutOrStdout(), "removed phone mapping for code %q\n", electro.NormalizeCode(code))
+				return nil
+			}
+			normalized, err := normalizeE164(phoneAdd)
+			if err != nil {
+				return fmt.Errorf("invalid phone number: %w", err)
+			}
+			if err := AddPhoneMapping(c.Context(), client, cfg.Table, code, normalized); err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "mapped code %q -> %s\n", electro.NormalizeCode(code), normalized)
+			return nil
+		},
+	}
+	phone.Flags().StringVar(&phoneAdd, "add", "", "E.164 (or messy raw) phone number to map, e.g. \"+1 (416) 555-1234\"")
+	phone.Flags().BoolVar(&phoneRemove, "remove", false, "remove the phone mapping for this code")
+	codeCmd.AddCommand(phone)
 
 	return codeCmd
 }
