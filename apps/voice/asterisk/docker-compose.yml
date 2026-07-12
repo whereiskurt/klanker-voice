@@ -34,3 +34,47 @@ services:
       # entry is a no-op there and makes the same compose file also work on
       # Linux hosts, where the mapping isn't automatic.
       - "host.docker.internal:host-gateway"
+
+  # SIPp scenario runner (Phase 11 Plan 07, D-07/R4) -- the opt-in, local-
+  # only "fuller run" companion to the CI-required deterministic fake-media
+  # test (tests/test_telephony_integration.py). `profiles: [integration]`
+  # keeps this out of a plain `docker compose up` -- it only starts via
+  # `docker compose --profile integration run --rm sipp` (or `up sipp`),
+  # never implicitly, and is never required for CI green.
+  #
+  # Built from the official SIPp source (11-RESEARCH.md R4's own citation:
+  # github.com/SIPp/sipp ships an in-repo Dockerfile, `docker build
+  # --target=bin`) rather than an unverified third-party Docker Hub image.
+  # TODO(human, before first real `--profile integration` run): confirm the
+  # current SIPp release tag at https://github.com/SIPp/sipp/releases and
+  # update the ref below if newer -- this pin was not verified against a
+  # live network fetch in this sandbox. An outdated pin does NOT block CI:
+  # the CI-facing check (tests/test_telephony_integration.py's
+  # docker-availability-gated case) only runs `docker compose config`
+  # against this file, never a build/pull.
+  sipp:
+    profiles: ["integration"]
+    container_name: klanker-sipp-dev
+    build:
+      context: https://github.com/SIPp/sipp.git#v3.7.2
+      dockerfile: docker/Dockerfile
+      target: bin
+    depends_on:
+      - asterisk
+    # Shares the asterisk service's network namespace so `127.0.0.1:5060`
+    # inside this container reaches the asterisk container directly --
+    # sidesteps the same macOS Docker Desktop cross-container addressing
+    # question the asterisk service's own external_media_address/
+    # external_signaling_address comments describe (pjsip.conf).
+    network_mode: "service:asterisk"
+    volumes:
+      - ./sipp:/sipp:ro
+    entrypoint: ["/usr/local/bin/sipp"]
+    command:
+      - "-sf"
+      - "/sipp/gate-pass.xml"
+      - "-s"
+      - "dev-softphone"
+      - "127.0.0.1:5060"
+      - "-m"
+      - "1"
