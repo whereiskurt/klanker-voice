@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import aiohttp
 import pytest
 
 from klanker_voice.telephony.ari import AriClient, AriError
@@ -160,3 +161,173 @@ async def test_request_before_connect_raises_runtime_error():
     )
     with pytest.raises(RuntimeError):
         await client.answer("chan-1")
+
+
+# --- Task 2: events WebSocket dispatch fakes -------------------------------
+
+
+class _FakeWSMessage:
+    """Stands in for ``aiohttp.WSMessage`` -- ``.type`` is an
+    ``aiohttp.WSMsgType`` member, ``.json()`` is synchronous (matches the
+    real API)."""
+
+    def __init__(self, msg_type: aiohttp.WSMsgType, data: Any = None) -> None:
+        self.type = msg_type
+        self._data = data
+
+    def json(self) -> Any:
+        return self._data
+
+
+class _FakeWebSocket:
+    """Stands in for the async-context-manager + async-iterable
+    ``aiohttp.ClientWebSocketResponse`` that ``session.ws_connect(...)``
+    yields."""
+
+    def __init__(self, messages: list[_FakeWSMessage]) -> None:
+        self._messages = list(messages)
+
+    async def __aenter__(self) -> "_FakeWebSocket":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    def __aiter__(self) -> "_FakeWebSocket":
+        return self
+
+    async def __anext__(self) -> _FakeWSMessage:
+        if not self._messages:
+            raise StopAsyncIteration
+        return self._messages.pop(0)
+
+
+class _FakeWsSession:
+    """Stands in for ``aiohttp.ClientSession`` for the events-WS surface
+    only -- records every ``ws_connect`` call, returns one canned fake WS."""
+
+    def __init__(self, ws: _FakeWebSocket) -> None:
+        self._ws = ws
+        self.ws_connect_calls: list[dict[str, Any]] = []
+
+    def ws_connect(self, url: str, params: dict[str, Any] | None = None) -> _FakeWebSocket:
+        self.ws_connect_calls.append({"url": url, "params": params})
+        return self._ws
+
+
+def _client_with_fake_ws(messages: list[_FakeWSMessage]) -> tuple[AriClient, _FakeWsSession]:
+    client = AriClient(
+        base_url="http://127.0.0.1:8088",
+        username="klanker",
+        password="s3cr3t-password",
+        app_name="klanker",
+    )
+    fake = _FakeWsSession(_FakeWebSocket(messages))
+    client._session = fake  # type: ignore[assignment]
+    return client, fake
+
+
+# --- Task 2: acceptance criteria -------------------------------------------
+
+
+async def test_run_connects_to_events_endpoint_with_app_and_subscribe_all():
+    client, fake = _client_with_fake_ws([])
+    await client.run()
+    assert len(fake.ws_connect_calls) == 1
+    call = fake.ws_connect_calls[0]
+    assert call["url"] == "http://127.0.0.1:8088/ari/events"
+    assert call["params"] == {"app": "klanker", "subscribeAll": "true"}
+
+
+async def test_run_dispatches_registered_handlers_in_order_with_parsed_dicts():
+    received: list[dict[str, Any]] = []
+
+    async def on_stasis_start(event: dict[str, Any]) -> None:
+        received.append(event)
+
+    async def on_dtmf(event: dict[str, Any]) -> None:
+        received.append(event)
+
+    async def on_destroyed(event: dict[str, Any]) -> None:
+        received.append(event)
+
+    messages = [
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "StasisStart", "channel": {"id": "c1"}}),
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "ChannelDtmfReceived", "digit": "1"}),
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "ChannelDestroyed", "channel": {"id": "c1"}}),
+    ]
+    client, _fake = _client_with_fake_ws(messages)
+    client.on("StasisStart", on_stasis_start)
+    client.on("ChannelDtmfReceived", on_dtmf)
+    client.on("ChannelDestroyed", on_destroyed)
+
+    await client.run()
+
+    assert [e["type"] for e in received] == [
+        "StasisStart",
+        "ChannelDtmfReceived",
+        "ChannelDestroyed",
+    ]
+    assert received[1]["digit"] == "1"
+
+
+async def test_unregistered_event_type_is_ignored_not_fatal():
+    received: list[dict[str, Any]] = []
+
+    async def on_destroyed(event: dict[str, Any]) -> None:
+        received.append(event)
+
+    messages = [
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "SomeUnhandledEvent"}),
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "ChannelDestroyed"}),
+    ]
+    client, _fake = _client_with_fake_ws(messages)
+    client.on("ChannelDestroyed", on_destroyed)
+
+    await client.run()  # must not raise
+
+    assert len(received) == 1
+    assert received[0]["type"] == "ChannelDestroyed"
+
+
+async def test_handler_exception_is_caught_and_loop_continues_to_next_frame():
+    received: list[str] = []
+
+    async def failing_handler(event: dict[str, Any]) -> None:
+        raise ValueError("boom")
+
+    async def next_handler(event: dict[str, Any]) -> None:
+        received.append(event["type"])
+
+    messages = [
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "StasisStart"}),
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "ChannelDestroyed"}),
+    ]
+    client, _fake = _client_with_fake_ws(messages)
+    client.on("StasisStart", failing_handler)
+    client.on("ChannelDestroyed", next_handler)
+
+    await client.run()  # must not raise despite the handler's ValueError
+
+    assert received == ["ChannelDestroyed"]
+
+
+async def test_ws_close_frame_ends_run_without_raising():
+    messages = [
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "StasisStart"}),
+        _FakeWSMessage(aiohttp.WSMsgType.CLOSE),
+        # never reached -- run() must break out at the CLOSE frame above
+        _FakeWSMessage(aiohttp.WSMsgType.TEXT, {"type": "ChannelDestroyed"}),
+    ]
+    received: list[str] = []
+
+    async def handler(event: dict[str, Any]) -> None:
+        received.append(event["type"])
+
+    client, _fake = _client_with_fake_ws(messages)
+    client.on("StasisStart", handler)
+    client.on("ChannelDestroyed", handler)
+
+    await client.run()  # must not raise
+
+    assert received == ["StasisStart"]
