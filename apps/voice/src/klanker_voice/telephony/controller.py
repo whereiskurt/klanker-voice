@@ -594,16 +594,21 @@ class AsteriskCallController:
     async def _gate_fail_closed(self, active_call: ActiveCall, reason: str) -> None:
         """D-05d fail-closed: a deterministic goodbye (bypasses the LLM,
         mirrors ``pipeline.speak_goodbye``'s existing wind-down usage), a
-        grace period for it to play, then hang up the SIP channel and route
-        through the single idempotent :meth:`_close_active_call` teardown --
-        never a silent open PSTN call, whether the trigger was a
-        gate-window timeout or a quota rejection discovered right after
-        unlock."""
+        grace period for it to play, then the single idempotent
+        :meth:`_close_active_call` teardown -- never a silent open PSTN
+        call, whether the trigger was a gate-window timeout or a quota
+        rejection discovered right after unlock.
+
+        No explicit ``hangup(sip_channel_id)`` call here: ``_close_active_
+        call`` -> ``call_session.close()`` -> ``lifecycle.release()``
+        already cascades into the composed ``on_released`` hook this
+        module wires in :meth:`_finish_stasis_start_gated` (mirrors the R6
+        hard-timeout path, T-11-05-02) -- that hook hangs up the SIP
+        channel exactly once. Hanging up here too would double the call
+        (harmless against real ARI, a 404 swallowed by ``_safe_ari`` --
+        but the fake test client would double-count it)."""
         await speak_goodbye(active_call.call_session.worker, GATE_FAIL_CLOSED_COPY)
         await asyncio.sleep(self._quota_cfg.goodbye_grace_seconds)
-        await self._safe_ari(
-            self._ari.hangup(active_call.sip_channel_id), "hangup sip channel (gate fail-closed)"
-        )
         await self._close_active_call(active_call, reason)
 
     # --- ChannelDtmfReceived: the §24 gate's DTMF PIN path (Task 3) --------

@@ -211,6 +211,9 @@ def _build_controller(
     *,
     order: list[str] | None = None,
     telephony_cfg: TelephonyConfig | None = None,
+    quota_cfg: quota.QuotaConfig | None = None,
+    access_pin: str | None = None,
+    passphrase_words: frozenset[str] | None = None,
 ) -> tuple[AsteriskCallController, FakeAriClient, list[FakeRtpMediaSession]]:
     cfg = load_config(make_config_file())
     knowledge_cfg = load_knowledge_config()
@@ -224,9 +227,15 @@ def _build_controller(
         # real transport/pipeline (and therefore any on_client_disconnected
         # firing) never actually starts -- this is defensive documentation,
         # not a requirement for correctness here.
-        _quota_config(reconnect_grace_seconds=3600.0),
+        quota_cfg or _quota_config(reconnect_grace_seconds=3600.0),
         telephony_cfg or _telephony_cfg(),
         media_session_opener=opener,
+        # Hermetic: explicit "" / empty frozenset rather than the
+        # controller's own env-var fallback, so these tests never
+        # accidentally read a real TELEPHONY_ACCESS_PIN/_PASSPHRASE_WORDS
+        # from the environment.
+        access_pin=access_pin if access_pin is not None else "",
+        passphrase_words=passphrase_words if passphrase_words is not None else frozenset(),
     )
     return controller, ari, sessions
 
@@ -397,3 +406,250 @@ async def test_quota_denied_leaves_no_bridge(
     assert ari.count("hangup", arg="ext-media-1") == 1
     assert ari.count("hangup", arg="chan-1") == 1
     assert sessions[0].closed is True
+
+
+# --- Phase 11 Plan 06: the §24 silent answer-gate (D-05, Task 3) -----------
+#
+# `require_gate=True` (the production default) -- unlike every test above,
+# which pins `require_gate=False` via `_telephony_cfg()`'s own default.
+# `stub_call_session_run` (autouse, module-level) still replaces
+# `CallSession.run` with a version that only brackets `lifecycle.start()`
+# (never `runner.run()`), so the gate's own `GateProcessor.process_frame`
+# is driven DIRECTLY in these tests (never through a live pipeline) --
+# `_finish_stasis_start_gated` already calls `gate.start_timer()` itself
+# regardless of whether the real pipeline ever runs a StartFrame through it.
+
+
+def _gated_cfg(**overrides) -> TelephonyConfig:
+    base = dict(gate_window_seconds=60.0, gate_mode="either")
+    base.update(overrides)
+    return _telephony_cfg(require_gate=True, **base)
+
+
+async def test_gated_stasis_start_stays_locked_no_quota_no_greet(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """D-05d: on answer, the gated flow builds a CallSession immediately
+    (bypass_accounting=True placeholder) but calls NEITHER
+    ``quota.start_gate`` NOR ``greet_now`` until unlock."""
+    start_gate_calls: list[Any] = []
+
+    def _spy_start_gate(identity, **kwargs):
+        start_gate_calls.append(identity)
+        raise AssertionError("quota.start_gate must not be called before unlock")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.quota.start_gate", _spy_start_gate)
+    greet_calls: list[Any] = []
+
+    async def _spy_greet_now(worker, context):
+        greet_calls.append((worker, context))
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file, telephony_cfg=_gated_cfg()
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+
+    active_call = controller.calls["chan-1"]
+    assert active_call.gate is not None
+    assert active_call.gate.unlocked is False
+    assert active_call.call_session.lifecycle.bypass_accounting is True
+    assert start_gate_calls == []
+    assert greet_calls == []
+
+
+async def test_gated_passphrase_unlock_grants_tier_and_greets(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """Task 3 acceptance: locked -> passphrase unlock -> quota.start_gate
+    called with SessionIdentity(tier_id=unlock_tier_id) -> greet_now
+    fired."""
+    from pipecat.frames.frames import TranscriptionFrame
+    from pipecat.processors.frame_processor import FrameDirection
+
+    identities: list[Any] = []
+
+    def _recording_start_gate(identity, **kwargs):
+        identities.append(identity)
+        return _gate_result()
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.quota.start_gate", _recording_start_gate
+    )
+    greet_calls: list[Any] = []
+
+    async def _spy_greet_now(worker, context):
+        greet_calls.append((worker, context))
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(unlock_tier_id="kph-tier"),
+        passphrase_words=frozenset({"purple", "falcon", "midnight", "compass"}),
+    )
+
+    await controller.on_stasis_start(_stasis_event(caller_number="1001"))
+    active_call = controller.calls["chan-1"]
+    gate = active_call.gate
+
+    await gate.process_frame(
+        TranscriptionFrame(text="the midnight compass", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await gate.process_frame(
+        TranscriptionFrame(text="found a purple falcon", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+
+    assert gate.unlocked is True
+    assert len(identities) == 1
+    assert identities[0].tier_id == "kph-tier"
+    assert identities[0].sub == "tel:1001"
+    assert identities[0].bypass_accounting is False
+    assert len(greet_calls) == 1
+    assert active_call.call_session.lifecycle.bypass_accounting is False
+
+
+async def test_gated_dtmf_unlock_never_touches_pipeline(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """D-05b: DTMF unlock flips the gate from the controller layer -- the
+    PIN never reaches the pipeline/frame-stream/LLM (this test never once
+    calls ``gate.process_frame``)."""
+    _patch_start_gate(monkeypatch)
+    greet_calls: list[Any] = []
+
+    async def _spy_greet_now(worker, context):
+        greet_calls.append((worker, context))
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file, telephony_cfg=_gated_cfg(), access_pin="4242"
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    gate = active_call.gate
+
+    for digit in "999999":  # noise before the real PIN -- early-exit tail match
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+    assert gate.unlocked is False  # not yet -- only noise so far
+
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+
+    assert gate.unlocked is True
+    assert len(greet_calls) == 1
+
+
+async def test_gate_mode_dtmf_only_disables_passphrase_factor(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    from pipecat.frames.frames import TranscriptionFrame
+    from pipecat.processors.frame_processor import FrameDirection
+
+    _patch_start_gate(monkeypatch)
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_mode="dtmf"),
+        passphrase_words=frozenset({"purple", "falcon", "midnight", "compass"}),
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    gate = active_call.gate
+
+    await gate.process_frame(
+        TranscriptionFrame(
+            text="the midnight compass found a purple falcon", user_id="", timestamp=""
+        ),
+        FrameDirection.DOWNSTREAM,
+    )
+
+    assert gate.unlocked is False  # gate_mode="dtmf" -- the passphrase never unlocks
+
+
+async def test_gate_fail_closed_on_window_expiry_no_greet(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """Task 3 acceptance: fail-closed path -> speak_goodbye + hangup, no
+    greet, no LLM turn."""
+    greet_calls: list[Any] = []
+    goodbye_calls: list[Any] = []
+
+    async def _spy_greet_now(worker, context):
+        greet_calls.append((worker, context))
+
+    async def _spy_speak_goodbye(worker, copy):
+        goodbye_calls.append(copy)
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_window_seconds=0.05),
+        quota_cfg=_quota_config(reconnect_grace_seconds=3600.0, goodbye_grace_seconds=0.01),
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    assert "chan-1" in controller.calls
+
+    await asyncio.sleep(0.3)
+
+    assert len(goodbye_calls) == 1
+    assert greet_calls == []
+    assert ari.count("hangup", arg="chan-1") == 1
+    assert ari.count("destroy_bridge", arg="bridge-1") == 1
+    assert controller.calls == {}
+
+
+async def test_gate_fail_closed_on_quota_denied_after_unlock(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """R6 quota-denied, extended to the post-unlock case: the gate unlocks
+    (DTMF) but quota.start_gate rejects -- fail-closed goodbye + hangup,
+    never a greet."""
+    greet_calls: list[Any] = []
+    goodbye_calls: list[Any] = []
+
+    async def _spy_greet_now(worker, context):
+        greet_calls.append((worker, context))
+
+    async def _spy_speak_goodbye(worker, copy):
+        goodbye_calls.append(copy)
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+    _patch_start_gate(
+        monkeypatch, error=quota.QuotaError(quota.ERROR_CONCURRENCY_LIMIT, "at capacity")
+    )
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        quota_cfg=_quota_config(reconnect_grace_seconds=3600.0, goodbye_grace_seconds=0.01),
+        access_pin="4242",
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+
+    assert active_call.gate.unlocked is True  # the FACTOR matched...
+    assert greet_calls == []  # ...but quota denied it, so no greeting ever fires
+    assert len(goodbye_calls) == 1
+    assert ari.count("hangup", arg="chan-1") == 1
+    assert controller.calls == {}
