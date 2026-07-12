@@ -389,7 +389,7 @@ Plans:
 **Goal:** A local SIP softphone call holds a full conversation with the agent through Asterisk — add the Asterisk configs (PJSIP/ARI/dialplan), an ARI/Stasis call controller that creates external-media channels + mixing bridges, and the call registry, wiring hangup to `lifecycle.release()`. (Spec Phase C, §7 / §13 / §19-C, plus the silent answer-gate §24 verified outside the LLM.)
 **Requirements**: none (coverage driven by success criteria 1-4 + CONTEXT decisions D-01..D-09)
 **Depends on:** Phase 10
-**Plans:** 4/7 plans executed
+**Plans:** 5/7 plans executed
 
 Plans:
 **Wave 1**
@@ -404,7 +404,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 11-05-PLAN.md — AsteriskCallController + ActiveCall registry + idempotent teardown + §16 lifecycle tests (D-02)
+- [x] 11-05-PLAN.md — AsteriskCallController + ActiveCall registry + idempotent teardown + §16 lifecycle tests (D-02)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
