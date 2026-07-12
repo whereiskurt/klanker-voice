@@ -191,3 +191,12 @@ None — no external service configuration required. `AriClient` is not yet wire
 ---
 *Phase: 11-voip-ms-telephony-local-asterisk-edge*
 *Completed: 2026-07-12*
+
+## Self-Check: PASSED
+
+- FOUND: apps/voice/src/klanker_voice/telephony/ari.py
+- FOUND: apps/voice/tests/test_telephony_ari.py
+- FOUND: 61210e7 (test commit, Task 1 RED)
+- FOUND: f7e044c (feat commit, Task 1 GREEN)
+- FOUND: 0559e80 (test commit, Task 2 RED)
+- FOUND: e724ff0 (feat commit, Task 2 GREEN)
