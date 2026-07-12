@@ -90,16 +90,19 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
+from urllib.parse import quote
 
+import aiohttp
 from loguru import logger
 
 from klanker_voice import quota
-from klanker_voice.auth import SessionIdentity
+from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
 from klanker_voice.call_runtime import CallIdentity, CallSession, create_call_session
 from klanker_voice.config import DuplexConfig, KnowledgeConfig, PipelineConfig, QuotaConfig
 from klanker_voice.pipeline import greet_now, speak_goodbye
@@ -138,6 +141,61 @@ PASSPHRASE_WORDS_ENV_VAR = "TELEPHONY_PASSPHRASE_WORDS"
 GATE_FAIL_CLOSED_COPY = (
     "Sorry, I wasn't able to verify access on this line. Goodbye."
 )
+
+#: Short timeout for the /tel mint HTTP call (D-02, Phase 12 Plan 06): this
+#: happens once, on the call-setup critical path, before the caller ever
+#: hears anything -- a slow/unresponsive mint endpoint must never hang a
+#: caller indefinitely.
+TEL_MINT_TIMEOUT_SECONDS = 3.0
+
+_E164_STRIP_RE = re.compile(r"[^\d+]")
+
+
+def _normalize_e164(raw: Any) -> str:
+    """Best-effort E.164 normalization for an ARI caller-ID field (Phase 12
+    Plan 06, D-02) -- mirrors ``apps/auth/webapp/src/lib/phone-normalization.
+    ts``'s ``normalizeE164`` line-for-line so the SAME canonical form is
+    produced on both sides of the ``/tel`` mint call (the auth-app's
+    ``byPhone`` GSI lookup was written against this exact shape). Never
+    raises on odd input (``None``, non-string, empty) -- returns ``""``."""
+    text = "" if raw is None else str(raw).strip()
+    if not text:
+        return ""
+    cleaned = _E164_STRIP_RE.sub("", text)
+    if cleaned.startswith("+"):
+        cleaned = cleaned[1:]
+    cleaned = cleaned.lstrip("0")
+    if len(cleaned) == 10 or (len(cleaned) == 11 and cleaned.startswith("1")):
+        if not cleaned.startswith("1"):
+            cleaned = "1" + cleaned
+    if not cleaned:
+        return ""
+    return "+" + cleaned
+
+
+async def _fetch_tel_token(url: str, headers: dict[str, str]) -> str | None:
+    """Issue the private ``/tel`` mint GET request, returning the minted
+    token string on a 200 JSON response with a non-empty ``token`` field, or
+    ``None`` for ANY failure -- non-200 (incl. the endpoint's own uniform
+    404 no-oracle response), timeout, network error, or a malformed body.
+    Never raises (D-02/D-05: every failure mode fails closed identically).
+
+    A module-level function (not a method) so tests can monkeypatch it
+    directly to avoid a real network call, mirroring how
+    ``quota.start_gate``/``greet_now``/``speak_goodbye`` are already stubbed
+    at module level in this test suite."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=TEL_MINT_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+    except Exception:  # noqa: BLE001 -- any transport/parse failure is a mint failure, never fatal
+        logger.warning("tel mint: /tel request failed (transport/parse error)")
+        return None
+    token = data.get("token") if isinstance(data, dict) else None
+    return token if isinstance(token, str) and token else None
 
 
 def _bypass_gate_result() -> quota.GateResult:
@@ -192,6 +250,16 @@ class ActiveCall:
     #: The controller's own accumulated ARI ``ChannelDtmfReceived`` digit
     #: buffer for this call (Landmine 5: ARI delivers one event per digit).
     dtmf_buffer: str = ""
+    #: Phase 12 Plan 06 (D-02/D-05): the tier :meth:`AsteriskCallController.
+    #: _gate_unlock` grants on a successful gate factor. ``None`` means
+    #: "never grant a tier for this call" -- set only when
+    #: ``telephony_cfg.tel_mint_url`` IS configured and the caller-ID mint
+    #: has already failed (fail-closed already in progress; see
+    #: :meth:`AsteriskCallController._finish_stasis_start_gated`). When
+    #: ``tel_mint_url`` is unconfigured (the legacy/default case), this is
+    #: the static ``telephony_cfg.unlock_tier_id`` -- byte-identical to
+    #: Phase 11's behavior.
+    grant_tier_id: str | None = None
 
 
 def _normalize_token(raw: Any) -> str:
@@ -471,6 +539,38 @@ class AsteriskCallController:
         self._tasks[sip_channel_id] = task
         task.add_done_callback(lambda _t, cid=sip_channel_id: self._tasks.pop(cid, None))
 
+    async def _mint_tier_from_caller_id(self, normalized_caller_id: str) -> str | None:
+        """D-02: call the private ``/tel`` mint endpoint for
+        ``normalized_caller_id`` and validate the returned token via the
+        SAME offline auth path the browser uses
+        (:func:`klanker_voice.auth.validate_access_token`) to obtain the
+        caller's entitled tier_id. Returns ``None`` on ANY failure -- no
+        caller ID, HTTP non-200/timeout/network error, a missing/invalid
+        token body, or token validation failure -- never raises (D-05:
+        every failure mode fails closed identically, mirroring the /tel
+        endpoint's own no-oracle contract, T-12-06-04).
+
+        The Bearer token is read from the env var NAMED by
+        ``telephony_cfg.tel_mint_env_var`` at call time -- never a literal
+        (T-12-06-03)."""
+        if not normalized_caller_id:
+            return None
+        bearer = os.environ.get(self._telephony_cfg.tel_mint_env_var, "")
+        headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+        url = (
+            f"{self._telephony_cfg.tel_mint_url.rstrip('/')}/"
+            f"{quote(normalized_caller_id, safe='')}"
+        )
+        token = await _fetch_tel_token(url, headers)
+        if not token:
+            return None
+        try:
+            identity = validate_access_token(token)
+        except AuthError:
+            logger.warning("tel mint: minted token failed validation")
+            return None
+        return identity.tier_id
+
     async def _finish_stasis_start_gated(
         self,
         *,
@@ -493,7 +593,41 @@ class AsteriskCallController:
         external via :meth:`on_channel_dtmf_received`). Fail-closed
         (gate-window expiry OR a quota rejection right after unlock) both
         route through :meth:`_gate_fail_closed`.
+
+        Phase 12 Plan 06 (D-02/D-05, §23 composed in front of the unchanged
+        §24 gate): BEFORE the gate window ever opens, resolve the caller's
+        entitled tier via the private ``/tel`` mint (:meth:`
+        _mint_tier_from_caller_id`) when ``telephony_cfg.tel_mint_url`` is
+        configured. On mint success, ``active_call.grant_tier_id`` becomes
+        the caller's OWN entitled tier -- :meth:`_gate_unlock` then grants
+        THAT tier, not the static ``unlock_tier_id``. On ANY mint failure
+        (unmapped caller ID, no caller ID, /tel non-200/timeout/error, bad
+        token), the persistent pipeline is still built (so a TTS-capable
+        worker exists to speak the fail-closed goodbye) but the gate window
+        is never started -- :meth:`_gate_fail_closed` fires immediately
+        instead, so ``quota.start_gate`` is NEVER called and no metered
+        STT/LLM/TTS session is ever billed (SC-4). When ``tel_mint_url`` is
+        unconfigured (empty, the default), the mint step is skipped
+        entirely and ``grant_tier_id`` is the legacy static
+        ``unlock_tier_id`` -- byte-identical to Phase 11's behavior.
         """
+        normalized_caller_id = _normalize_e164(caller_id)
+        mint_configured = bool(self._telephony_cfg.tel_mint_url)
+        mint_failed = False
+        if mint_configured:
+            entitled_tier_id = await self._mint_tier_from_caller_id(normalized_caller_id)
+            mint_failed = entitled_tier_id is None
+            grant_tier_id = entitled_tier_id
+        else:
+            grant_tier_id = self._telephony_cfg.unlock_tier_id
+
+        identity = replace(
+            identity,
+            tier_id=grant_tier_id,
+            caller_id=normalized_caller_id or None,
+            did=did or None,
+        )
+
         # A forward-reference container: GateProcessor's callbacks are
         # constructed before the ActiveCall (and its .gate back-reference)
         # exist -- both closures look this up lazily, by which time
@@ -546,6 +680,7 @@ class AsteriskCallController:
             did=did,
             created_at=time.time(),
             gate=gate,
+            grant_tier_id=grant_tier_id,
         )
         self.calls[sip_channel_id] = active_call
         active_call_holder["call"] = active_call
@@ -566,6 +701,15 @@ class AsteriskCallController:
         self._tasks[sip_channel_id] = task
         task.add_done_callback(lambda _t, cid=sip_channel_id: self._tasks.pop(cid, None))
 
+        if mint_configured and mint_failed:
+            # D-02/D-05/SC-4: an unmapped caller ID or any /tel mint failure
+            # fails closed immediately -- the gate window never opens, no
+            # DTMF/passphrase factor is ever accepted, and quota.start_gate
+            # is never called (zero metered STT/LLM/TTS billing for a caller
+            # who never proved entitlement).
+            await self._gate_fail_closed(active_call, "caller-id mint failed")
+            return
+
         # Starts the fail-closed timer NOW (idempotent -- GateProcessor
         # itself would also start it on the pipeline's first StartFrame;
         # this just guarantees the window starts even sooner).
@@ -576,10 +720,27 @@ class AsteriskCallController:
         success, promotes the placeholder ``SessionLifecycle`` and greets
         (the greeting fires HERE, not on answer). On a quota rejection,
         routes through the same fail-closed teardown as a gate-window
-        timeout (R6 quota-denied, extended to the post-unlock case)."""
+        timeout (R6 quota-denied, extended to the post-unlock case).
+
+        Phase 12 Plan 06 (D-02/D-05): grants ``active_call.grant_tier_id``
+        -- the caller's OWN entitled tier when the §23 mint is configured
+        and succeeded, or the legacy static ``telephony_cfg.unlock_tier_id``
+        when the mint is unconfigured. ``grant_tier_id is None`` means a
+        mint failure already triggered fail-closed in
+        :meth:`_finish_stasis_start_gated` -- this is a defensive no-op
+        guard against the narrow async race where a DTMF/passphrase factor
+        still matches during that fail-closed goodbye's grace period; it
+        must NEVER fall back to granting any tier in that case (never an
+        open grant for an unmapped/failed-mint caller, D-05)."""
+        if active_call.grant_tier_id is None:
+            logger.warning(
+                f"gate unlock ignored: no entitled tier for channel={sip_channel_id!r} "
+                "(caller-id mint failed; fail-closed already in progress)"
+            )
+            return
         gate_identity = SessionIdentity(
             sub=f"tel:{caller_id or sip_channel_id}",
-            tier_id=self._telephony_cfg.unlock_tier_id,
+            tier_id=active_call.grant_tier_id,
             group=None,
             bypass_accounting=False,
         )
