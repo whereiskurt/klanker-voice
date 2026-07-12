@@ -392,12 +392,26 @@ Plans:
 **Plans:** 7 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 11-01-PLAN.md — [telephony] config loader + credential-regex widening (D-09)
 - [ ] 11-02-PLAN.md — Asterisk configs (inbound-only Stasis, private ARI) + docker-compose harness (D-01, D-07)
 - [ ] 11-03-PLAN.md — socket-backed RtpMediaSession behind the Phase-10 Protocol (D-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 11-04-PLAN.md — raw-aiohttp ARI client (REST + events WS) (D-06)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 11-05-PLAN.md — AsteriskCallController + ActiveCall registry + idempotent teardown + §16 lifecycle tests (D-02)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 11-06-PLAN.md — the silent §24 answer-gate: GateProcessor + passphrase/PIN + redaction boundary + fail-closed (D-05)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 11-07-PLAN.md — standalone telephony entrypoint + SIPp fake-media CI test + manual §19-C proof (D-08, D-07)
 
 **Success Criteria** (what must be TRUE):
