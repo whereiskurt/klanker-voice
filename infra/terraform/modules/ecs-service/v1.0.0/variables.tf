@@ -196,3 +196,18 @@ variable "security_group_ids" {
   description = "Security group IDs for ECS services"
   default     = []
 }
+
+# Phase 12 (D-01, T-12-07-01): per-service security group override, keyed
+# by ECS service name (the same key `local.services_map` uses). When a
+# service's name is present here, its `network_configuration.security_groups`
+# is THIS list instead of the module-wide `security_group_ids` default —
+# needed because `security_group_ids` is shared by every service in the
+# module and includes `webrtc_udp` (0.0.0.0/0 on UDP 20000-20100), which
+# would defeat a service that needs a narrower, POP-locked ingress set
+# (telephony-edge). Absent/unset services keep the pre-existing global
+# behavior byte-for-byte — this is purely additive.
+variable "security_group_overrides" {
+  type        = map(list(string))
+  description = "Per-service security group ID list override, keyed by service name. Services not present here use the shared security_group_ids list."
+  default     = {}
+}

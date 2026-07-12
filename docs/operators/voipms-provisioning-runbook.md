@@ -170,6 +170,18 @@ each, in the `klanker-application` account (052251888500), `us-east-1`:
 | `VOIPMS_DID` | `/kmv/secrets/use1/voipms/did` | The DID number ordered in step 6 |
 | The telephony `/tel` endpoint auth token | `/kmv/secrets/use1/telephony/endpoint_auth_token` | A freshly generated shared bearer token (not a VoIP.ms value) authenticating the Asterisk controller's calls to the private caller-ID-mint endpoint (D-02) |
 
+**Added by 12-07 (the deployed telephony-edge's `task.containers[].secrets[]`
+`valueFrom` wiring pulls all eleven of the rows in this table — the four
+below were introduced by 11-06's §24 gate and 12-06's ARI wiring but were
+never added to this table until now):**
+
+| Secret | SSM parameter path | Source |
+|---|---|---|
+| `ASTERISK_ARI_USERNAME` | `/kmv/secrets/use1/asterisk/ari_username` | The ARI username configured in `ari.conf`'s rendered `[klanker]` user (any value; must match `ASTERISK_ARI_PASSWORD` below and what the controller connects with) |
+| `ASTERISK_ARI_PASSWORD` | `/kmv/secrets/use1/asterisk/ari_password` | A freshly generated strong ARI password — consumed by BOTH Asterisk (`ari.conf`) and the standalone controller (ARI REST/WebSocket auth) |
+| `TELEPHONY_ACCESS_PIN` | `/kmv/secrets/use1/telephony/access_pin` | The §24 silent answer-gate DTMF PIN (D-05) — consumed by the controller only, never written to any `.conf` file |
+| `TELEPHONY_PASSPHRASE_WORDS` | `/kmv/secrets/use1/telephony/passphrase_words` | The §24 silent answer-gate spoken passphrase word set (D-05) — consumed by the controller only |
+
 Example (repeat per row, substituting the real value and parameter path):
 
 ```bash

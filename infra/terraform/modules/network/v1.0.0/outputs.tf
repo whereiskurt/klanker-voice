@@ -61,20 +61,34 @@ output "webrtc_udp_security_group_id" {
   value       = aws_security_group.webrtc_udp.id
 }
 
+# telephony-edge security group (Phase 12, D-01/T-12-07-01): standalone
+# output ONLY — deliberately NOT folded into `security_groups`/
+# `security_group_ids` below. Those two are attached to every ECS service
+# by default (including webrtc_udp, which is 0.0.0.0/0 on UDP
+# 20000-20100); a consumer must explicitly opt this SG into a service's
+# network_configuration (the region ecs-service unit's
+# `security_group_overrides` map) — see that module's own comment.
+output "telephony_edge_security_group_id" {
+  description = "ID of the telephony-edge security group (SIP/RTP ingress from VoIP.ms Toronto POPs only)"
+  value       = aws_security_group.telephony_edge.id
+}
+
 # Security Group Outputs
 output "security_groups" {
   description = "Map of security group IDs by name"
   value = {
-    sshhttps   = aws_security_group.sshhttps.id
-    http_only  = aws_security_group.http_only.id
-    postgres   = aws_security_group.postgres.id
-    etherpad   = aws_security_group.etherpad.id
-    nlb        = aws_security_group.nlb.id
-    webrtc_udp = aws_security_group.webrtc_udp.id
+    sshhttps       = aws_security_group.sshhttps.id
+    http_only      = aws_security_group.http_only.id
+    postgres       = aws_security_group.postgres.id
+    etherpad       = aws_security_group.etherpad.id
+    nlb            = aws_security_group.nlb.id
+    webrtc_udp     = aws_security_group.webrtc_udp.id
+    telephony_edge = aws_security_group.telephony_edge.id
   }
 }
 
-# Default security group list for ECS services
+# Default security group list for ECS services. telephony_edge is
+# deliberately excluded — see its own standalone output's comment.
 output "security_group_ids" {
   description = "List of default security group IDs for ECS services"
   value = concat(

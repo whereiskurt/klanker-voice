@@ -243,6 +243,61 @@ resource "aws_security_group" "webrtc_udp" {
   )
 }
 
+# Security Group: telephony-edge (Phase 12, D-01/T-12-07-01)
+#
+# Inbound-only Asterisk PSTN edge (the VoIP.ms registration trunk). Ingress
+# is locked to var.telephony_edge_pop_cidrs — the eight Toronto VoIP.ms POP
+# /32s (network.hcl -> telephony-sg.hcl), NEVER 0.0.0.0/0. `dynamic` blocks
+# with an empty CIDR list produce ZERO ingress rules (fully closed), so a
+# site/region that doesn't set telephony_edge_pop_cidrs (the default
+# everywhere except us-east-1) gets a security group with no way in at all,
+# not an accidentally-open one.
+#
+# Deliberately a STANDALONE resource, not part of the default
+# security_group_ids list output below — see that output's own comment.
+resource "aws_security_group" "telephony_edge" {
+  name        = "${var.region.label}.${var.dns.zonename}-telephony-edge"
+  description = "Asterisk telephony edge: SIP/RTP ingress from VoIP.ms Toronto POPs only (D-01)"
+  vpc_id      = aws_vpc.vpc.id
+
+  dynamic "ingress" {
+    for_each = var.telephony_edge_pop_cidrs
+    content {
+      description = "VoIP.ms Toronto POP SIP signaling (PJSIP transport-udp)"
+      from_port   = 5060
+      to_port     = 5060
+      protocol    = "udp"
+      cidr_blocks = [ingress.value]
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = var.telephony_edge_pop_cidrs
+    content {
+      description = "VoIP.ms Toronto POP RTP media (rtp.conf 20000-20100 range)"
+      from_port   = 20000
+      to_port     = 20100
+      protocol    = "udp"
+      cidr_blocks = [ingress.value]
+    }
+  }
+
+  egress {
+    description = "Allow all outbound traffic (registration, DNS, RTP return path)"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(
+    var.vpc.tags,
+    {
+      Name = "${var.region.label}.${var.dns.zonename}-telephony-edge"
+    }
+  )
+}
+
 # Security Group: NLB (MQTT)
 resource "aws_security_group" "nlb" {
   name        = "${var.region.label}.${var.dns.zonename}-mqtt-nlb"
