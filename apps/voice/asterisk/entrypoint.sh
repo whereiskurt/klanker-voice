@@ -27,6 +27,27 @@ set -euo pipefail
 TEMPLATES_DIR="/etc/asterisk/templates"
 OUT_DIR="/etc/asterisk"
 
+# Fargate: external_media_address/external_signaling_address must be THIS
+# task's public IP, which is dynamic per task — discover it via egress echo
+# when the env doesn't provide one. Without this the literal
+# ${TELEPHONY_MEDIA_ADDRESS} survives rendering and Asterisk black-holes RTP
+# (surfaced by the 12-07 post-deploy log check).
+if [ -z "${TELEPHONY_MEDIA_ADDRESS:-}" ]; then
+    TELEPHONY_MEDIA_ADDRESS="$(python3 -c 'import urllib.request;print(urllib.request.urlopen("https://checkip.amazonaws.com",timeout=5).read().decode().strip())')"
+    export TELEPHONY_MEDIA_ADDRESS
+    echo "[entrypoint] discovered public media address: ${TELEPHONY_MEDIA_ADDRESS}"
+fi
+
+# The softphone endpoint is a Phase-11 local-dev artifact. On the deployed
+# edge no one should register to it — when no password is supplied, set an
+# unguessable random per-boot value so the rendered pjsip.conf never carries
+# the literal ${SOFTPHONE_SIP_PASSWORD} placeholder as its password.
+if [ -z "${SOFTPHONE_SIP_PASSWORD:-}" ]; then
+    SOFTPHONE_SIP_PASSWORD="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
+    export SOFTPHONE_SIP_PASSWORD
+    echo "[entrypoint] softphone endpoint locked with a random per-boot password"
+fi
+
 echo "[entrypoint] rendering Asterisk configs from environment..."
 python3 /app/asterisk/render_configs.py --templates "$TEMPLATES_DIR" --out "$OUT_DIR"
 
