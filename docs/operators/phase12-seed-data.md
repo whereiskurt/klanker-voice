@@ -79,12 +79,100 @@ kv tier define pstn-baseline-tier --group pstn \
 kv code create defcon34 --tier kph-tier --group telephony
 
 # 4. Kurt's phone -> defcon34 mapping (real number supplied by the operator,
-#    never committed here)
-kv code phone defcon34 --add <KURTS_E164_NUMBER>
+#    never committed here — <ADMIN_PHONE_E164> is a placeholder)
+kv code phone defcon34 --add <ADMIN_PHONE_E164>
 ```
 
-**Verification (round-trip):** after step 4, a byPhone GSI query for the mapped
-number was confirmed to resolve to `defcon34` -> `kph-tier` against the live
-table (see command + result appended below once the phone step is run).
+All four commands were run successfully against the live table on 2026-07-12
+(profile `klanker-application`). Post-write state confirmed via `kv tier list`
+and `kv code list`:
 
-<!-- gsd:write-continue -->
+| Item | Live values |
+|------|-------------|
+| `kph-tier` | `sessionMaxSeconds=86400`, `periodMaxSeconds=1000000`, `maxConcurrent=5`, `group=kph` |
+| `pstn-baseline-tier` | `sessionMaxSeconds=600`, `periodMaxSeconds=1800`, `maxConcurrent=1`, `group=pstn` |
+| `defcon34` | access code, `tierId=kph-tier`, `group=telephony` (created fresh — did not previously exist, no clobber) |
+
+**Round-trip verification (byPhone GSI, run against the live table):**
+
+```bash
+aws dynamodb query --table-name kmv-auth-electro \
+  --index-name gsi3pk-gsi3sk-index \
+  --key-condition-expression "gsi3pk = :pk AND gsi3sk = :sk" \
+  --expression-attribute-values '{":pk":{"S":"phone#<ADMIN_PHONE_E164>"},":sk":{"S":"phone#"}}' \
+  --query "Items[*].{code:code.S,tierId:tierId.S,phoneEnabled:phoneEnabled.BOOL}" --output json
+```
+
+Result (real number redacted):
+
+```json
+[ { "code": "defcon34", "tierId": "kph-tier", "phoneEnabled": true } ]
+```
+
+The mapped number resolves through the **live** `gsi3pk-gsi3sk-index` GSI to
+`defcon34` -> `kph-tier` with `phoneEnabled=true` — the exact lookup the 12-02
+`resolvePhoneToCode()` / `GET /tel/<e164>` mint path performs. The plan-level
+tier verify (`aws dynamodb get-item` on `tier#kph-tier`) also passed.
+
+## Admin phone number in SSM — operator-only, bot-unreadable
+
+The admin phone number is additionally stored in ONE SSM SecureString parameter
+so operators can retrieve it without it ever living in git:
+
+| Parameter | Type | Scope |
+|-----------|------|-------|
+| `/kmv/operators/use1/admin_phone` | SecureString (Version 1) | **Operator-only** |
+
+```bash
+# Created via (real value redacted):
+aws ssm put-parameter --name "/kmv/operators/use1/admin_phone" \
+  --type SecureString --value "<ADMIN_PHONE_E164>" \
+  --description "Operator-only: admin phone E.164. NEVER add to any container valueFrom or task-role SSM grant (incl. 12-07 telephony edge)." \
+  --tags Key=Scope,Value=operator-only Key=Phase,Value=12-05
+```
+
+### Why this path, and the access-isolation proof (checked 2026-07-12)
+
+The path `/kmv/operators/use1/` is deliberately **disjoint** from
+`/kmv/secrets/use1/*` — the prefix every container secret in this project is
+wired from (`infra/terraform/live/site/services/{auth,voice}/service.hcl`
+`secrets[].valueFrom` entries all point under `/kmv/secrets/use1/`).
+
+Access check performed against BOTH the IaC and the live account:
+
+1. **Dedicated task roles (what running bot code uses):**
+   `auth-use1-kmv-task-role` and `voice-use1-kmv-task-role` — the task roles of
+   the ONLY two ACTIVE task definitions (`auth-use1-kmv`, `voice-use1-kmv`) —
+   carry **zero `ssm:*` actions** (their `task_role_iam_statements` in
+   service.hcl grant only DynamoDB/SES/ECS/EC2/CloudWatch). The running
+   voice/auth/telephony bot code **cannot read any SSM parameter at all**,
+   including this one. Verified live via `aws iam get-role-policy` and
+   `aws ecs describe-task-definition`.
+2. **Execution roles:** the ecs-task module
+   (`infra/terraform/modules/ecs-task/v1.0.0/main.tf`, `ssm_access` policy)
+   grants `ssm:GetParameter*` on `parameter/*` to each task's **execution
+   role** — but the execution role is only exercised by the ECS agent to
+   inject `secrets[].valueFrom` entries at container start; it is not
+   assumable by code inside the container. The guard here is therefore:
+   **this parameter must never appear in any container's `valueFrom` list.**
+3. **Shared cluster task role (hazard, currently unused):**
+   `ecs-task-role-app-use1-kmv-6e913c73` (ecs-cluster module) grants a
+   wide-open `ssm:*` on `Resource=*`. **No active task definition uses it**
+   today — but any future task created WITHOUT dedicated
+   `task_role_policy_statements` falls back to it and could read this
+   parameter.
+
+### Hard constraints (apply to all future work, especially 12-07)
+
+- **NEVER** add `/kmv/operators/use1/admin_phone` (or anything under
+  `/kmv/operators/`) to any container's `secrets[].valueFrom` list.
+- **NEVER** grant any task role `ssm:*`/`ssm:GetParameter*` on
+  `/kmv/operators/*`.
+- The upcoming **telephony-edge service (12-07)** MUST use a dedicated
+  least-privilege task role (non-empty `task_role_policy_statements`, like
+  auth/voice) — never the shared cluster role — and its SSM/secret grants must
+  stay under `/kmv/secrets/use1/*`, never touching `/kmv/operators/*`.
+- The real phone number exists in exactly two places: the live
+  `kmv-auth-electro` item (`defcon34`'s `phone` attribute / byPhone GSI keys)
+  and this SSM parameter. It is never committed to git — this doc and all
+  history use the `<ADMIN_PHONE_E164>` placeholder.
