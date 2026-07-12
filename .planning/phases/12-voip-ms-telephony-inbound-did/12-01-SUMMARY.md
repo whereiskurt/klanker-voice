@@ -166,3 +166,7 @@ None yet in this plan — SSM parameters and the live VoIP.ms account itself are
 ---
 *Phase: 12-voip-ms-telephony-inbound-did*
 *Completed: 2026-07-12*
+
+## Self-Check: PASSED
+
+All created files found on disk; all three task/summary commit hashes (`40c3224`, `40678bf`, plan-metadata commit) present in `git log --oneline --all`.
