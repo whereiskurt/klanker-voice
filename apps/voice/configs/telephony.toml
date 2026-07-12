@@ -1,0 +1,97 @@
+# configs/telephony.toml — harness config for the standalone telephony
+# entrypoint (Phase 11 Plan 07, D-08). Full pipeline.toml clone (same
+# schema/tables the pipeline needs) with ONE behavior difference:
+# [telephony].enabled = true.
+#
+# Selected via:
+#   KLANKER_PIPELINE_CONFIG=configs/telephony.toml uv run python -m klanker_voice.telephony.controller
+#
+# All relative paths below (persona.prompt_path, [knowledge].* ) are
+# resolved relative to THIS file's own directory (apps/voice/configs/), per
+# config.py's documented resolution convention (same "../" pattern as
+# configs/arm-a.toml's persona.prompt_path) — so they climb one directory
+# back up to apps/voice/.
+#
+# No credential material, ever (D-09). ARI creds (ASTERISK_ARI_URL/
+# ASTERISK_ARI_USERNAME/ASTERISK_ARI_PASSWORD) and the §24 gate secrets
+# (TELEPHONY_ACCESS_PIN/TELEPHONY_PASSPHRASE_WORDS) are env-only — read by
+# telephony/__main__.py and telephony/controller.py respectively, never
+# written here. config.py's shared credential-field-name regex would refuse
+# them here even if someone tried.
+
+label = "KPH(telephony-harness)"
+
+[stt]
+provider = "deepgram-nova3"
+model = "nova-3-general"
+
+[stt.flux]
+eot_threshold = 0.7
+eager_eot_threshold = 0.0
+
+[turn]
+strategy = "smart_turn_v3"
+vad_stop_secs = 0.2
+user_speech_timeout = 0.6
+
+[llm]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+
+[tts]
+provider = "elevenlabs"
+model = "eleven_flash_v2_5"
+voice_id = "EIDLidDc73oTUWAedVPt"  # matches the shipped pipeline.toml voice ("Burt Fundeck")
+speed = 1.02
+stability = 0.45
+similarity_boost = 0.85
+style = 0.3
+
+[persona]
+prompt_path = "../prompts/concierge.md"
+greet_first = false  # the §24 gate fires the greeting itself at unlock (D-05c), not on answer
+
+[knowledge]
+manifest = "../knowledge/manifest.yaml"
+topic_map = "../knowledge/router/topic-map.yaml"
+packs_dir = "../knowledge/topics"
+style_path = "../knowledge/style/kurt-voice.md"
+cache_floor = 4096
+index_dir = "../knowledge/index"
+retrieval_enabled = true
+retrieval_top_k = 4
+retrieval_budget = 1500
+
+[quota]
+heartbeat_renew_interval = 15
+heartbeat_ttl = 45
+sub_floor_seconds = 30
+per_task_max_sessions = 5
+auto_trip_ceiling_seconds = 7200
+auto_trip_ceiling_dollars = 40
+est_cost_per_second = 0.005
+winddown_warning_seconds = 30
+goodbye_grace_seconds = 5
+user_silence_timeout = 50
+reconnect_grace_seconds = 12
+warning_copy = "Just a heads up: we're coming up on the time limit for this chat, so let's start wrapping up."
+goodbye_copy = "That's my cue to go — thanks for chatting, take care!"
+
+[telephony]                         # Phase 11 (D-09): media + §24 answer-gate knobs ONLY.
+enabled = true                      # THE difference from pipeline.toml — this is the telephony harness
+provider = "voipms"                 # upstream SIP trunk provider (Phase 12+)
+edge = "asterisk-ari"                # local call-control edge (spec §7/§13)
+codec = "pcmu"                       # μ-law, matches Phase 10 media.py (no codec change)
+sample_rate = 8000                   # PCMU clock rate, Hz
+packet_ms = 20                       # RTP packetization interval
+max_concurrent_calls = 1             # soft cap on simultaneous ARI calls this controller accepts
+answer_timeout_seconds = 15          # bridge/external-media readiness deadline
+hangup_on_pipeline_error = true      # tear the call down rather than leave a silent open line
+# §24 silent answer-gate (D-05): stays dark (no greeting/LLM/TTS) until unlock
+require_gate = true                  # master switch; false is a test/dev-only escape hatch
+gate_mode = "either"                 # "dtmf" | "passphrase" | "either" (D-05b: both factors, either unlocks)
+gate_window_seconds = 10             # fail-closed goodbye + hangup if neither factor lands in time (D-05d)
+unlock_tier_id = "kph-tier"          # tier granted on successful gate unlock (minimal identity seam, D-05a)
+# Secrets (ARI creds, PIN, passphrase words) live in env/SSM, NEVER here (D-09):
+# ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
+# TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.

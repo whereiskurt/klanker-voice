@@ -705,3 +705,21 @@ class AsteriskCallController:
             await coro
         except AriError as exc:
             logger.warning(f"{description} failed (status={exc.status}); continuing teardown")
+
+
+# --- Standalone runnable path (D-08, Plan 07) -------------------------------
+#
+# D-08 phrases the entrypoint as `python -m klanker_voice.telephony.controller`
+# literally; the actual load-config/construct-AriClient/register/connect/run
+# sequence lives in `klanker_voice.telephony.__main__.main` (that module is
+# ALSO independently runnable via `python -m klanker_voice.telephony`, see
+# its own docstring for why both exist). Importing that module here happens
+# lazily, inside the guard, so `import klanker_voice.telephony.controller`
+# (e.g. from tests) never triggers it and there is no import-time circular
+# dependency between the two modules.
+if __name__ == "__main__":  # pragma: no cover - exercised via `python -m klanker_voice.telephony.controller`
+    import asyncio
+
+    from klanker_voice.telephony.__main__ import main as _main
+
+    asyncio.run(_main())
