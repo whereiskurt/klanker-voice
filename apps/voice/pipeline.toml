@@ -81,3 +81,22 @@ ambience_enabled = true             # SoundfileMixer under the voice while green
 ambience_sound = "coffee-shop"      # assets/ambience/{ambience_sound}.wav (mono, 24kHz)
 ambience_volume = 0.06              # subtle (0.0-1.0); tune live
 ambience_sample_rate = 24000        # must match the WAV + output transport (mixer won't resample)
+
+[telephony]                         # Phase 11 (D-09): media + §24 answer-gate knobs ONLY.
+enabled = false                     # opt-in; WebRTC path is byte-unaffected while false
+provider = "voipms"                 # upstream SIP trunk provider (Phase 12+)
+edge = "asterisk-ari"               # local call-control edge (spec §7/§13)
+codec = "pcmu"                      # μ-law, matches Phase 10 media.py (no codec change)
+sample_rate = 8000                  # PCMU clock rate, Hz
+packet_ms = 20                      # RTP packetization interval
+max_concurrent_calls = 1            # soft cap on simultaneous ARI calls this controller accepts
+answer_timeout_seconds = 15         # bridge/external-media readiness deadline
+hangup_on_pipeline_error = true     # tear the call down rather than leave a silent open line
+# §24 silent answer-gate (D-05): stays dark (no greeting/LLM/TTS) until unlock
+require_gate = true                 # master switch; false is a test/dev-only escape hatch
+gate_mode = "either"                # "dtmf" | "passphrase" | "either" (D-05b: both factors, either unlocks)
+gate_window_seconds = 10            # fail-closed goodbye + hangup if neither factor lands in time (D-05d)
+unlock_tier_id = "kph-tier"         # tier granted on successful gate unlock (minimal identity seam, D-05a)
+# Secrets (ARI creds, PIN, passphrase words) live in env/SSM, NEVER here (D-09):
+# ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
+# TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.
