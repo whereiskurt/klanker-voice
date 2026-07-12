@@ -81,7 +81,7 @@ locals {
         # Image tag is env-driven (same CI/OIDC deploy pattern as voice/
         # auth) so build-telephony-edge.yml can deploy the immutable
         # ${github.sha} image it just built.
-        image     = "telephony-edge:${get_env("TF_VAR_TELEPHONY_EDGE_IMAGE_TAG", "latest")}"
+        image     = "telephony-edge:${get_env("TF_VAR_TELEPHONY_EDGE_IMAGE_TAG", "58cf7833e1fcc5de539db6183768d4a2d6101587")}"
         cpu       = 512
         memory    = 1024
         essential = true
