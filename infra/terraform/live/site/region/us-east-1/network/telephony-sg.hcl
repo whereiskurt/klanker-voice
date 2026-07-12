@@ -27,14 +27,20 @@
 #   3. `terragrunt apply` the network unit (SG change only, no service
 #      restart required) after updating this file.
 locals {
+  # Live values from getServersInfo, 2026-07-12 (the research-era
+  # 158.85.70.x/184.75.21x.x list was stale — those IPs no longer appear in
+  # the API's server registry). toronto.voip.ms resolves to toronto1
+  # (208.100.60.50, POP 45) — the registration target and the DID's POP.
   voipms_toronto_pop_cidrs = [
-    "158.85.70.148/32",  # Toronto 1
-    "158.85.70.149/32",  # Toronto 2
-    "158.85.70.150/32",  # Toronto 3
-    "158.85.70.151/32",  # Toronto 4
-    "184.75.215.106/32", # Toronto 5
-    "184.75.215.114/32", # Toronto 6
-    "184.75.215.146/32", # Toronto 7
-    "184.75.213.210/32", # Toronto 8
+    "208.100.60.50/32", # toronto1 (POP 45 — registration target)
+    "208.100.60.51/32", # toronto2 (POP 99)
+    "208.100.60.52/32", # toronto3 (POP 98)
+    "208.100.60.53/32", # toronto4 (POP 92)
+    "208.100.60.54/32", # toronto5 (POP 12)
+    "208.100.60.55/32", # toronto6 (POP 38)
+    "208.100.60.56/32", # toronto7 (POP 61)
+    "208.100.60.57/32", # toronto8 (POP 62)
+    "208.100.60.58/32", # toronto9 (POP 63)
+    "208.100.60.59/32", # toronto10 (POP 6)
   ]
 }

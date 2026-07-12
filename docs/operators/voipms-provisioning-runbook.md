@@ -209,20 +209,25 @@ The deployed `telephony-edge` security group locks inbound SIP (UDP 5060)
 and RTP (UDP 20000–20100) to these VoIP.ms Toronto POP IPs only — never
 `0.0.0.0/0`:
 
-| POP | Hostname | IP |
+| POP id | Hostname | IP |
 |---|---|---|
-| Toronto 1 | `toronto.voip.ms` | `158.85.70.148` |
-| Toronto 2 | `toronto2.voip.ms` | `158.85.70.149` |
-| Toronto 3 | `toronto3.voip.ms` | `158.85.70.150` |
-| Toronto 4 | `toronto4.voip.ms` | `158.85.70.151` |
-| Toronto 5 | `toronto5.voip.ms` | `184.75.215.106` |
-| Toronto 6 | `toronto6.voip.ms` | `184.75.215.114` |
-| Toronto 7 | `toronto7.voip.ms` | `184.75.215.146` |
-| Toronto 8 | `toronto8.voip.ms` | `184.75.213.210` |
+| 45 | `toronto1.voip.ms` (= `toronto.voip.ms`) | `208.100.60.50` |
+| 99 | `toronto2.voip.ms` | `208.100.60.51` |
+| 98 | `toronto3.voip.ms` | `208.100.60.52` |
+| 92 | `toronto4.voip.ms` | `208.100.60.53` |
+| 12 | `toronto5.voip.ms` | `208.100.60.54` |
+| 38 | `toronto6.voip.ms` | `208.100.60.55` |
+| 61 | `toronto7.voip.ms` | `208.100.60.56` |
+| 62 | `toronto8.voip.ms` | `208.100.60.57` |
+| 63 | `toronto9.voip.ms` | `208.100.60.58` |
+| 6 | `toronto10.voip.ms` | `208.100.60.59` |
 
-**Re-verification note:** these IPs were recorded in
-`.planning/phases/12-voip-ms-telephony-inbound-did/12-RESEARCH.md` on
-2026-07-12 from the VoIP.ms wiki Servers page. VoIP.ms infrastructure can
+**Re-verification note:** these IPs were pulled LIVE from the API's
+`getServersInfo` on 2026-07-12 during provisioning (replacing a stale
+wiki-sourced list — the wiki's `158.85.70.x`/`184.75.21x.x` addresses no
+longer appear in the server registry). To re-verify:
+`kv voipms` + `getServersInfo`, or the wiki Servers page cross-checked
+against a live `host toronto.voip.ms`. VoIP.ms infrastructure can
 change. **Re-verify this list against
 [wiki.voip.ms/article/Servers](https://wiki.voip.ms/article/Servers) every
 6 months**, and whenever inbound calls start failing after a period of
