@@ -389,12 +389,12 @@ Plans:
 **Goal:** A local SIP softphone call holds a full conversation with the agent through Asterisk — add the Asterisk configs (PJSIP/ARI/dialplan), an ARI/Stasis call controller that creates external-media channels + mixing bridges, and the call registry, wiring hangup to `lifecycle.release()`. (Spec Phase C, §7 / §13 / §19-C, plus the silent answer-gate §24 verified outside the LLM.)
 **Requirements**: none (coverage driven by success criteria 1-4 + CONTEXT decisions D-01..D-09)
 **Depends on:** Phase 10
-**Plans:** 7 plans
+**Plans:** 1/7 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 11-01-PLAN.md — [telephony] config loader + credential-regex widening (D-09)
+- [x] 11-01-PLAN.md — [telephony] config loader + credential-regex widening (D-09)
 - [ ] 11-02-PLAN.md — Asterisk configs (inbound-only Stasis, private ARI) + docker-compose harness (D-01, D-07)
 - [ ] 11-03-PLAN.md — socket-backed RtpMediaSession behind the Phase-10 Protocol (D-03)
 
