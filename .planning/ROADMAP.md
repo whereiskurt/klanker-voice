@@ -426,7 +426,7 @@ Plans:
 **Goal:** A public VoIP.ms DID reliably reaches the agent from the cellular network — provision a dedicated `klanker-pbx` subaccount, register Asterisk, route the DID, apply the phone→code→tier identity (§23) + silent answer-gate (§24), and the security restrictions. (Spec Phase D, §4 / §11 / §23–§25 / §19-D.)
 **Requirements**: none (telephony milestone has no REQ-IDs — coverage driven by the 4 success criteria + CONTEXT D-01..D-06)
 **Depends on:** Phase 11
-**Plans:** 6/8 plans executed
+**Plans:** 7/8 plans executed
 **Success Criteria** (what must be TRUE):
 
   1. A dedicated `klanker-pbx` VoIP.ms subaccount (strong unique SIP password, IP-restricted, outbound disabled) is registered and the DID routes to it; secrets live only in SSM
@@ -449,7 +449,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 12-07-PLAN.md — Minimal secure telephony-edge deploy: POP-locked SG + SSM valueFrom + Dockerfile (D-01/D-04) [Wave 3]
+- [x] 12-07-PLAN.md — Minimal secure telephony-edge deploy: POP-locked SG + SSM valueFrom + Dockerfile (D-01/D-04) [Wave 3]
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
