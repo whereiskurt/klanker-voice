@@ -1,4 +1,5 @@
-# Local Asterisk edge dev harness (Phase 11, D-07).
+# Local Asterisk edge dev harness (Phase 11, D-07; one-command §19-C proof
+# added in quick-task 260712-ckd).
 #
 # Portable, macOS-Docker-Desktop-safe: explicit `ports:` publishing (no
 # `network_mode: host`, which only works reliably on Linux) + the
@@ -9,10 +10,34 @@
 # Image is a pinned version tag, never `latest` (T-11-02-SC) -- see README
 # for the module smoke check that proves this image actually ships
 # res_ari/res_stasis compiled in.
+#
+# A plain `docker compose up` now brings up `asterisk-config-render`
+# (renders real secrets from `.env` into gitignored `.rendered/{ari,
+# pjsip}.conf`) before `asterisk` (which bind-mounts the rendered copies) --
+# the `.conf` `${VAR}` placeholders are no longer documentation-only.
 services:
+  # Renders apps/voice/asterisk/{ari,pjsip}.conf's `${VAR}` placeholders with
+  # real secrets from `.env` into ./.rendered/ (gitignored) BEFORE Asterisk
+  # starts. No profile -- runs on a plain `docker compose up`. See
+  # render_configs.py's own docstring (D-09: renders only into the
+  # gitignored output dir, never back into the tracked templates).
+  asterisk-config-render:
+    image: python:3.12-slim
+    container_name: klanker-asterisk-config-render
+    environment:
+      - ASTERISK_ARI_PASSWORD=${ASTERISK_ARI_PASSWORD:-}
+      - SOFTPHONE_SIP_PASSWORD=${SOFTPHONE_SIP_PASSWORD:-}
+    volumes:
+      - ./:/templates:ro
+      - ./.rendered:/out
+    command: ["python", "/templates/render_configs.py", "--templates", "/templates", "--out", "/out"]
+
   asterisk:
     image: andrius/asterisk:22.10.1_debian-trixie
     container_name: klanker-asterisk-dev
+    depends_on:
+      asterisk-config-render:
+        condition: service_completed_successfully
     ports:
       - "5060:5060/udp" # SIP signaling (PJSIP transport-udp)
       - "8088:8088/tcp" # ARI HTTP server (see README: bound to the
@@ -22,13 +47,10 @@ services:
       - "10000-10020:10000-10020/udp" # RTP media range (rtp.conf)
     volumes:
       - ./http.conf:/etc/asterisk/http.conf:ro
-      - ./ari.conf:/etc/asterisk/ari.conf:ro
-      - ./pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./.rendered/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./.rendered/pjsip.conf:/etc/asterisk/pjsip.conf:ro
       - ./extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./rtp.conf:/etc/asterisk/rtp.conf:ro
-    environment:
-      - ASTERISK_ARI_PASSWORD=${ASTERISK_ARI_PASSWORD:-}
-      - SOFTPHONE_SIP_PASSWORD=${SOFTPHONE_SIP_PASSWORD:-}
     extra_hosts:
       # Docker Desktop resolves this automatically on macOS/Windows; this
       # entry is a no-op there and makes the same compose file also work on
