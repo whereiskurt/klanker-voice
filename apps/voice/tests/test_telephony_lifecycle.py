@@ -192,7 +192,16 @@ def stub_call_session_run(monkeypatch):
 
 
 def _telephony_cfg(**overrides) -> TelephonyConfig:
-    base = dict(enabled=True, max_concurrent_calls=1, unlock_tier_id="kph-tier")
+    # Phase 11 Plan 06 (D-05): this file's existing tests exercise the
+    # bridge/teardown PLUMBING (ARI allocate/close, idempotent teardown,
+    # hard-timeout hangup, quota-denied-leaves-no-bridge) -- not the §24
+    # gate itself. `require_gate=False` preserves Plan 05's byte-for-byte
+    # immediate-grant behavior for those tests unchanged; the gated flow
+    # (require_gate=True, the production default) gets its own dedicated
+    # tests below.
+    base = dict(
+        enabled=True, max_concurrent_calls=1, unlock_tier_id="kph-tier", require_gate=False
+    )
     base.update(overrides)
     return TelephonyConfig(**base)
 

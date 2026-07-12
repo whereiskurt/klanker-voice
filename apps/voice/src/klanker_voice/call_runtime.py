@@ -40,6 +40,8 @@ from typing import Literal
 from loguru import logger
 
 from pipecat.pipeline.worker import PipelineWorker
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
@@ -86,6 +88,13 @@ class CallSession:
     worker: PipelineWorker
     lifecycle: SessionLifecycle
     runner: WorkerRunner
+    #: Phase 11 (D-05c): the built pipeline's ``LLMContext``, exposed so a
+    #: caller building around the §24 gate (the telephony controller) can
+    #: call :func:`~klanker_voice.pipeline.greet_now` itself, at the real
+    #: unlock boundary, instead of via ``register_greet_first`` (which this
+    #: module skips whenever a ``gate_processor`` is supplied — the greeting
+    #: fires on unlock, not on answer).
+    context: LLMContext
 
     async def run(self) -> None:
         """Start the lifecycle, run the pipeline to completion, then always
@@ -119,6 +128,7 @@ async def create_call_session(
     quota_cfg: QuotaConfig,
     channel: Literal["webrtc", "pstn"],
     metadata: dict[str, str],
+    gate_processor: FrameProcessor | None = None,
 ) -> CallSession:
     """Construct (but do not start) a :class:`CallSession` around an
     arbitrary ``transport`` (D-01/D-02).
@@ -131,6 +141,19 @@ async def create_call_session(
     :meth:`CallSession.run`'s job, so the slow, AWS-bound ``lifecycle.start()``
     stays deferred into the caller's spawned task (preserving the BUG-1
     teardown-before-slow-start ordering).
+
+    Phase 11 (D-05): ``gate_processor``, when supplied, is threaded straight
+    into :func:`~klanker_voice.pipeline.build_pipeline` (additive, ``None``
+    by default — every WebRTC caller passes nothing, so that path is
+    byte-unchanged) AND suppresses ``register_greet_first`` — the §24 gate
+    fires the greeting itself at the real unlock boundary (D-05c), not on
+    answer/connect. ``gate_result`` is still required in this case: the
+    telephony controller passes a zeroed, ``bypass_accounting=True``
+    placeholder so the ``SessionLifecycle`` this call constructs starts NO
+    real accounting/timers while the gate is locked (see
+    ``klanker_voice.session.SessionLifecycle.upgrade_from_bypass``, called
+    by the controller once ``quota.start_gate`` actually grants a tier at
+    unlock).
     """
     logger.info(
         f"create_call_session: channel={channel} session_id={gate_result.session_id} "
@@ -153,6 +176,7 @@ async def create_call_session(
         knowledge_cfg=knowledge_cfg,
         duplex_cfg=duplex_cfg,
         remaining_seconds_fn=lifecycle.remaining_seconds,
+        gate_processor=gate_processor,
     )
     worker = build_worker(
         built.pipeline,
@@ -163,7 +187,11 @@ async def create_call_session(
         ],
     )
 
-    if cfg.persona.greet_first:
+    # D-05c: with a §24 gate present, the greeting fires on UNLOCK (the
+    # caller invokes pipeline.greet_now itself via CallSession.context), not
+    # on answer/connect -- register_greet_first would greet a still-locked
+    # caller.
+    if cfg.persona.greet_first and gate_processor is None:
         register_greet_first(transport, worker, built.context)
 
     runner = WorkerRunner(handle_sigint=False)
@@ -201,4 +229,5 @@ async def create_call_session(
         worker=worker,
         lifecycle=lifecycle,
         runner=runner,
+        context=built.context,
     )

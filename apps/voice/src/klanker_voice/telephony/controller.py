@@ -43,13 +43,41 @@ the *original* Asterisk SIP channel ID:
   channel/socket already allocated for the gate are torn down and the SIP
   channel is hung up (R6 "quota-denied leaves no bridge", T-11-05-03).
 
-**§24 gate note.** This plan lands the plumbing + the exactly-once teardown
-guarantee; ``quota.start_gate`` is invoked here at an *interim* placement
-(right after the bridge/channels are wired, using
-``telephony_cfg.unlock_tier_id`` as the granted tier) so the lifecycle
-tests in this plan can exercise the full allocate -> teardown path. Plan 06
-moves the actual tier grant to the real §24 unlock boundary (DTMF PIN /
-spoken passphrase) without changing this module's teardown contract.
+**§24 gate (Plan 06, D-05).** ``on_stasis_start`` now branches on
+``telephony_cfg.require_gate``:
+
+- **Gated (default, production):** the persistent pipeline is built
+  immediately (via :func:`~klanker_voice.call_runtime.create_call_session`,
+  with a :class:`~klanker_voice.telephony.gate.GateProcessor` threaded into
+  it and a zeroed, ``bypass_accounting=True`` placeholder ``GateResult`` --
+  see ``_bypass_gate_result``) so STT (+ ARI DTMF) can run during the gate
+  with NO real accounting/timer engaged yet (D-05d). The caller stays dark
+  -- no greeting, no LLM, no TTS -- until :meth:`GateProcessor.unlock`
+  fires, from either the spoken 4-word passphrase (matched inside the
+  processor, D-05b) or an ARI ``ChannelDtmfReceived`` PIN match
+  (:meth:`on_channel_dtmf_received`, entirely outside the pipeline/LLM).
+  On unlock, :meth:`_gate_unlock` calls the REAL ``quota.start_gate`` and,
+  on success, promotes the placeholder lifecycle via
+  ``SessionLifecycle.upgrade_from_bypass`` and fires
+  :func:`~klanker_voice.pipeline.greet_now` (D-05c -- the greeting fires
+  HERE, not on answer). A quota rejection at that point, or the gate's own
+  ``gate_window_seconds`` expiry with no unlock, both funnel through
+  :meth:`_gate_fail_closed` -- a deterministic goodbye (bypasses the LLM,
+  mirrors ``pipeline.speak_goodbye``) then hangup then the single
+  idempotent :meth:`_close_active_call` teardown (D-05d: never a silent
+  open PSTN call).
+- **Ungated (``require_gate=False``, test/dev-only escape hatch per
+  ``TelephonyConfig``'s own docstring):** the Plan-05 interim behavior is
+  preserved byte-for-byte -- ``quota.start_gate`` is called immediately at
+  StasisStart with ``telephony_cfg.unlock_tier_id``, and
+  ``register_greet_first`` greets on connect. This keeps every Plan-05
+  lifecycle test (bridge/teardown plumbing, unrelated to the gate itself)
+  green unchanged; the new gated flow gets its own dedicated tests.
+
+The PIN (``TELEPHONY_ACCESS_PIN``) and passphrase words
+(``TELEPHONY_PASSPHRASE_WORDS``) are read ONCE, at
+:class:`AsteriskCallController` construction (or injected directly for
+tests) -- never re-read per call, never logged (D-05e).
 
 **Logging discipline (§13).** Structured logs always carry the call ID.
 This module NEVER logs SIP passwords, ARI auth headers, or full
@@ -61,7 +89,9 @@ code here introduces a new place credentials could leak.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -72,8 +102,10 @@ from klanker_voice import quota
 from klanker_voice.auth import SessionIdentity
 from klanker_voice.call_runtime import CallIdentity, CallSession, create_call_session
 from klanker_voice.config import DuplexConfig, KnowledgeConfig, PipelineConfig, QuotaConfig
+from klanker_voice.pipeline import greet_now, speak_goodbye
 from klanker_voice.telephony.ari import AriClient, AriError
 from klanker_voice.telephony.config import TelephonyConfig
+from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf
 from klanker_voice.telephony.rtp_socket import SocketRtpMediaSession
 from klanker_voice.telephony.transport import TelephonyTransport
 from klanker_voice.telephony.types import RtpMediaSession, TelephonyTransportParams
@@ -92,6 +124,41 @@ DEFAULT_APP_NAME = "klanker"
 #: anything else is an unexpected/hostile entry and is rejected, never
 #: allocated a bridge (D-02).
 DEFAULT_EXPECTED_CONTEXT = "from-klanker-inbound"
+
+#: §24 gate secrets (D-09/D-05e) -- env only, NEVER TOML (config.py's
+#: credential-field-name regex already refuses these two shapes if smuggled
+#: into pipeline.toml). Read exactly once, at controller construction.
+PIN_ENV_VAR = "TELEPHONY_ACCESS_PIN"
+PASSPHRASE_WORDS_ENV_VAR = "TELEPHONY_PASSPHRASE_WORDS"
+
+#: Deterministic, LLM-free fail-closed goodbye (D-05d) -- shared by both the
+#: gate-window-expiry timeout and a quota rejection discovered right after a
+#: successful unlock. Sent straight to TTS (``pipeline.speak_goodbye``),
+#: exactly like the existing session wind-down goodbye.
+GATE_FAIL_CLOSED_COPY = (
+    "Sorry, I wasn't able to verify access on this line. Goodbye."
+)
+
+
+def _bypass_gate_result() -> quota.GateResult:
+    """A zeroed, ``bypass_accounting=True`` placeholder (D-05): lets
+    :func:`~klanker_voice.call_runtime.create_call_session` build the
+    persistent gated pipeline (and a ``SessionLifecycle``) up front, before
+    any real access has been proven, with NO real accounting/timer engaged
+    (``SessionLifecycle.start()`` skips its tick/timer/watchdog loops
+    entirely for a bypass session). ``SessionLifecycle.upgrade_from_bypass``
+    (session.py, Rule 2 auto-add) promotes this into a REAL metered session
+    once ``quota.start_gate`` actually grants a tier at unlock (D-05a/c)."""
+    placeholder_tier = quota.Tier(
+        tier_id=quota.NO_ACCESS_TIER_ID, session_max_seconds=0, period_max_seconds=0, max_concurrent=0
+    )
+    return quota.GateResult(
+        session_id=str(uuid.uuid4()),
+        tier=placeholder_tier,
+        session_max_seconds=0,
+        remaining_daily_seconds=0,
+        bypass_accounting=True,
+    )
 
 
 @dataclass
@@ -118,6 +185,13 @@ class ActiveCall:
     created_at: float
     closed: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: Phase 11 Plan 06 (D-05): the §24 gate for this call, or ``None`` when
+    #: ``telephony_cfg.require_gate`` is False (the ungated escape hatch --
+    #: the call is already fully granted by the time it's registered).
+    gate: GateProcessor | None = None
+    #: The controller's own accumulated ARI ``ChannelDtmfReceived`` digit
+    #: buffer for this call (Landmine 5: ARI delivers one event per digit).
+    dtmf_buffer: str = ""
 
 
 def _normalize_token(raw: Any) -> str:
@@ -152,6 +226,8 @@ class AsteriskCallController:
         rtp_bind_host: str = "0.0.0.0",
         rtp_advertise_host: str = "127.0.0.1",
         media_session_opener: MediaSessionOpener = SocketRtpMediaSession.open,
+        access_pin: str | None = None,
+        passphrase_words: frozenset[str] | None = None,
     ) -> None:
         self._ari = ari
         self._cfg = cfg
@@ -164,6 +240,16 @@ class AsteriskCallController:
         self._rtp_advertise_host = rtp_advertise_host
         self._open_media_session = media_session_opener
 
+        # §24 gate secrets (D-05e/D-09): read ONCE here -- from the explicit
+        # kwarg when a caller (tests) injects one, else from env -- never
+        # re-read per call, never logged.
+        self._pin = access_pin if access_pin is not None else os.environ.get(PIN_ENV_VAR, "")
+        if passphrase_words is not None:
+            self._passphrase_words = frozenset(w.strip().lower() for w in passphrase_words if w.strip())
+        else:
+            raw_words = os.environ.get(PASSPHRASE_WORDS_ENV_VAR, "")
+            self._passphrase_words = frozenset(w.strip().lower() for w in raw_words.split() if w.strip())
+
         #: D-02's registry, keyed by the original Asterisk SIP channel ID.
         self.calls: dict[str, ActiveCall] = {}
 
@@ -175,11 +261,13 @@ class AsteriskCallController:
         self._tasks: dict[str, asyncio.Task] = {}
 
     def register(self) -> None:
-        """Wire :meth:`on_stasis_start` / :meth:`on_channel_destroyed` onto
-        the ``AriClient``'s event dispatch (convenience for the standalone
-        entrypoint, D-08) -- tests may instead call the handlers directly."""
+        """Wire :meth:`on_stasis_start` / :meth:`on_channel_destroyed` /
+        :meth:`on_channel_dtmf_received` onto the ``AriClient``'s event
+        dispatch (convenience for the standalone entrypoint, D-08) -- tests
+        may instead call the handlers directly."""
         self._ari.on("StasisStart", self.on_stasis_start)
         self._ari.on("ChannelDestroyed", self.on_channel_destroyed)
+        self._ari.on("ChannelDtmfReceived", self.on_channel_dtmf_received)
 
     # --- StasisStart: allocate + construct (Task 1) ------------------------
 
@@ -189,9 +277,11 @@ class AsteriskCallController:
         Accepts only the expected inbound context/app; anything else is
         hung up immediately with no allocation. On the happy path: answer
         -> bind the socket media session FIRST (R2) -> create the External
-        Media channel + mixing bridge -> attach both channels -> evaluate
-        the quota gate -> construct + register the ``CallSession`` -> run
-        the worker as a tracked background task.
+        Media channel + mixing bridge -> attach both channels -> then
+        branch on ``telephony_cfg.require_gate`` (Plan 06, see module
+        docstring "§24 gate") into either the gated flow (§24 answer-gate,
+        default/production) or the ungated escape hatch (Plan 05's interim
+        immediate-grant behavior, test/dev-only).
         """
         channel = event.get("channel", {}) or {}
         sip_channel_id = _normalize_token(channel.get("id"))
@@ -233,35 +323,6 @@ class AsteriskCallController:
             bridge_id = await self._ari.create_bridge("mixing")
             await self._ari.add_channel(bridge_id, sip_channel_id)
             await self._ari.add_channel(bridge_id, external_media_channel_id)
-
-            # Interim placement (this plan): grant telephony_cfg.unlock_tier_id
-            # directly. Plan 06 moves this to the real §24 unlock boundary
-            # (DTMF PIN / spoken passphrase) without touching the teardown
-            # contract below.
-            gate_identity = SessionIdentity(
-                sub=f"tel:{caller_id or sip_channel_id}",
-                tier_id=self._telephony_cfg.unlock_tier_id,
-                group=None,
-                bypass_accounting=False,
-            )
-            gate_result = quota.start_gate(
-                gate_identity,
-                active_session_count=len(self.calls),
-                per_task_max_sessions=self._telephony_cfg.max_concurrent_calls,
-                heartbeat_ttl_seconds=self._quota_cfg.heartbeat_ttl,
-                sub_floor_seconds=self._quota_cfg.sub_floor_seconds,
-            )
-        except quota.QuotaError as exc:
-            # R6 "quota-denied leaves no bridge": the gate's own bridge +
-            # external-media channel + socket are torn down; NO CallSession
-            # is ever constructed for this caller.
-            logger.warning(
-                f"on_stasis_start: quota denied ({exc.error_type}) channel={sip_channel_id}"
-            )
-            await self._teardown_gate_resources(
-                bridge_id, external_media_channel_id, media, sip_channel_id
-            )
-            return
         except Exception:
             logger.exception(
                 f"on_stasis_start: failed to establish media/bridge for channel={sip_channel_id}"
@@ -282,6 +343,74 @@ class AsteriskCallController:
         identity = CallIdentity(
             subject=f"tel:{caller_id or sip_channel_id}", authenticated=True, auth_method="pstn"
         )
+
+        if not self._telephony_cfg.require_gate:
+            await self._finish_stasis_start_ungated(
+                sip_channel_id=sip_channel_id,
+                caller_id=caller_id,
+                did=did,
+                media=media,
+                bridge_id=bridge_id,
+                external_media_channel_id=external_media_channel_id,
+                transport=transport,
+                identity=identity,
+            )
+            return
+
+        await self._finish_stasis_start_gated(
+            sip_channel_id=sip_channel_id,
+            caller_id=caller_id,
+            did=did,
+            media=media,
+            bridge_id=bridge_id,
+            external_media_channel_id=external_media_channel_id,
+            transport=transport,
+            identity=identity,
+        )
+
+    async def _finish_stasis_start_ungated(
+        self,
+        *,
+        sip_channel_id: str,
+        caller_id: str,
+        did: str,
+        media: RtpMediaSession,
+        bridge_id: str,
+        external_media_channel_id: str,
+        transport: TelephonyTransport,
+        identity: CallIdentity,
+    ) -> None:
+        """``telephony_cfg.require_gate=False`` escape hatch: Plan 05's
+        interim behavior, preserved byte-for-byte -- grant
+        ``telephony_cfg.unlock_tier_id`` immediately via ``quota.start_gate``
+        and greet on connect (no §24 gate at all). Test/dev-only per
+        ``TelephonyConfig.require_gate``'s own docstring; never expected in
+        a production deployment."""
+        gate_identity = SessionIdentity(
+            sub=f"tel:{caller_id or sip_channel_id}",
+            tier_id=self._telephony_cfg.unlock_tier_id,
+            group=None,
+            bypass_accounting=False,
+        )
+        try:
+            gate_result = quota.start_gate(
+                gate_identity,
+                active_session_count=len(self.calls),
+                per_task_max_sessions=self._telephony_cfg.max_concurrent_calls,
+                heartbeat_ttl_seconds=self._quota_cfg.heartbeat_ttl,
+                sub_floor_seconds=self._quota_cfg.sub_floor_seconds,
+            )
+        except quota.QuotaError as exc:
+            # R6 "quota-denied leaves no bridge": the gate's own bridge +
+            # external-media channel + socket are torn down; NO CallSession
+            # is ever constructed for this caller.
+            logger.warning(
+                f"on_stasis_start: quota denied ({exc.error_type}) channel={sip_channel_id}"
+            )
+            await self._teardown_gate_resources(
+                bridge_id, external_media_channel_id, media, sip_channel_id
+            )
+            return
 
         call_session = await create_call_session(
             transport=transport,
@@ -326,6 +455,179 @@ class AsteriskCallController:
         task = asyncio.create_task(call_session.run())
         self._tasks[sip_channel_id] = task
         task.add_done_callback(lambda _t, cid=sip_channel_id: self._tasks.pop(cid, None))
+
+    async def _finish_stasis_start_gated(
+        self,
+        *,
+        sip_channel_id: str,
+        caller_id: str,
+        did: str,
+        media: RtpMediaSession,
+        bridge_id: str,
+        external_media_channel_id: str,
+        transport: TelephonyTransport,
+        identity: CallIdentity,
+    ) -> None:
+        """The §24 silent answer-gate (D-05, Plan 06): build the persistent
+        pipeline with an inline ``GateProcessor`` NOW (using a zeroed
+        bypass ``GateResult`` placeholder, D-05d -- no real accounting/
+        timer starts yet), run it as a tracked background task so STT (+
+        ARI DTMF) can observe the caller immediately, and defer the REAL
+        ``quota.start_gate`` call + greeting to :meth:`_gate_unlock`, which
+        fires from ``GateProcessor.unlock`` (passphrase, internal, or DTMF,
+        external via :meth:`on_channel_dtmf_received`). Fail-closed
+        (gate-window expiry OR a quota rejection right after unlock) both
+        route through :meth:`_gate_fail_closed`.
+        """
+        # A forward-reference container: GateProcessor's callbacks are
+        # constructed before the ActiveCall (and its .gate back-reference)
+        # exist -- both closures look this up lazily, by which time
+        # `active_call_holder["call"]` has always been populated below.
+        active_call_holder: dict[str, ActiveCall] = {}
+
+        async def _on_fail_closed() -> None:
+            active_call = active_call_holder.get("call")
+            if active_call is not None:
+                await self._gate_fail_closed(active_call, "gate window expired")
+
+        async def _on_unlock() -> None:
+            active_call = active_call_holder.get("call")
+            if active_call is not None:
+                await self._gate_unlock(active_call, caller_id=caller_id, sip_channel_id=sip_channel_id)
+
+        passphrase_words = (
+            self._passphrase_words
+            if self._telephony_cfg.gate_mode in ("passphrase", "either")
+            else frozenset()
+        )
+        gate = GateProcessor(
+            call_id=sip_channel_id,
+            passphrase_words=passphrase_words,
+            gate_window_seconds=self._telephony_cfg.gate_window_seconds,
+            on_unlock=_on_unlock,
+            on_fail_closed=_on_fail_closed,
+        )
+
+        call_session = await create_call_session(
+            transport=transport,
+            identity=identity,
+            gate_result=_bypass_gate_result(),
+            cfg=self._cfg,
+            knowledge_cfg=self._knowledge_cfg,
+            duplex_cfg=DuplexConfig(),
+            quota_cfg=self._quota_cfg,
+            channel="pstn",
+            metadata={"call_id": sip_channel_id, "did": did},
+            gate_processor=gate,
+        )
+
+        active_call = ActiveCall(
+            sip_channel_id=sip_channel_id,
+            external_media_channel_id=external_media_channel_id,
+            bridge_id=bridge_id,
+            media_session=media,
+            call_session=call_session,
+            caller_id=caller_id,
+            did=did,
+            created_at=time.time(),
+            gate=gate,
+        )
+        self.calls[sip_channel_id] = active_call
+        active_call_holder["call"] = active_call
+
+        # R6: a hard session timeout (only reachable once the gate has
+        # unlocked and SessionLifecycle.upgrade_from_bypass has started the
+        # real service timer) must ALSO reach the SIP channel.
+        async def _on_released() -> None:
+            await call_session.runner.cancel("session wind-down complete")
+            await self._safe_ari(
+                self._ari.hangup(sip_channel_id), "hangup sip channel (hard timeout)"
+            )
+            await self._close_active_call(active_call, "hard timeout release")
+
+        call_session.lifecycle.on_released = _on_released
+
+        task = asyncio.create_task(call_session.run())
+        self._tasks[sip_channel_id] = task
+        task.add_done_callback(lambda _t, cid=sip_channel_id: self._tasks.pop(cid, None))
+
+        # Starts the fail-closed timer NOW (idempotent -- GateProcessor
+        # itself would also start it on the pipeline's first StartFrame;
+        # this just guarantees the window starts even sooner).
+        gate.start_timer()
+
+    async def _gate_unlock(self, active_call: ActiveCall, *, caller_id: str, sip_channel_id: str) -> None:
+        """D-05a/c: the REAL tier grant, on either unlock factor. On
+        success, promotes the placeholder ``SessionLifecycle`` and greets
+        (the greeting fires HERE, not on answer). On a quota rejection,
+        routes through the same fail-closed teardown as a gate-window
+        timeout (R6 quota-denied, extended to the post-unlock case)."""
+        gate_identity = SessionIdentity(
+            sub=f"tel:{caller_id or sip_channel_id}",
+            tier_id=self._telephony_cfg.unlock_tier_id,
+            group=None,
+            bypass_accounting=False,
+        )
+        try:
+            # This call is already registered in self.calls (added right
+            # after construction, above) -- exclude it from its own
+            # at-capacity count.
+            gate_result = quota.start_gate(
+                gate_identity,
+                active_session_count=max(0, len(self.calls) - 1),
+                per_task_max_sessions=self._telephony_cfg.max_concurrent_calls,
+                heartbeat_ttl_seconds=self._quota_cfg.heartbeat_ttl,
+                sub_floor_seconds=self._quota_cfg.sub_floor_seconds,
+            )
+        except quota.QuotaError as exc:
+            logger.warning(
+                f"gate unlock: quota denied ({exc.error_type}) channel={sip_channel_id}"
+            )
+            await self._gate_fail_closed(active_call, "quota denied after gate unlock")
+            return
+
+        await active_call.call_session.lifecycle.upgrade_from_bypass(
+            tier=gate_result.tier, session_id=gate_result.session_id, user_id=gate_identity.sub
+        )
+        await greet_now(active_call.call_session.worker, active_call.call_session.context)
+
+    async def _gate_fail_closed(self, active_call: ActiveCall, reason: str) -> None:
+        """D-05d fail-closed: a deterministic goodbye (bypasses the LLM,
+        mirrors ``pipeline.speak_goodbye``'s existing wind-down usage), a
+        grace period for it to play, then hang up the SIP channel and route
+        through the single idempotent :meth:`_close_active_call` teardown --
+        never a silent open PSTN call, whether the trigger was a
+        gate-window timeout or a quota rejection discovered right after
+        unlock."""
+        await speak_goodbye(active_call.call_session.worker, GATE_FAIL_CLOSED_COPY)
+        await asyncio.sleep(self._quota_cfg.goodbye_grace_seconds)
+        await self._safe_ari(
+            self._ari.hangup(active_call.sip_channel_id), "hangup sip channel (gate fail-closed)"
+        )
+        await self._close_active_call(active_call, reason)
+
+    # --- ChannelDtmfReceived: the §24 gate's DTMF PIN path (Task 3) --------
+
+    async def on_channel_dtmf_received(self, event: dict[str, Any]) -> None:
+        """D-05b: accumulate one ARI-delivered digit against this call's
+        buffer and compare to ``TELEPHONY_ACCESS_PIN`` (Landmine 5: ARI
+        delivers one event per digit, never the whole PIN at once). On an
+        exact match, unlocks the gate directly -- the PIN never touches the
+        pipeline/frame stream/LLM at all. A no-op for an unknown channel,
+        an ungated call (``active_call.gate is None``), an empty digit, or
+        when ``gate_mode`` excludes the DTMF factor."""
+        if self._telephony_cfg.gate_mode not in ("dtmf", "either"):
+            return
+        channel_id = _normalize_token((event.get("channel", {}) or {}).get("id"))
+        digit = _normalize_token(event.get("digit"))
+        active_call = self.calls.get(channel_id)
+        if active_call is None or active_call.gate is None or not digit:
+            return
+        active_call.dtmf_buffer, matched = accumulate_dtmf(
+            active_call.dtmf_buffer, digit, self._pin
+        )
+        if matched:
+            await active_call.gate.unlock("dtmf")
 
     async def _teardown_gate_resources(
         self,
