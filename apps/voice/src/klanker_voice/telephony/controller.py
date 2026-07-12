@@ -285,9 +285,24 @@ class AsteriskCallController:
         """
         channel = event.get("channel", {}) or {}
         sip_channel_id = _normalize_token(channel.get("id"))
+        channel_name = channel.get("name", "") or ""
         application = event.get("application", "")
         dialplan = channel.get("dialplan", {}) or {}
         context = dialplan.get("context", "")
+
+        # The externalMedia channel we create below (D-08) re-enters THIS same
+        # Stasis app and fires its own StasisStart with context='default'. It is
+        # an internal media leg (Asterisk technology "UnicastRTP"), already
+        # bridged in this handler -- never a new inbound call. Ignore it; hanging
+        # it up (via the guard below) would kill our own audio path. Surfaced by
+        # the §19-C live softphone proof: fake-media tests never create a real
+        # externalMedia channel that re-enters Stasis, so they can't catch this.
+        if channel_name.startswith("UnicastRTP"):
+            logger.debug(
+                f"on_stasis_start: ignoring external-media leg channel={sip_channel_id!r} "
+                f"name={channel_name!r}"
+            )
+            return
 
         if application != self._app_name or context != self._expected_context:
             logger.warning(

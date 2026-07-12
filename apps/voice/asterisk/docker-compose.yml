@@ -29,6 +29,10 @@ services:
     environment:
       - ASTERISK_ARI_PASSWORD=${ASTERISK_ARI_PASSWORD:-}
       - SOFTPHONE_SIP_PASSWORD=${SOFTPHONE_SIP_PASSWORD:-}
+      # Host-reachable media address for the SDP c= line (see pjsip.conf
+      # transport comment). Defaults to loopback, but the §19-C softphone proof
+      # REQUIRES this be your host LAN IP or no caller audio flows.
+      - TELEPHONY_MEDIA_ADDRESS=${TELEPHONY_MEDIA_ADDRESS:-127.0.0.1}
     volumes:
       - ./:/templates:ro
       - ./.rendered:/out

@@ -134,6 +134,35 @@ Asterisk container, but still can't judge audio quality or barge-in feel
 regression-testing the SIP/RTP wiring itself; not a substitute for this
 manual proof either.
 
+### Runtime requirements & gotchas (validated live 2026-07-12)
+
+The one-command stack was proven end-to-end against a real Linphone softphone.
+Four environment facts were essential to get **caller audio** flowing through
+Docker Desktop's UDP NAT -- without them the call connects and the gate arms,
+but no audio reaches the agent and it fail-closes after `gate_window_seconds`:
+
+1. **`TELEPHONY_MEDIA_ADDRESS` must be your host LAN IP** (`ipconfig getifaddr en0`),
+   set in `.env`. Asterisk advertises this in its SDP `c=` line; it refuses to
+   advertise loopback as "external" and otherwise falls back to the container's
+   internal bridge IP (e.g. `172.20.0.2`), which the host cannot reach -- caller
+   RTP is then black-holed. `rtp_symmetric` on the endpoint handles the return leg.
+2. **ICE is disabled** (`rtp.conf: icesupport=no`) -- ICE candidate negotiation
+   deadlocks through Docker Desktop's NAT.
+3. **NAT tolerance is on** (`pjsip.conf` endpoint: `force_rport`/`rewrite_contact`/
+   `rtp_symmetric`) -- the softphone reaches Asterisk through Docker's userland NAT
+   from a rewritten source, so Asterisk must reply to the actual packet source.
+4. **If the source IP looks wrong** (e.g. a public/CDN address in `pjsip show
+   contacts`, or signaling 401-loops), **restart Docker Desktop** -- the gvisor
+   network stack can cache a stale host-address mapping that makes UDP return
+   traffic unroutable. A plain host probe to `127.0.0.1:5060` should show source
+   `192.168.65.1` once healthy.
+
+**Softphone auth caveat:** Linphone (desktop 6.x) does **not** retry an INVITE
+after a `401` challenge, so a call to an auth-required endpoint silently fails.
+For the local proof, the endpoint's `auth=` can be dropped (identity is still
+pinned by `username`/`ip`, and the §24 gate is the real access control); a
+softphone that retries INVITE auth (or `gate_mode` alone) needs no change.
+
 ### Recipe
 
 1. **Fill in secrets.**
@@ -142,8 +171,9 @@ manual proof either.
    cp .env.example .env   # if not already done -- gitignored, local-dev only
    ```
    Fill in `ASTERISK_ARI_PASSWORD`, `SOFTPHONE_SIP_PASSWORD`,
-   `TELEPHONY_ACCESS_PIN`, and `TELEPHONY_PASSPHRASE_WORDS` (four
-   space-separated words) in `.env`. Separately, make sure the voice
+   `TELEPHONY_ACCESS_PIN`, `TELEPHONY_PASSPHRASE_WORDS` (four
+   space-separated words), and `TELEPHONY_MEDIA_ADDRESS` (your host LAN IP)
+   in `.env`. Separately, make sure the voice
    app's own `.env` (`make -C apps/voice env`) has real Deepgram/
    Anthropic/ElevenLabs API keys -- this is the one proof that actually
    spends provider API calls. No further manual step is needed: the
