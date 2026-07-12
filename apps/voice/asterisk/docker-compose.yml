@@ -1,0 +1,36 @@
+# Local Asterisk edge dev harness (Phase 11, D-07).
+#
+# Portable, macOS-Docker-Desktop-safe: explicit `ports:` publishing (no
+# `network_mode: host`, which only works reliably on Linux) + the
+# `host.docker.internal` DNS name Docker Desktop always resolves from
+# inside a container back to the host, for the Klanker RTP listener a later
+# plan (the standalone telephony controller, D-08) binds on the host side.
+#
+# Image is a pinned version tag, never `latest` (T-11-02-SC) -- see README
+# for the module smoke check that proves this image actually ships
+# res_ari/res_stasis compiled in.
+services:
+  asterisk:
+    image: andrius/asterisk:22.10.1_debian-trixie
+    container_name: klanker-asterisk-dev
+    ports:
+      - "5060:5060/udp" # SIP signaling (PJSIP transport-udp)
+      - "8088:8088/tcp" # ARI HTTP server (see README: bound to the
+      # container's own loopback per http.conf/D-01 -- published here for
+      # forward compatibility, not yet reachable from the host; flagged
+      # below)
+      - "10000-10020:10000-10020/udp" # RTP media range (rtp.conf)
+    volumes:
+      - ./http.conf:/etc/asterisk/http.conf:ro
+      - ./ari.conf:/etc/asterisk/ari.conf:ro
+      - ./pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./rtp.conf:/etc/asterisk/rtp.conf:ro
+    environment:
+      - ASTERISK_ARI_PASSWORD=${ASTERISK_ARI_PASSWORD:-}
+      - SOFTPHONE_SIP_PASSWORD=${SOFTPHONE_SIP_PASSWORD:-}
+    extra_hosts:
+      # Docker Desktop resolves this automatically on macOS/Windows; this
+      # entry is a no-op there and makes the same compose file also work on
+      # Linux hosts, where the mapping isn't automatic.
+      - "host.docker.internal:host-gateway"
