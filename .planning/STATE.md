@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Telephony
 status: executing
-stopped_at: 11-07 CODE-COMPLETE, Phase 11 7/7 plans done, pending §19-C live-verify
-last_updated: "2026-07-12T12:23:56.262Z"
+stopped_at: Phase 12 context gathered
+last_updated: "2026-07-12T18:17:00.539Z"
 last_activity: 2026-07-12
-last_activity_desc: Phase 11-07 complete (standalone telephony entrypoint D-08 + deterministic fake-media CI integration test D-07 + manual §19-C softphone proof recipe); Phase 11 is 7/7 plans CODE-COMPLETE, §19-C live proof outstanding
+last_activity_desc: "Completed quick task 260712-ckd: one-command §19-C softphone harness (shared-netns controller service + conf-secret render; §18/§25 posture tightened)"
 progress:
   total_phases: 6
   completed_phases: 3
@@ -210,10 +210,10 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-**Resume file:** None
+**Resume file:** .planning/phases/12-voip-ms-telephony-inbound-did/12-CONTEXT.md
 
-Last session: 2026-07-12T12:23:56.254Z
-Stopped at: 11-07 CODE-COMPLETE, Phase 11 7/7 plans done, pending §19-C live-verify
+Last session: 2026-07-12T18:17:00.530Z
+Stopped at: Phase 12 context gathered
 Resume next: Run the §19-C live-softphone proof (`apps/voice/asterisk/README.md` -> "Manual §19-C softphone proof", 8-step recipe) against a real Docker daemon + SIP softphone to close out Phase 11's final verification item, then advance to whichever phase follows in ROADMAP.md (Phase 12+ per the VoIP.ms telephony spec's PSTN/public-DID phases, per the voipms-telephony-integration memory note). Also still outstanding, unrelated to Phase 11: Phase 7 (KPH Knowledge Base) is CODE-COMPLETE, 5/5 plans (07-01 km walking-slice curated pack + router + caching; 07-02 local BM25/FTS5 retrieval wired into the deep turn, real km depth proven; 07-03 full primary topic set — defcon.run.34 + meshtk curated packs authored, topic-map/manifest promoted, three-way router discrimination + Pitfall-1 toolkit-overlap guard proven; 07-04 offline knowledge refresh — `refresh_knowledge.py` regenerates BOTH curated packs and per-topic FTS5 chunk/index files from the manifest, `public:true` D-02 gate added to manifest.yaml, doc-gen seam defaults to Amendment 5's direct-code-indexing no-op (grill-with-docs dropped), advisory-lint flags-never-blocks, exposed via `make -C apps/voice knowledge` + `kv knowledge refresh`; 07-05 production polish — concierge.md persona v4 (adaptive steering/tour-mode, D-12 honest-unknowns, spoken do-not-say boundary, restated PG-13 guardrail), `build_system_blocks`'s `remaining_seconds` seam now actually renders a tight-vs-depth pacing note into block1 only (block0 byte-identical), `KnowledgeRouterProcessor.remaining_seconds_fn` + new `SessionLifecycle.remaining_seconds()` thread it through with no second timer, and 5 new benchmark scenarios — `kph_unknowns`/`kph_tour_mode`/`kph_crude_humor_guard`/`kph_retrieval_depth`/`kph_router_accuracy` — complete ROADMAP criterion 4's eval set). Full suite 255/255 pass. Next step is the phase's own consolidated live-audio verification pass (`/gsd-verify-work` or a manual `pipecat eval run` against `bot.py -t eval` with `pipecat-ai[evals,local]` installed), then advancing to the next phase per ROADMAP (Phase 6 Latency v2 is scoped-but-deferred; Phase 8 Documentation & Architecture is queued). Deferred, not blocking: the live-audio eval runs for ALL of 07-01..05's scenarios still need `pipecat-ai[evals,local]` (kokoro/moonshine) installed in this venv — flagged for a human `uv sync --group dev`, not self-approved; 07-03 additionally has a deferred cross-topic (km→defcon) live cache-warmth proof (mechanism-level same-topic proof already exists from 07-01); 07-04 additionally has a deferred real, billed `make -C apps/voice knowledge` run (full local checkouts + a live Anthropic distillation call, reviewed as a D-09 git diff) — deliberately not run during automated execution; 07-05 additionally leaves `remaining_seconds_fn`/`SessionLifecycle.remaining_seconds()` unwired in production (pipeline.py/server.py were out of its declared scope) as a small, non-blocking follow-up. Also unrelated/still open: Phase 05.2's consolidated LIVE iPhone/Safari verification pass (single-tap+instant-greeting+no-double-greet; signed-out two-step; barge-in + no greeting/STT overlap) remains blocked on the still-open Phase-4 IAM gap (voice task role lacks cross-table read on kmv-auth-electro) and has not been executed.
 
 ---
