@@ -6,6 +6,7 @@ dependencies = [
     "pipecat-ai[anthropic,deepgram,runner,soundfile,webrtc]~=1.5.0",
     "pyjwt[crypto]~=2.13.0",
     "boto3>=1.42",
+    "aiohttp>=3.14,<4",  # ARI REST + events-WebSocket client (D-06) -- already a transitive pin via pipecat-ai
 ]
 
 [dependency-groups]
