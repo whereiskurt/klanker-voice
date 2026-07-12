@@ -64,15 +64,26 @@ from pipecat.processors.frameworks.rtvi import RTVIObserver
 class CallIdentity:
     """Minimal, transport-neutral caller identity.
 
-    Deliberately thin: only ``subject`` is used by this phase (threaded into
-    :class:`~klanker_voice.session.SessionLifecycle` as ``user_id``).
-    Phase 12 (spec §11/§23) adds real phone -> code -> tier resolution for
-    telephony callers; do NOT anticipate that here.
+    ``subject`` is the only field used by every existing caller (threaded
+    into :class:`~klanker_voice.session.SessionLifecycle` as ``user_id``).
+
+    Phase 12 (spec §11/§23, D-02/D-05) adds three additive, defaulted fields
+    for telephony callers: ``tier_id`` (the caller's entitled tier, resolved
+    by the telephony controller's caller-ID -> ``/tel`` mint step --
+    :func:`klanker_voice.telephony.controller.AsteriskCallController.
+    _mint_tier_from_caller_id`), ``caller_id`` (the normalized E.164 ANI),
+    and ``did`` (the dialed number). All three stay ``None`` for the WebRTC
+    path (and for any telephony call where the caller-ID mint is
+    unconfigured -- the legacy Phase-11 static-tier grant) -- the additive
+    defaults keep every existing construction call site byte-unchanged.
     """
 
     subject: str
     authenticated: bool = False
     auth_method: str = "webrtc-oidc"
+    tier_id: str | None = None
+    caller_id: str | None = None
+    did: str | None = None
 
 
 @dataclass

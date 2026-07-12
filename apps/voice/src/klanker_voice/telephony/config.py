@@ -63,10 +63,30 @@ class TelephonyConfig:
             ``"either"`` (default, D-05b: both factors, either unlocks).
         gate_window_seconds: How long the caller has to unlock before the
             fail-closed goodbye + hangup (D-05d).
-        unlock_tier_id: The tier granted on a successful gate unlock (open
-            question #2, additive to D-09's own key list) -- the minimal
-            identity-seam grant (D-05a), not the §11/§23 caller-ID/access-code
-            resolver (deferred to Phase 12).
+        unlock_tier_id: The FALLBACK tier granted on a successful gate unlock
+            when the §23 caller-ID mint is unconfigured (``tel_mint_url``
+            empty) -- the Phase-11 minimal identity-seam grant (D-05a).
+            When ``tel_mint_url`` IS configured, the tier actually granted at
+            unlock is the caller's OWN entitled tier, resolved by the Phase
+            12 caller-ID mint (D-02/D-05) -- this field is then only the
+            legacy/dev fallback, never consulted for a caller whose mint
+            call has run.
+        tel_mint_url: Base URL of the private, internal-only §23 caller-ID
+            mint endpoint (D-02, e.g. ``"https://auth.klankermaker.ai/use1/
+            tel"`` -- the controller composes ``f"{tel_mint_url}/{e164}"``).
+            A NON-secret plain URL, never a credential. Empty (the default)
+            means the caller-ID mint integration is not configured for this
+            deployment -- every gated call then falls back to the legacy
+            Phase-11 ``unlock_tier_id`` grant unchanged (Phase 12 is
+            additive/opt-in at the config layer).
+        tel_mint_env_var: The NAME of the environment variable holding the
+            shared bearer token for the ``/tel`` mint call (D-04) -- the
+            token VALUE itself is read from env/SSM by the controller at
+            call time, never stored here or anywhere in TOML (mirrors how
+            ``ASTERISK_ARI_PASSWORD``/``TELEPHONY_ACCESS_PIN`` are handled --
+            see module docstring). Defaults to
+            ``"TELEPHONY_ENDPOINT_AUTH_TOKEN"``, the same env var name the
+            auth-app's ``/tel`` route reads (12-02-SUMMARY.md).
     """
 
     enabled: bool = False
@@ -83,6 +103,9 @@ class TelephonyConfig:
     gate_mode: str = "either"
     gate_window_seconds: int = 10
     unlock_tier_id: str = "kph-tier"
+    # --- §23 caller-ID mint (Phase 12, D-02/D-04/D-05) ---
+    tel_mint_url: str = ""
+    tel_mint_env_var: str = "TELEPHONY_ENDPOINT_AUTH_TOKEN"
 
 
 def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
@@ -127,4 +150,6 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         gate_mode=gate_mode,
         gate_window_seconds=int(table.get("gate_window_seconds", 10)),
         unlock_tier_id=str(table.get("unlock_tier_id", "kph-tier")),
+        tel_mint_url=str(table.get("tel_mint_url", "")),
+        tel_mint_env_var=str(table.get("tel_mint_env_var", "TELEPHONY_ENDPOINT_AUTH_TOKEN")),
     )

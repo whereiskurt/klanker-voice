@@ -28,6 +28,11 @@ gate_window_seconds = 10
 unlock_tier_id = "kph-tier"
 """
 
+VALID_TELEPHONY_TOML_WITH_TEL_MINT = VALID_TELEPHONY_TOML + """
+tel_mint_url = "https://auth.klankermaker.ai/use1/tel"
+tel_mint_env_var = "TELEPHONY_ENDPOINT_AUTH_TOKEN"
+"""
+
 
 def test_real_checked_in_pipeline_toml_telephony_table_round_trips():
     """The shipped pipeline.toml [telephony] table stays enabled=false --
@@ -67,6 +72,42 @@ def test_valid_telephony_table_parses(make_config_file):
         gate_window_seconds=10,
         unlock_tier_id="kph-tier",
     )
+
+
+def test_telephony_table_without_tel_mint_defaults_to_unconfigured(make_config_file):
+    """Phase 12 Plan 06 (D-02/D-04): a [telephony] table with no tel_mint_*
+    fields at all -- e.g. every existing Phase-11 fixture/checked-in TOML --
+    parses with the mint integration OFF (empty URL, the default env var
+    name), so the legacy static unlock_tier_id grant stays byte-unaffected."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.tel_mint_url == ""
+    assert cfg.tel_mint_env_var == "TELEPHONY_ENDPOINT_AUTH_TOKEN"
+
+
+def test_tel_mint_fields_parse(make_config_file):
+    """Phase 12 Plan 06 (D-02/D-04): the /tel endpoint URL + the NAME of the
+    env var holding the shared bearer token both load as plain (non-secret)
+    config fields -- the token VALUE itself never lives in TOML."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML_WITH_TEL_MINT)
+    cfg = load_telephony_config(path)
+    assert cfg.tel_mint_url == "https://auth.klankermaker.ai/use1/tel"
+    assert cfg.tel_mint_env_var == "TELEPHONY_ENDPOINT_AUTH_TOKEN"
+
+
+@pytest.mark.parametrize(
+    "bad_key",
+    ["tel_endpoint_auth_token", "tel_mint_bearer_token", "tel_mint_password"],
+)
+def test_credential_looking_tel_mint_field_rejected(make_config_file, bad_key):
+    """D-02/D-04/D-09: even a Phase-12-shaped credential field name (an
+    endpoint auth TOKEN value, not just the env-var NAME this plan actually
+    adds) is still refused by the same shared credential gate -- proves the
+    /tel integration cannot smuggle a real secret into pipeline.toml."""
+    snippet = VALID_TELEPHONY_TOML_WITH_TEL_MINT + f'{bad_key} = "oops"\n'
+    path = make_config_file(append=snippet)
+    with pytest.raises(ConfigError, match="credential"):
+        load_telephony_config(path)
 
 
 def test_invalid_gate_mode_rejected(make_config_file):
