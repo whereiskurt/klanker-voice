@@ -157,3 +157,7 @@ None — no external service configuration required. `TELEPHONY_ACCESS_PIN`/`TEL
 ---
 *Phase: 11-voip-ms-telephony-local-asterisk-edge*
 *Completed: 2026-07-12*
+
+## Self-Check: PASSED
+
+All created files found on disk; all 5 commit hashes (10179f1, 5699c4b, 9c90c4c, 28d8c9c, f5decff) verified present in git log.
