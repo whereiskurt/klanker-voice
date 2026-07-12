@@ -1,5 +1,6 @@
 import { Entity } from "electrodb";
 import { electroClient, ELECTRO_TABLE } from "./client";
+import { normalizeE164 } from "@/lib/phone-normalization";
 
 /**
  * AccessCode Entity
@@ -24,6 +25,7 @@ import { electroClient, ELECTRO_TABLE } from "./client";
  *   primary pk: "code#${code}"          sk: "code#"
  *   gsi1      pk: "accesscodes#"        sk: "code#${code}"
  *   gsi2      pk: "bypass#${bypassToken}" sk: "bypass#"   (SPARSE — bypass /join)
+ *   gsi3      pk: "phone#${phone}"      sk: "phone#"      (SPARSE — §23 caller-ID mint)
  *
  * The gsi2 index (`byBypassToken`) powers the bypass /join auto-login feature
  * (2026-07-10-bypass-join-login-design). It is SPARSE: only codes that carry a
@@ -31,6 +33,14 @@ import { electroClient, ELECTRO_TABLE } from "./client";
  * gsi2 key attributes entirely for codes whose optional `bypassToken` composite
  * is undefined, so bypass-less codes never appear in a byBypassToken query. The
  * kv CLI's `code bypass` command SETs gsi2pk/gsi2sk with these exact templates.
+ *
+ * The gsi3 index (`byPhone`) powers the §23 VoIP.ms caller-ID mint path
+ * (Phase 12 Plan 02) — the EXACT same sparse-GSI pattern as gsi2, mirrored:
+ * only codes that carry a `phone` get a gsi3pk and are therefore indexed.
+ * `phone` is always written through `normalizeE164` (the `set` transform
+ * below) so the stored key is always canonical, and `resolvePhoneToCode`
+ * normalizes its input the same way before querying — a single normalization
+ * source on both write and lookup (12-RESEARCH.md Pitfall 3).
  */
 export const AccessCode = new Entity(
   {
@@ -76,6 +86,22 @@ export const AccessCode = new Entity(
       bypassToken: {
         type: "string",
       },
+      // §23 VoIP.ms caller-ID mint (Phase 12 Plan 02). When a code has a
+      // phone mapped (via `kv code phone <code> --add <e164>`), an inbound
+      // PSTN call's normalized caller ID can resolve straight to this code's
+      // tier through the sparse gsi3 `byPhone` index — mirrors bypassToken
+      // above exactly. Undefined phone -> the code is not indexed on gsi3
+      // (sparse). Always stored canonical via the `set` transform so a
+      // messy write-time input (dashes/spaces/parens) is found by a
+      // canonical lookup (12-RESEARCH.md Pitfall 3).
+      phone: {
+        type: "string",
+        set: (val?: string) => (val ? normalizeE164(val) : val),
+      },
+      phoneEnabled: {
+        type: "boolean",
+        default: false,
+      },
       createdAt: {
         type: "number",
         default: () => Date.now(),
@@ -112,6 +138,21 @@ export const AccessCode = new Entity(
           template: "bypass#${bypassToken}",
         },
         sk: { field: "gsi2sk", composite: [], template: "bypass#", casing: "none" },
+      },
+      // Sparse GSI for the §23 caller-ID mint lookup (resolvePhoneToCode).
+      // Only codes with a `phone` are indexed here — mirrors byBypassToken
+      // exactly (same table gsi3, same casing:"none" discipline so the
+      // canonical "+1..." digit form is never lowercased/altered by
+      // ElectroDB's default key casing).
+      byPhone: {
+        index: "gsi3pk-gsi3sk-index",
+        pk: {
+          field: "gsi3pk",
+          casing: "none",
+          composite: ["phone"],
+          template: "phone#${phone}",
+        },
+        sk: { field: "gsi3sk", composite: [], template: "phone#", casing: "none" },
       },
     },
   },
@@ -200,6 +241,49 @@ export async function resolveBypassToken(
   }
 
   if (record.bypassEnabled !== true) {
+    return null;
+  }
+
+  if (record.expiresAt && record.expiresAt <= Date.now()) {
+    return null;
+  }
+
+  return { code: record.code, tierId: record.tierId, group: record.group ?? null };
+}
+
+export interface ResolvedPhoneCode {
+  code: string;
+  tierId: string;
+  group: string | null;
+}
+
+/**
+ * Resolve a normalized caller ID (§23 VoIP.ms inbound DID mint path, Phase 12
+ * Plan 02) into the code/tier it grants. Queries the sparse gsi3 `byPhone`
+ * index. Mirrors `resolveBypassToken` EXACTLY: normalizes the input via
+ * `normalizeE164` first (so a raw or already-normalized caller ID both work),
+ * then returns null UNIFORMLY for every failure mode — empty input, no
+ * matching code, a phone-disabled code, or an expired code — so the private
+ * `/tel` route can emit an indistinguishable 404 in every case and offers no
+ * caller-ID enumeration oracle (T-12-02-01). maxRedemptions is deliberately
+ * NOT enforced here, same rationale as resolveBypassToken: a caller-ID mint
+ * is an anonymous per-call baseline identity, not a unique-user redemption.
+ */
+export async function resolvePhoneToCode(
+  rawOrNormalizedPhone: string | null | undefined
+): Promise<ResolvedPhoneCode | null> {
+  const phone = normalizeE164(rawOrNormalizedPhone);
+  if (!phone) {
+    return null;
+  }
+
+  const { data } = await AccessCode.query.byPhone({ phone }).go();
+  const record = data?.[0];
+  if (!record) {
+    return null;
+  }
+
+  if (record.phoneEnabled !== true) {
     return null;
   }
 
