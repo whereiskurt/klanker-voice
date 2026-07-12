@@ -8,6 +8,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,7 +100,10 @@ type voipmsClient struct {
 func newVoipmsClient(creds voipmsCreds) *voipmsClient {
 	return &voipmsClient{
 		baseURL:    voipmsBaseURL,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		// 45s: createSubAccount/orderDID are observed to take >15s server-side
+		// behind VoIP.ms's Cloudflare front; a timeout here does NOT mean the
+		// operation failed server-side — verify with a read call before retrying.
+		httpClient: &http.Client{Timeout: 45 * time.Second},
 		creds:      creds,
 	}
 }
@@ -122,6 +126,14 @@ func (vc *voipmsClient) do(ctx context.Context, method string, params url.Values
 	}
 	resp, err := vc.httpClient.Do(req)
 	if err != nil {
+		// NEVER wrap the raw transport error: *url.Error stringifies the full
+		// request URL, which carries api_password (and any password param) in
+		// the query string — Go's error chain would leak them into logs and
+		// terminal output (D-04). Unwrap to the inner cause first.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
 		return nil, fmt.Errorf("call voip.ms method %s: %w", method, err)
 	}
 	defer resp.Body.Close()
@@ -205,10 +217,23 @@ func createVoipmsSubaccount(ctx context.Context, vc *voipmsClient, username, pas
 	params := url.Values{}
 	params.Set("username", username)
 	params.Set("password", password)
-	// Outbound-disabled + international lock, D-03/§25.A (verified params):
+	// Required-by-API device parameters (verified against createSubAccount's
+	// signature; values confirmed live via the API's own validation errors).
+	// protocol=1 (SIP), auth_type=1 (user/password), device_type=2
+	// (Asterisk/IP-PBX), ulaw-only to match the Phase-12 trunk posture.
+	params.Set("protocol", "1")
+	params.Set("auth_type", "1")
+	params.Set("device_type", "2")
+	params.Set("dtmf_mode", "auto")
+	params.Set("music_on_hold", "default")
+	params.Set("nat", "yes")
+	params.Set("allowed_codecs", "ulaw")
+	// Outbound-disabled + international lock, D-03/§25.A (verified params).
+	// international_route: 1=Value route (a required enum; 0 is rejected as
+	// "missing"). Irrelevant in practice — lock_international=1 blocks all
+	// international termination regardless of route choice.
 	params.Set("lock_international", "1")
-	params.Set("international_route", "0")
-	params.Set("canada_routing", "system")
+	params.Set("international_route", "1")
 	if allowedIP != "" {
 		params.Set("enable_ip_restriction", "1")
 		params.Set("ip_restriction", allowedIP)

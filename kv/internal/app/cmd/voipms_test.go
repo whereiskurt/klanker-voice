@@ -204,8 +204,8 @@ func TestVoipmsCreateSubaccountBuildsRequest(t *testing.T) {
 	if got := gotQuery.Get("lock_international"); got != "1" {
 		t.Errorf("lock_international param = %q, want %q (outbound locked)", got, "1")
 	}
-	if got := gotQuery.Get("international_route"); got != "0" {
-		t.Errorf("international_route param = %q, want %q (outbound disabled)", got, "0")
+	if got := gotQuery.Get("international_route"); got != "1" {
+		t.Errorf("international_route param = %q, want %q (value route, locked)", got, "1")
 	}
 }
 
