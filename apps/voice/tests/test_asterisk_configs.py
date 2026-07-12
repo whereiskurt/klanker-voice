@@ -29,6 +29,7 @@ template and re-run `test_pjsip_conf_is_ulaw_only` -- it fails because
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 
@@ -46,6 +47,16 @@ _PRIVATE_LOOPBACK_RE = re.compile(
 )
 
 _CONTEXT_RE = re.compile(r"^\[([A-Za-z0-9_-]+)\]\s*$")
+
+#: Matches any bracketed section header, including one that carries a
+#: template marker/reference suffix (e.g. `[dev-softphone](softphone)`) --
+#: used by `_sections()` below, which only needs the bare section name.
+_SECTION_HEADER_RE = re.compile(r"^\[([A-Za-z0-9_-]+)\]")
+
+#: A ${VAR}-shaped placeholder token (D-04/D-09: secrets are never literal
+#: in a tracked .conf file, only ${ENV_VAR_NAME} placeholders rendered at
+#: container start by render_configs.py).
+_PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 
 
 def _stripped_lines(path: Path) -> list[str]:
@@ -66,6 +77,41 @@ def _stripped_lines(path: Path) -> list[str]:
         if code_part:
             lines.append(code_part)
     return lines
+
+
+def _sections(path: Path) -> dict[str, list[str]]:
+    """Group a config file's stripped lines by bracketed section header.
+
+    Returns `{section_name: [body lines up to the next header]}`, in file
+    order. Reuses `_stripped_lines()` (comment/blank-stripped) as the input
+    so per-section assertions never need to re-implement that logic. Only
+    the bare section name (before any `(!)`/`(template)` suffix) is used as
+    the key -- none of this repo's config sections re-open the same name.
+    """
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in _stripped_lines(path):
+        m = _SECTION_HEADER_RE.match(line)
+        if m:
+            current = m.group(1)
+            sections.setdefault(current, [])
+            continue
+        if current is not None:
+            sections[current].append(line)
+    return sections
+
+
+def _load_render_configs():
+    """Import `asterisk/render_configs.py` by file path (it's a standalone
+    script, not part of the `klanker_voice` package, so it has no import
+    name of its own)."""
+    spec = importlib.util.spec_from_file_location(
+        "render_configs", ASTERISK_DIR / "render_configs.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class TestExtensionsConfInboundOnly:
@@ -109,15 +155,27 @@ class TestExtensionsConfInboundOnly:
 
 
 class TestPjsipConfUlawOnly:
-    """(c): allow=ulaw + disallow=all, no other allow= codec line."""
+    """(c): allow=ulaw + disallow=all, no other allow= codec line.
+
+    Phase 12 adds a second endpoint (the VoIP.ms trunk, its own
+    `disallow=all`/`allow=ulaw` pair) alongside the Phase-11 dev-softphone
+    endpoint, so the file-wide assertion below now allows *multiple*
+    `allow=` lines -- but every single one of them must still be exactly
+    `allow=ulaw`, preserving the original invariant (no codec other than
+    ulaw is EVER negotiated anywhere in this file) across any number of
+    endpoints. `TestVoipmsTrunkPosture.test_voipms_endpoint_is_ulaw_only`
+    below additionally proves the VoIP.ms endpoint's OWN section allows
+    exactly one codec line.
+    """
 
     def test_pjsip_conf_is_ulaw_only(self):
         lines = _stripped_lines(PJSIP_CONF)
         assert "disallow=all" in lines, "pjsip.conf must set disallow=all"
         allow_lines = [line for line in lines if line.startswith("allow=")]
-        assert allow_lines == ["allow=ulaw"], (
-            "pjsip.conf must allow exactly ulaw and nothing else -- found "
-            f"{allow_lines!r}"
+        assert allow_lines, "pjsip.conf must allow at least one codec"
+        assert all(line == "allow=ulaw" for line in allow_lines), (
+            "pjsip.conf must never allow any codec other than ulaw, on any "
+            f"endpoint -- found {allow_lines!r}"
         )
 
     def test_pjsip_conf_endpoint_context_is_inbound_only(self):
@@ -169,3 +227,124 @@ class TestRtpConfNarrowRange:
         end = int(end_lines[0].split("=", 1)[1])
         assert start < end
         assert (end - start) <= 100, "rtp.conf range should stay narrow for the dev harness"
+
+
+class TestVoipmsTrunkPosture:
+    """VoIP.ms registration trunk structural invariants (Phase 12, D-01/D-04,
+    spec §25.A). Mirrors the Phase-11 softphone-section lint style above,
+    scoped to the `voipms-*` sections via `_sections()` so these checks fail
+    if the VoIP.ms trunk regresses even while the dev-softphone endpoint
+    (a separate section) stays untouched.
+
+    Proof these invariants genuinely bite (documented, not committed as a
+    mutation): temporarily change `[voipms-endpoint]`'s `context=` to
+    anything other than `from-klanker-inbound` and re-run
+    `test_voipms_endpoint_context_is_inbound_only` -- it fails. Temporarily
+    add `allow=g722` under `[voipms-endpoint]` and re-run
+    `test_voipms_endpoint_is_ulaw_only` -- it fails. Temporarily replace
+    `[voipms-auth]`'s `password=${VOIPMS_SIP_PASSWORD}` with a literal
+    string and re-run `test_voipms_auth_password_is_placeholder_not_literal`
+    -- it fails. Reverting each edit restores green.
+    """
+
+    def test_voipms_registration_section_exists_and_targets_toronto(self):
+        sections = _sections(PJSIP_CONF)
+        assert "voipms-registration" in sections, (
+            "pjsip.conf must declare a [voipms-registration] section"
+        )
+        body = sections["voipms-registration"]
+        assert "type=registration" in body
+        server_uri_lines = [line for line in body if line.startswith("server_uri=")]
+        assert server_uri_lines, "voipms-registration must set server_uri="
+        assert "toronto" in server_uri_lines[0].lower(), (
+            "voipms-registration server_uri must target a Toronto VoIP.ms "
+            f"POP -- got {server_uri_lines[0]!r}"
+        )
+
+    def test_voipms_endpoint_context_is_inbound_only(self):
+        sections = _sections(PJSIP_CONF)
+        assert "voipms-endpoint" in sections, (
+            "pjsip.conf must declare a [voipms-endpoint] section"
+        )
+        body = sections["voipms-endpoint"]
+        assert "type=endpoint" in body
+        context_lines = [line for line in body if line.startswith("context=")]
+        assert context_lines == ["context=from-klanker-inbound"], (
+            "voipms-endpoint's context must be exactly from-klanker-inbound "
+            f"(§25.A, T-12-04-02) -- found {context_lines!r}"
+        )
+
+    def test_voipms_endpoint_is_ulaw_only(self):
+        sections = _sections(PJSIP_CONF)
+        body = sections["voipms-endpoint"]
+        assert "disallow=all" in body, "voipms-endpoint must set disallow=all"
+        allow_lines = [line for line in body if line.startswith("allow=")]
+        assert allow_lines == ["allow=ulaw"], (
+            "voipms-endpoint must allow exactly ulaw and nothing else -- "
+            f"found {allow_lines!r}"
+        )
+
+    def test_voipms_aor_max_contacts_one(self):
+        sections = _sections(PJSIP_CONF)
+        assert "voipms-aor" in sections, "pjsip.conf must declare a [voipms-aor] section"
+        body = sections["voipms-aor"]
+        assert "type=aor" in body
+        assert "max_contacts=1" in body, (
+            "voipms-aor must set max_contacts=1 (prevents stale registrations)"
+        )
+
+    def test_voipms_identify_routes_to_endpoint(self):
+        sections = _sections(PJSIP_CONF)
+        assert "voipms-identify" in sections, (
+            "pjsip.conf must declare a [voipms-identify] section"
+        )
+        body = sections["voipms-identify"]
+        assert "type=identify" in body
+        assert "endpoint=voipms-endpoint" in body
+        match_lines = [line for line in body if line.startswith("match=")]
+        assert match_lines, "voipms-identify must match at least one POP IP"
+
+    def test_voipms_auth_password_is_placeholder_not_literal(self):
+        sections = _sections(PJSIP_CONF)
+        assert "voipms-auth" in sections, "pjsip.conf must declare a [voipms-auth] section"
+        body = sections["voipms-auth"]
+        assert "type=auth" in body
+        password_lines = [line for line in body if line.startswith("password=")]
+        assert len(password_lines) == 1, (
+            f"voipms-auth must set exactly one password= line -- found {password_lines!r}"
+        )
+        value = password_lines[0].split("=", 1)[1].strip()
+        assert _PLACEHOLDER_RE.match(value), (
+            "voipms-auth password must be a ${VAR} placeholder, never a "
+            f"literal secret (D-04/D-09, T-12-04-03) -- got {value!r}"
+        )
+
+    def test_voipms_render_substitutes_env_secrets(self, tmp_path, monkeypatch):
+        """Rendering with the two VOIPMS_SIP_* env vars set substitutes both
+        into .rendered/pjsip.conf; unset, they render as literal ${VAR}
+        placeholders left untouched by safe_substitute (never a crash, never
+        a silently-empty secret)."""
+        render_configs = _load_render_configs()
+
+        monkeypatch.setenv("VOIPMS_SIP_USERNAME", "test_user_phase12")
+        monkeypatch.setenv("VOIPMS_SIP_PASSWORD", "test_password_phase12")
+        out_dir = tmp_path / "rendered"
+        render_configs.render_configs(ASTERISK_DIR, out_dir)
+
+        rendered_text = (out_dir / "pjsip.conf").read_text()
+        assert "test_user_phase12" in rendered_text
+        assert "test_password_phase12" in rendered_text
+        assert "${VOIPMS_SIP_USERNAME}" not in rendered_text
+        assert "${VOIPMS_SIP_PASSWORD}" not in rendered_text
+
+    def test_voipms_render_leaves_placeholder_when_env_unset(self, tmp_path, monkeypatch):
+        render_configs = _load_render_configs()
+
+        monkeypatch.delenv("VOIPMS_SIP_USERNAME", raising=False)
+        monkeypatch.delenv("VOIPMS_SIP_PASSWORD", raising=False)
+        out_dir = tmp_path / "rendered"
+        render_configs.render_configs(ASTERISK_DIR, out_dir)
+
+        rendered_text = (out_dir / "pjsip.conf").read_text()
+        assert "${VOIPMS_SIP_USERNAME}" in rendered_text
+        assert "${VOIPMS_SIP_PASSWORD}" in rendered_text
