@@ -11,10 +11,12 @@
 # for the module smoke check that proves this image actually ships
 # res_ari/res_stasis compiled in.
 #
-# A plain `docker compose up` now brings up `asterisk-config-render`
-# (renders real secrets from `.env` into gitignored `.rendered/{ari,
-# pjsip}.conf`) before `asterisk` (which bind-mounts the rendered copies) --
-# the `.conf` `${VAR}` placeholders are no longer documentation-only.
+# A plain `docker compose up` now brings up THREE services wired together:
+# `asterisk-config-render` (renders real secrets from `.env` into gitignored
+# `.rendered/{ari,pjsip}.conf`) -> `asterisk` (bind-mounts the rendered
+# copies) -> `klanker-telephony` (the standalone controller, sharing
+# Asterisk's network namespace so it reaches ARI at 127.0.0.1:8088 without
+# ARI ever being published on the host -- §18/§25.C).
 services:
   # Renders apps/voice/asterisk/{ari,pjsip}.conf's `${VAR}` placeholders with
   # real secrets from `.env` into ./.rendered/ (gitignored) BEFORE Asterisk
@@ -40,11 +42,10 @@ services:
         condition: service_completed_successfully
     ports:
       - "5060:5060/udp" # SIP signaling (PJSIP transport-udp)
-      - "8088:8088/tcp" # ARI HTTP server (see README: bound to the
-      # container's own loopback per http.conf/D-01 -- published here for
-      # forward compatibility, not yet reachable from the host; flagged
-      # below)
       - "10000-10020:10000-10020/udp" # RTP media range (rtp.conf)
+      # ARI (8088) is intentionally NOT published here: the klanker-telephony
+      # service below reaches it at 127.0.0.1:8088 by sharing this service's
+      # own network namespace, so ARI has zero host surface (§18/§25.C).
     volumes:
       - ./http.conf:/etc/asterisk/http.conf:ro
       - ./.rendered/ari.conf:/etc/asterisk/ari.conf:ro
@@ -56,6 +57,42 @@ services:
       # entry is a no-op there and makes the same compose file also work on
       # Linux hosts, where the mapping isn't automatic.
       - "host.docker.internal:host-gateway"
+
+  # The standalone telephony controller (klanker_voice.telephony, D-08),
+  # wired to Asterisk over ARI with zero new host-published surface: it
+  # shares Asterisk's own network namespace (mirrors the `sipp` service
+  # below exactly), so `http://127.0.0.1:8088` resolves INSIDE that shared
+  # namespace without ARI ever being published on the host (§18/§25.C is a
+  # strict tightening here, not a relaxation -- see the `asterisk` service's
+  # own removed `8088:8088` publish, now dead surface with zero purpose).
+  # No profile -- part of the default `docker compose up` stack.
+  klanker-telephony:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: klanker-telephony-dev
+    network_mode: "service:asterisk"
+    depends_on:
+      - asterisk
+    env_file:
+      # `required: false`: a fresh checkout has neither file until a human
+      # completes user_setup (`cp .env.example .env` in both apps/voice/ and
+      # apps/voice/asterisk/) -- `docker compose config`/`up` must not hard
+      # -fail before that step; the controller itself fails loudly with a
+      # ConfigError if ARI creds are still unset (see `restart: "no"` above).
+      - path: ../.env
+        required: false
+      - path: .env
+        required: false
+    environment:
+      - KLANKER_PIPELINE_CONFIG=configs/telephony.toml
+      - ASTERISK_ARI_URL=http://127.0.0.1:8088
+      - ASTERISK_ARI_USERNAME=klanker
+    working_dir: /app
+    command: ["python", "-m", "klanker_voice.telephony.controller"]
+    # If `.env` is unfilled the controller raises ConfigError by design
+    # (D-09) -- it must fail loudly once, not crash-loop.
+    restart: "no"
 
   # SIPp scenario runner (Phase 11 Plan 07, D-07/R4) -- the opt-in, local-
   # only "fuller run" companion to the CI-required deterministic fake-media
