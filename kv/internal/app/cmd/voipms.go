@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,42 +25,35 @@ import (
 //
 // SOURCE: .planning/phases/12-voip-ms-telephony-inbound-did/12-RESEARCH.md,
 // section "VoIP.ms REST API Surface (D-03)" — itself citing
-// voip.ms/resources/api. That research explicitly flagged every method name
-// below as MEDIUM confidence: candidates gathered from public references,
-// not confirmed against a live fetch of the current VoIP.ms API docs.
+// voip.ms/resources/api.
 //
-// VERIFY-BEFORE-HARDCODE: this executor session had no outbound web-fetch
-// tool available, so none of the method names below could be checked
-// against the live API reference as this task's plan instructs. Per the
-// plan's own escape hatch ("if a name cannot be confirmed, leave a clearly
-// marked UNVERIFIED comment ... do not silently guess"), every constant is
-// marked UNVERIFIED. A human operator MUST confirm each name (and its exact
-// parameter list) against https://voip.ms/resources/api before running any
-// `kv voipms` subcommand against a real, live account. This is flagged again
-// in the phase SUMMARY as an explicit follow-up item.
+// VERIFIED 2026-07-12 against the VoIP.ms API method registry (via an
+// auto-generated client of the live API method list): every constant below
+// exists under exactly this name. The one candidate that does NOT exist —
+// setMaxCallDuration — was removed; the VoIP.ms API exposes no per-call
+// max-duration method at all (see the `set-caps` sub-command, which now
+// explains where that cap is actually enforced).
 const (
 	voipmsBaseURL = "https://voip.ms/api/v1/rest.php"
 
-	// UNVERIFIED: creates a subaccount under the main VoIP.ms account.
-	// Candidate name/shape per RESEARCH.md's Accounts/Subaccounts module.
+	// VERIFIED: creates a subaccount under the main VoIP.ms account.
+	// The subaccount name parameter is `username` (NOT `subaccount`);
+	// IP restriction is `enable_ip_restriction` (0/1) + `ip_restriction`.
 	voipmsMethodCreateSubAccount = "createSubAccount"
 
-	// UNVERIFIED: updates an existing subaccount's settings (IP
-	// restriction, outbound enable/disable, etc).
+	// VERIFIED: updates an existing subaccount's settings (IP
+	// restriction, international lock, etc). Takes `id` for the
+	// subaccount, plus the same setting params as createSubAccount.
 	voipmsMethodSetSubAccount = "setSubAccount"
 
-	// UNVERIFIED: assigns/updates a DID's routing target (subaccount, POP).
+	// VERIFIED: assigns/updates a DID's routing target. Params: `did`,
+	// `routing` (e.g. "account:klanker-pbx").
 	voipmsMethodSetDIDRouting = "setDIDRouting"
 
-	// UNVERIFIED: reads the current account balance.
+	// VERIFIED: reads the current account balance.
 	voipmsMethodGetBalance = "getBalance"
 
-	// UNVERIFIED — LOWEST confidence of this block: RESEARCH.md could not
-	// confirm a per-call max-duration cap method exists in the VoIP.ms API
-	// at all; this is a candidate name only. Confirm this one first.
-	voipmsMethodSetMaxCallDuration = "setMaxCallDuration"
-
-	// UNVERIFIED: lists VoIP.ms POP/server info (used to source the SG
+	// VERIFIED: lists VoIP.ms POP/server info (used to source the SG
 	// allow-list IPs documented in the operator runbook).
 	voipmsMethodGetServersInfo = "getServersInfo"
 )
@@ -190,38 +182,35 @@ func routeVoipmsDidToPbx(ctx context.Context, vc *voipmsClient, did, subaccountU
 	return nil
 }
 
-// setVoipmsCallDuration sets the per-call max duration cap via
-// voipmsMethodSetMaxCallDuration (the LOWEST-confidence method name in this
-// file — see constants block).
-func setVoipmsCallDuration(ctx context.Context, vc *voipmsClient, maxDurationSeconds int) error {
-	if maxDurationSeconds <= 0 {
-		return fmt.Errorf("max-duration must be a positive number of seconds")
-	}
-	params := url.Values{}
-	params.Set("max_duration", strconv.Itoa(maxDurationSeconds))
-	if _, err := vc.do(ctx, voipmsMethodSetMaxCallDuration, params); err != nil {
-		return fmt.Errorf("set max call duration to %ds: %w", maxDurationSeconds, err)
-	}
-	return nil
-}
+// errNoCapAPI explains the verified absence of a per-call duration cap in
+// the VoIP.ms API. The cap the design wants (D-03 §25) is enforced in two
+// real places instead: the Asterisk/controller call timer (app-side, the
+// authoritative per-call bound) and the portal-only balance protections
+// (balance alerts / auto-suspend) in the §25.F runbook.
+var errNoCapAPI = fmt.Errorf(
+	"the VoIP.ms API has no per-call max-duration method (verified 2026-07-12) — " +
+		"per-call caps are enforced by the Asterisk/controller call timer, and " +
+		"account burn is bounded by the portal-only balance protections; see " +
+		"docs/operators/voipms-provisioning-runbook.md")
 
 // createVoipmsSubaccount creates the klanker-pbx subaccount. Per D-03/§25.A
-// it must default outbound-disabled and IP-restricted — the exact parameter
-// names for those two settings are UNVERIFIED (see constants block); a
-// human must confirm them before relying on this in production and should
-// re-check via `kv voipms` balance/route-did style manual verification
-// after running it.
+// it defaults outbound-locked (lock_international=1, international_route=0)
+// and IP-restricted (enable_ip_restriction=1 + ip_restriction) — parameter
+// names verified against the createSubAccount signature. Operators should
+// still confirm the resulting portal state after running it (§25.F step 5).
 func createVoipmsSubaccount(ctx context.Context, vc *voipmsClient, username, password, allowedIP string) error {
 	if username == "" || password == "" {
 		return fmt.Errorf("username and password are required")
 	}
 	params := url.Values{}
-	params.Set("subaccount", username)
+	params.Set("username", username)
 	params.Set("password", password)
-	// UNVERIFIED parameter names — outbound-disabled + IP-restriction, D-03/§25.A:
+	// Outbound-disabled + international lock, D-03/§25.A (verified params):
+	params.Set("lock_international", "1")
 	params.Set("international_route", "0")
 	params.Set("canada_routing", "system")
 	if allowedIP != "" {
+		params.Set("enable_ip_restriction", "1")
 		params.Set("ip_restriction", allowedIP)
 	}
 	if _, err := vc.do(ctx, voipmsMethodCreateSubAccount, params); err != nil {
@@ -241,7 +230,8 @@ func NewVoipmsCmd(cfg *Config) *cobra.Command {
 		Short: "Automate the API-drivable VoIP.ms provisioning steps (D-03)",
 		Long: "kv voipms wraps the repeatable, API-drivable VoIP.ms provisioning steps:\n" +
 			"reading account balance, routing a DID to the klanker-pbx subaccount,\n" +
-			"setting per-call caps, and (optionally) creating the subaccount.\n\n" +
+			"and (optionally) creating the subaccount. Per-call caps are NOT\n" +
+			"API-drivable (see `kv voipms set-caps` for where they are enforced).\n\n" +
 			"Portal-only security steps (2FA, international/premium lock, balance\n" +
 			"alerts, API IP-whitelist) are NOT automated here — see\n" +
 			"docs/operators/voipms-provisioning-runbook.md for the full §25.F order.\n\n" +
@@ -294,25 +284,17 @@ func NewVoipmsCmd(cfg *Config) *cobra.Command {
 	routeDid.Flags().StringVar(&routeSubaccount, "subaccount", "klanker-pbx", "VoIP.ms subaccount username to route the DID to")
 	voipmsCmd.AddCommand(routeDid)
 
-	var maxDuration int
 	setCaps := &cobra.Command{
 		Use:   "set-caps",
-		Short: "Set the per-call max duration cap",
+		Short: "Explain where per-call caps are enforced (no VoIP.ms API method exists)",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error {
-			creds, err := voipmsCredsFromEnv()
-			if err != nil {
-				return err
-			}
-			vc := newVoipmsClient(creds)
-			if err := setVoipmsCallDuration(c.Context(), vc, maxDuration); err != nil {
-				return err
-			}
-			fmt.Fprintf(c.OutOrStdout(), "set max call duration to %ds\n", maxDuration)
-			return nil
+			// Fail loudly rather than pretend a cap was applied: the
+			// VoIP.ms API has no per-call max-duration method (verified
+			// 2026-07-12), so a "success" here would mislead operators.
+			return errNoCapAPI
 		},
 	}
-	setCaps.Flags().IntVar(&maxDuration, "max-duration", 600, "max seconds per call (default 10 min)")
 	voipmsCmd.AddCommand(setCaps)
 
 	var subUsername, subPassword, subAllowedIP string

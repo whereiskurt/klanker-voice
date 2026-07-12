@@ -150,41 +150,29 @@ func TestVoipmsRouteDidRejectsBlankDid(t *testing.T) {
 	}
 }
 
-// TestVoipmsSetCapsBuildsRequest asserts setVoipmsCallDuration calls the
-// centralized setMaxCallDuration method constant with the max_duration param.
-func TestVoipmsSetCapsBuildsRequest(t *testing.T) {
-	var gotQuery url.Values
-	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.Query()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"success"}`))
-	})
-
-	if err := setVoipmsCallDuration(t.Context(), vc, 600); err != nil {
-		t.Fatalf("setVoipmsCallDuration() error: %v", err)
+// TestVoipmsSetCapsExplainsNoAPI asserts `kv voipms set-caps` fails loudly
+// with the verified-absence error (the VoIP.ms API has no per-call
+// max-duration method) instead of calling a phantom API method or
+// pretending a cap was applied.
+func TestVoipmsSetCapsExplainsNoAPI(t *testing.T) {
+	voipmsCmd := NewVoipmsCmd(&Config{})
+	for _, sub := range voipmsCmd.Commands() {
+		if sub.Name() != "set-caps" {
+			continue
+		}
+		err := sub.RunE(sub, nil)
+		if err == nil {
+			t.Fatal("set-caps returned nil error, want the no-cap-API explanation error")
+		}
+		if !strings.Contains(err.Error(), "no per-call max-duration method") {
+			t.Errorf("set-caps error = %q, want it to explain the API has no per-call max-duration method", err)
+		}
+		if !strings.Contains(err.Error(), "voipms-provisioning-runbook.md") {
+			t.Errorf("set-caps error = %q, want it to point at the provisioning runbook", err)
+		}
+		return
 	}
-	if got := gotQuery.Get("method"); got != voipmsMethodSetMaxCallDuration {
-		t.Errorf("method = %q, want %q", got, voipmsMethodSetMaxCallDuration)
-	}
-	if got := gotQuery.Get("max_duration"); got != "600" {
-		t.Errorf("max_duration param = %q, want %q", got, "600")
-	}
-}
-
-// TestVoipmsSetCapsRejectsNonPositive asserts a zero/negative duration never
-// reaches the network layer.
-func TestVoipmsSetCapsRejectsNonPositive(t *testing.T) {
-	called := false
-	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusOK)
-	})
-	if err := setVoipmsCallDuration(t.Context(), vc, 0); err == nil {
-		t.Fatal("setVoipmsCallDuration(0) returned nil error, want an error")
-	}
-	if called {
-		t.Fatal("setVoipmsCallDuration(0) made an HTTP call, want it to reject before the network")
-	}
+	t.Fatal("set-caps sub-command not found")
 }
 
 // TestVoipmsCreateSubaccountBuildsRequest asserts createVoipmsSubaccount
@@ -204,11 +192,17 @@ func TestVoipmsCreateSubaccountBuildsRequest(t *testing.T) {
 	if got := gotQuery.Get("method"); got != voipmsMethodCreateSubAccount {
 		t.Errorf("method = %q, want %q", got, voipmsMethodCreateSubAccount)
 	}
-	if got := gotQuery.Get("subaccount"); got != "klanker-pbx" {
-		t.Errorf("subaccount param = %q, want %q", got, "klanker-pbx")
+	if got := gotQuery.Get("username"); got != "klanker-pbx" {
+		t.Errorf("username param = %q, want %q", got, "klanker-pbx")
 	}
 	if got := gotQuery.Get("ip_restriction"); got != "203.0.113.5" {
 		t.Errorf("ip_restriction param = %q, want %q", got, "203.0.113.5")
+	}
+	if got := gotQuery.Get("enable_ip_restriction"); got != "1" {
+		t.Errorf("enable_ip_restriction param = %q, want %q", got, "1")
+	}
+	if got := gotQuery.Get("lock_international"); got != "1" {
+		t.Errorf("lock_international param = %q, want %q (outbound locked)", got, "1")
 	}
 	if got := gotQuery.Get("international_route"); got != "0" {
 		t.Errorf("international_route param = %q, want %q (outbound disabled)", got, "0")
@@ -264,26 +258,6 @@ func TestVoipmsCmdHelpListsSubcommands(t *testing.T) {
 	}
 }
 
-// TestVoipmsSetCapsDefaultFlag asserts the --max-duration flag defaults to
-// 600 seconds (10 minutes) per this task's acceptance criteria.
-func TestVoipmsSetCapsDefaultFlag(t *testing.T) {
-	voipmsCmd := NewVoipmsCmd(&Config{})
-	for _, sub := range voipmsCmd.Commands() {
-		if sub.Name() != "set-caps" {
-			continue
-		}
-		flag := sub.Flags().Lookup("max-duration")
-		if flag == nil {
-			t.Fatal("set-caps is missing the --max-duration flag")
-		}
-		if flag.DefValue != "600" {
-			t.Errorf("--max-duration default = %q, want %q", flag.DefValue, "600")
-		}
-		return
-	}
-	t.Fatal("set-caps sub-command not found")
-}
-
 // TestVoipmsMethodNamesCentralized proves the acceptance criteria
 // mechanically: the base URL ("rest.php") appears exactly once in
 // voipms.go, in the centralized constants block, and no
@@ -307,7 +281,6 @@ func TestVoipmsMethodNamesCentralized(t *testing.T) {
 		"voipmsMethodSetSubAccount",
 		"voipmsMethodSetDIDRouting",
 		"voipmsMethodGetBalance",
-		"voipmsMethodSetMaxCallDuration",
 		"voipmsMethodGetServersInfo",
 	} {
 		if !strings.Contains(content, name) {

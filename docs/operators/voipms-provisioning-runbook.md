@@ -95,11 +95,17 @@ step here, now or later, that turns it on.
 
 4. **Confirm in the portal** (Accounts → Sub Accounts) that the new
    `klanker-pbx` subaccount shows international/outbound routing disabled.
-   The `kv voipms` method names that drive this call are flagged
-   `UNVERIFIED` in `voipms.go` (no live API doc fetch was available when
-   this command was authored) — **this manual portal confirmation is not
-   optional**, it's the check that catches a misnamed parameter before any
-   DID is routed.
+   The `kv voipms` method and parameter names were verified against the
+   VoIP.ms API method registry on 2026-07-12 (`createSubAccount` with
+   `username`, `lock_international`, `enable_ip_restriction` +
+   `ip_restriction`), but **this manual portal confirmation is still
+   required** — it's the check that catches a wrong parameter *value*
+   before any DID is routed.
+
+   Note on per-call caps: the VoIP.ms API has **no per-call max-duration
+   method** (`kv voipms set-caps` fails loudly and says so). The per-call
+   bound is enforced by the Asterisk/controller call timer; account burn
+   is bounded by the balance protections in step 3.
 
 ### 6. Order ONE DID (Toronto POP, per-minute, CNAM off)
 
@@ -121,9 +127,10 @@ kv voipms route-did <the DID number from step 6> --subaccount klanker-pbx
 ```
 
 Confirm in the portal (**DID Numbers → Manage DID**) that routing now shows
-`klanker-pbx`. As with step 5, the underlying VoIP.ms method name
-(`setDIDRouting`) is `UNVERIFIED` in code — confirm the routing change
-actually took effect in the portal, don't just trust a non-error exit code.
+`klanker-pbx`. The underlying VoIP.ms method name (`setDIDRouting`, params
+`did` + `routing`) was verified on 2026-07-12 — but still confirm the
+routing change actually took effect in the portal rather than trusting a
+non-error exit code alone.
 
 **Registration POP must equal the DID's POP.** If you registered (or plan
 to register) the Asterisk edge to `toronto.voip.ms` (POP 1), the DID
