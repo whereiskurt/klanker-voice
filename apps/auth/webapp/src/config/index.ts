@@ -121,10 +121,17 @@ export const config = {
      * Namespaced access-token claim names (D-01 thin token: tier_id + group
      * ONLY). Pinned verbatim in the Phase-4 contract — Phase 4's PyJWT reads
      * these two claim keys and no others.
+     *
+     * Phase 15 Plan 01 (LEDG-01) adds `email` + `code` — pinned byte-for-byte
+     * against the voice service's `auth.py` EMAIL_CLAIM / CODE_CLAIM
+     * constants (Plan 15-02), so the voice service can build a complete
+     * ledger record from the validated token alone.
      */
     claimNames: {
       tierId: "https://klankermaker.ai/tier_id",
       group: "https://klankermaker.ai/group",
+      email: "https://klankermaker.ai/email",
+      code: "https://klankermaker.ai/code",
     },
 
     /**

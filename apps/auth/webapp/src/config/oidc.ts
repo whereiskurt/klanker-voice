@@ -379,11 +379,18 @@ const configuration: Configuration = {
    *
    * Only applies to `AccessToken` kind tokens with a known accountId (the
    * default is also invoked for ClientCredentials tokens, which have no
-   * accountId — those get {}). Deliberately emits ONLY the two namespaced
+   * accountId — those get {}). Originally emitted ONLY the two namespaced
    * tier_id/group claims (D-01 thin token, T-03-15) — the voice service
    * reads the `tiers` table for actual limits at session start; this is NOT
    * where the ID token / userinfo claims come from (see findAccount.claims
    * above, untouched).
+   *
+   * Phase 15 Plan 01 (LEDG-01) adds two more namespaced claims — email and
+   * the redeemed access code — resolved from the SAME already-fetched
+   * `profile` (no second DynamoDB read). Without these, every magic-link
+   * ledger row would have `email=null, code_hash=null` and backfilling is
+   * impossible once the token is gone (RESEARCH Pitfall 4). Null-safe: an
+   * unset/missing profile field resolves to `null`, never `undefined`.
    */
   extraTokenClaims: async (ctx, token) => {
     if (token.kind !== "AccessToken" || !token.accountId) return {};
@@ -392,6 +399,8 @@ const configuration: Configuration = {
     return {
       [config.oidc.claimNames.tierId]: profile?.activeTierId ?? "no-access",
       [config.oidc.claimNames.group]: profile?.activeGroup ?? null,
+      [config.oidc.claimNames.email]: profile?.email ?? null,
+      [config.oidc.claimNames.code]: profile?.activeCode ?? null,
     };
   },
 };

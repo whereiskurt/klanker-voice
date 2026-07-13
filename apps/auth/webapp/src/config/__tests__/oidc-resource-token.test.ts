@@ -172,7 +172,9 @@ describe("oidc resource-indicator access token (AUTH-02)", () => {
       "beta"
     );
 
-    // No custom claims beyond the two namespaced ones (D-01 thin token).
+    // No custom claims beyond the four namespaced ones (D-01 thin token,
+    // extended by Plan 15-01/LEDG-01 with email + code — see
+    // token-claims.test.ts for the dedicated email/code coverage).
     const standardClaims = new Set([
       "jti",
       "sub",
@@ -188,7 +190,12 @@ describe("oidc resource-indicator access token (AUTH-02)", () => {
       (k) => !standardClaims.has(k)
     );
     expect(customClaims.sort()).toEqual(
-      [(config as any).oidc.claimNames.tierId, (config as any).oidc.claimNames.group].sort()
+      [
+        (config as any).oidc.claimNames.tierId,
+        (config as any).oidc.claimNames.group,
+        (config as any).oidc.claimNames.email,
+        (config as any).oidc.claimNames.code,
+      ].sort()
     );
   });
 
