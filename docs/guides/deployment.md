@@ -67,10 +67,11 @@ not for production.
   includes `webrtc_udp`, open on UDP 20000-20100) — attaching it here would defeat the POP lock.
 - Single-task, no autoscaling — concurrency is enforced at the application layer (one call at a
   time via the answer-gate / quota system), not by running more tasks.
-- <!-- VERIFY: whether a dedicated build-telephony-edge.yml CI workflow exists — as of this
-  writing no such workflow is present under .github/workflows/, so telephony-edge images are built
-  and pushed manually and deployed by setting TF_VAR_TELEPHONY_EDGE_IMAGE_TAG for a manual
-  terragrunt apply of the ecs-task/ecs-service units (see Manual apply below). -->
+- There is no dedicated `build-telephony-edge.yml` CI workflow (confirmed against
+  `.github/workflows/`, which contains only `build-voice.yml`, `build-auth.yml`, `deploy.yml`,
+  `terragrunt-plan.yml`, `terragrunt-apply.yml`, and `gitleaks-scan.yml`) — telephony-edge images
+  are built and pushed manually and deployed by setting `TF_VAR_TELEPHONY_EDGE_IMAGE_TAG` for a
+  manual terragrunt apply of the ecs-task/ecs-service units (see Manual apply below).
 
 ## CI build and deploy pipeline
 
@@ -99,8 +100,8 @@ provisions four roles: `kmv-github-readonly`, `kmv-github-terragrunt`, `kmv-gith
     (same guard pattern), pushes to ECR as `kmv-auth-app:${{ github.sha }}`.
   - Both build workflows then call **`deploy.yml`** (`workflow_call`) with `service: voice` or
     `service: auth` via the `kmv-github-deploy` role.
-- There is no equivalent `build-telephony-edge.yml` in `.github/workflows/` today — see the VERIFY
-  note under [telephony-edge](#telephony-edge) above.
+- There is no equivalent `build-telephony-edge.yml` in `.github/workflows/` today — see the note
+  under [telephony-edge](#telephony-edge) above for how that image ships.
 
 ### What `deploy.yml` actually does
 
@@ -150,7 +151,7 @@ service, mirroring the tag-pinning pattern `deploy.yml` automates for voice/auth
 |---|---|---|---|---|
 | voice | `apps/voice/Dockerfile` | `apps/voice` | `node:22-slim` (client build stage) → `python:3.12-slim` (runtime) | `libopus0`, a resolved-at-build-time `libvpx<N>` package (name tracks the Debian ABI, not hardcoded), `ffmpeg`, `ca-certificates`; `uv` (pinned via `ghcr.io/astral-sh/uv:0.11.26`) for dependency install; NLTK `punkt_tab` tokenizer data baked in at build time (needed by ElevenLabs' sentence-streaming TTS) |
 | auth | `apps/auth/webapp/Dockerfile.webapp` | `apps/auth/webapp` | `node:current-alpine` (builder) → `node:current-alpine` (runner) | `curl` (health checks), `build-base`/`g++`/`python3` in the builder stage only; Next.js `standalone` output, runs as the non-root `node` user |
-| telephony-edge | `apps/voice/asterisk/Dockerfile` | `apps/voice/asterisk` | <!-- VERIFY: base image and full system dependency list — not read as part of this doc pass; inspect apps/voice/asterisk/Dockerfile directly for Asterisk package sourcing and version --> | Asterisk (ARI/Stasis), the Python `klanker_voice.telephony` controller sharing the voice service's dependency tree |
+| telephony-edge | `apps/voice/asterisk/Dockerfile` | `apps/voice/asterisk` | `andrius/asterisk:22.10.1_debian-trixie` (pinned Asterisk 22 with `res_ari`/`res_stasis` compiled in, on the same Debian 13 "trixie" release as `python:3.12-slim`) + `libopus0`, latest `libvpx*` shared lib, `ffmpeg`, `ca-certificates` | Asterisk (ARI/Stasis, PJSIP trunk) and the Python `klanker_voice.telephony` controller in one process group (`entrypoint.sh`); placeholder configs rendered from SSM-injected env at start (`render_configs.py`) — templates never carry real secrets. Build context is `apps/voice/` (`docker build -f asterisk/Dockerfile apps/voice`) |
 
 The voice image is deliberately **not** built on `dailyco/pipecat-base` — that base image targets
 Pipecat Cloud's own `bot.py` + process-per-session runtime contract, which conflicts with this
