@@ -44,6 +44,7 @@ from typing import Any, Awaitable, Callable
 
 from pipecat.frames.frames import (
     Frame,
+    InterimTranscriptionFrame,
     MixerEnableFrame,
     MixerUpdateSettingsFrame,
     TranscriptionFrame,
@@ -284,13 +285,73 @@ class KnowledgeRouterProcessor(FrameProcessor):
             # No bed for this scene -> silence any bed that was playing.
             await self.push_frame(MixerEnableFrame(enable=False), FrameDirection.DOWNSTREAM)
 
+    def _early_lock_candidate(self, utterance: str) -> str | None:
+        """Detect a hidden+sticky topic's magic keyword in an INTERIM transcript
+        so the block-swap can land BEFORE the turn's LLM inference fires.
+
+        PSTN endpointing fragments one spoken turn into several finalized
+        transcripts, and the user-aggregator can fire an LLM inference on an
+        earlier fragment before the keyword-bearing FINAL reaches this router.
+        Because the Anthropic service reads the (shared, mutable)
+        ``system_instruction`` at generation time, that inference answers in
+        the OLD persona and the greenhouse opener slips to the next turn.
+        Deepgram streams interim transcripts continuously *during* speech
+        (``interim_results`` defaults on), well before any turn-stop inference,
+        so committing the sticky switch on the interim closes that race and
+        matches the WebRTC path's "single clean final" timing.
+
+        Deliberately restricted to ``hidden`` AND ``sticky`` topics (only
+        greenhouse today): interim transcripts are noisy/unstable, so a
+        normal-topic switch -- and especially the same-vendor Haiku fallback --
+        must NEVER run on them. Returns the topic id to lock early, or ``None``.
+        """
+        floor = int(self._topic_map.get("confidence_floor", 1))
+        norm = _normalize(utterance)
+        for topic in self._topic_map.get("topics", []):
+            if not (topic.get("hidden") and topic.get("sticky")):
+                continue
+            tid = topic["id"]
+            if tid == self._active_topic:
+                # Already locked (e.g. a later interim in the same turn) --
+                # never re-commit; the sticky branch owns exits from here.
+                continue
+            score = 0
+            for kw in topic.get("keywords", []):
+                if isinstance(kw, dict):
+                    term, weight = kw.get("term", ""), int(kw.get("weight", 1))
+                else:
+                    term, weight = str(kw), 1
+                if term and _normalize(term) in norm:
+                    score += weight
+            if score >= floor:
+                return tid
+        return None
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
             await self._handle_utterance(frame.text)
+        elif isinstance(frame, InterimTranscriptionFrame) and frame.text.strip():
+            await self._early_lock_via_interim(frame.text)
 
         await self.push_frame(frame, direction)
+
+    async def _early_lock_via_interim(self, utterance: str) -> None:
+        """Commit an early sticky switch when a hidden+sticky magic word appears
+        in an INTERIM transcript, so the block-swap precedes a premature
+        per-fragment inference on PSTN. A later interim or the eventual FINAL
+        "greenhouse" is then a no-op (the topic is already the active sticky
+        one), so exactly one opener fires -- no double-response on either the
+        telephony or the WebRTC path."""
+        tid = self._early_lock_candidate(utterance)
+        if tid is None:
+            return
+        ack_raw = self._topic_field(tid, "ack")
+        ack_templates = (
+            None if ack_raw == "" else (self._topic_ack_templates(tid) or self._ack_templates)
+        )
+        await self._commit_switch(tid, utterance, ack_templates=ack_templates)
 
     async def _handle_utterance(self, utterance: str) -> None:
         topics = self._topic_map.get("topics", [])
