@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "Phase 12 telephony: outbound audio to PSTN caller is garbled/unusable. Real cell → DID 613-480-KURT → KPH connects and caller audio reaches the agent fine, but the KPH→caller return path (agent TTS → Asterisk → VoIP.ms → PSTN) is garbled. Prior investigation ruled out CPU starvation and jitter; suspected format/packetization bug in the outbound path (PCMU/RTP media adapter from Phase 10, telephony-edge container with Asterisk). Task container was already bumped to 2vCPU/4GB and garbling persists."
 created: 2026-07-12
 updated: 2026-07-12
