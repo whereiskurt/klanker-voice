@@ -69,6 +69,17 @@ view + basic ad-hoc Athena queries, retention automation beyond a simple lifecyc
   conventions; SOPS→SSM for any secrets (e.g. the code-hash salt)
 - Voice task role gets least-privilege `s3:PutObject` scoped to the ledger prefix
 
+### Post-research resolutions (LOCKED — user decisions 2026-07-12)
+- **/admin bootstrap:** Phase 05.1 was never executed; /admin does not exist. THIS phase
+  ships a minimal `ADMIN_EMAILS`-gated /admin shell in the auth app, with the transcript
+  conversation view as its first report. Phase 05.1 later grows it (users/usage reports).
+- **Token claims:** auth app adds namespaced email + access-code claims to the access
+  token via `extraTokenClaims` (profile already fetched there). Voice service computes
+  `code_hash` as HMAC-SHA256 with an SSM-stored salt — uniform across magic-link,
+  bypass (`anon:<code>:<uuid>` subs), and PSTN paths.
+- **PSTN identity:** separate `caller_id` column carrying the E.164 number (and DID);
+  `email` stays null for phone sessions. No `tel:` overloading of the email field.
+
 ### Claude's Discretion
 - Exact Pipecat frames/observers to tap (user text from the STT/transcription frame,
   assistant text from the LLM/TTS output frame — both carry session context; confirm
