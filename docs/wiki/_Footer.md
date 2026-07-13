@@ -1,0 +1,1 @@
+Klanker Voice — personal project of Kurt Hundeck · [MIT License](https://github.com/whereiskurt/klanker-voice/blob/main/LICENSE) · [NOTICE](https://github.com/whereiskurt/klanker-voice/blob/main/NOTICE.md) · part of the [Klanker family](https://github.com/whereiskurt/klanker-maker)
