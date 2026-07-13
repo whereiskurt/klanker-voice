@@ -321,6 +321,25 @@ Plans:
 
 - [ ] TBD (run /gsd-plan-phase 8 to break down)
 
+### Phase 15: Private transcription ledger — S3 batch + Athena + admin conversation view
+
+**Goal**: Every conversation turn (user STT text AND concierge replies) lands in a private, append-only S3 ledger, and the operator can read any session as a threaded chat — grouped by session, ordered by turn, alternating user/assistant bubbles — via Athena and the /admin report
+**Depends on**: Phase 4 (voice service + observers), Phase 05.1 (/admin panel), Phase 12 (telephony sessions must also be captured)
+**Requirements**: TBD (promotes todo `.planning/todos/pending/2026-07-06-private-transcription-ledger-s3-batch-athena.md`; reverses Phase 05.1's "no transcripts" deferral)
+**Success Criteria** (what must be TRUE):
+
+  1. Each turn is recorded with role, text, email (or PSTN caller identity for phone sessions), UTC timestamp, session_id, monotonic turn_seq, and a salted code_hash — never the raw access code
+  2. Voice service batches newline-JSON records to a private S3 bucket (SSE, no public access, date-partitioned) every ~2–5 min or on session end; an Athena table queries it
+  3. Operator reads any session as a threaded conversation (session-grouped, turn-ordered) — the acceptance bar from the 2026-07-06 decision
+  4. Client shows a visible "sessions may be recorded" notice (establishes the no-expectation-of-privacy posture)
+  5. Quota data stays in DynamoDB; transcripts live only in S3 — no co-mingling
+
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 15 to break down)
+
 ---
 
 ## Milestone v1.1: Telephony (VoIP.ms / Payphone)

@@ -227,6 +227,7 @@ Recent decisions affecting current work:
 - Phase 05.1 inserted after Phase 5: Operator Admin Panel — gated /admin in auth app (operational-only; transcripts deferred to Phase 7) (URGENT)
 - Phase 8 added: Documentation & Architecture — polished system diagram + README/architecture/runbook (starter Excalidraw diagram exported 2026-07-06)
 - Phase 05.2 inserted after Phase 5: Slick Start — single-tap silent SSO + instant pre-rendered greeting (conference-readiness UX polish on Phase-5 client) (URGENT)
+- Phase 15 added: Private transcription ledger — S3 batch + Athena + admin conversation view (promotes todo 2026-07-06-private-transcription-ledger; both-sides turn logging, threaded-chat report; reverses Phase 05.1's no-transcripts stance)
 
 ## Deferred Items
 
