@@ -274,9 +274,14 @@ resource "aws_security_group" "telephony_edge" {
   dynamic "ingress" {
     for_each = var.telephony_edge_pop_cidrs
     content {
-      description = "VoIP.ms Toronto POP RTP media (rtp.conf 20000-20100 range)"
-      from_port   = 20000
-      to_port     = 20100
+      # MUST equal apps/voice/asterisk/rtp.conf's rtpstart/rtpend. Asterisk
+      # allocates call media only in that range; this SG must open exactly
+      # that range to the POPs. They drifted once (SG opened 20000-20100
+      # while rtp.conf allocated 10000-10020) and the SG silently dropped
+      # every inbound RTP packet — the answer-gate never heard the caller.
+      description = "VoIP.ms Toronto POP RTP media (rtp.conf 10000-10020 range)"
+      from_port   = 10000
+      to_port     = 10020
       protocol    = "udp"
       cidr_blocks = [ingress.value]
     }

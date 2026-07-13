@@ -206,7 +206,8 @@ runtime.
 ## Toronto POP IP list (SG allow-list source)
 
 The deployed `telephony-edge` security group locks inbound SIP (UDP 5060)
-and RTP (UDP 20000–20100) to these VoIP.ms Toronto POP IPs only — never
+and RTP (UDP 10000–10020, matching `apps/voice/asterisk/rtp.conf`) to these
+VoIP.ms Toronto POP IPs only — never
 `0.0.0.0/0`:
 
 | POP id | Hostname | IP |
