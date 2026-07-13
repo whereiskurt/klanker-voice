@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -8,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	smithy "github.com/aws/smithy-go"
 )
 
 // newTestVoipmsClient builds a voipmsClient pointed at an httptest.Server so
@@ -446,5 +449,93 @@ func TestListInboundDIDs_FailureStatusIsError(t *testing.T) {
 
 	if _, err := ListInboundDIDs(t.Context(), vc); err == nil {
 		t.Fatal("ListInboundDIDs() with status=failure returned nil error, want an error")
+	}
+}
+
+// --------------------------------------------------------------------------
+// resolveVoipmsCreds — env-first, SSM-fallback credential resolution (D-04).
+
+// TestResolveVoipmsCreds_EnvWins asserts that when both VOIPMS_API_USERNAME
+// and VOIPMS_API_PASSWORD are set, resolveVoipmsCreds returns them directly
+// and never invokes the SSM factory.
+func TestResolveVoipmsCreds_EnvWins(t *testing.T) {
+	t.Setenv("VOIPMS_API_USERNAME", "envuser")
+	t.Setenv("VOIPMS_API_PASSWORD", "envpass")
+
+	factoryCalled := false
+	ssmFactory := func(ctx context.Context) (ssmGetParameterAPI, error) {
+		factoryCalled = true
+		t.Fatal("ssmFactory should never be invoked when env creds are set")
+		return nil, nil
+	}
+
+	creds, err := resolveVoipmsCreds(t.Context(), ssmFactory)
+	if err != nil {
+		t.Fatalf("resolveVoipmsCreds() error: %v", err)
+	}
+	if creds.Username != "envuser" || creds.Password != "envpass" {
+		t.Errorf("creds = %+v, want Username=envuser Password=envpass", creds)
+	}
+	if factoryCalled {
+		t.Error("ssmFactory was called, want env creds to short-circuit SSM")
+	}
+}
+
+// TestResolveVoipmsCreds_SSMFallbackSuccess asserts that with the env vars
+// unset, resolveVoipmsCreds falls back to SSM and returns the canned
+// parameter values from the fake.
+func TestResolveVoipmsCreds_SSMFallbackSuccess(t *testing.T) {
+	t.Setenv("VOIPMS_API_USERNAME", "")
+	t.Setenv("VOIPMS_API_PASSWORD", "")
+
+	fake := &fakeSSMGetParameterClient{
+		values: map[string]string{
+			voipmsUsernameSSMPath: "ssmuser",
+			voipmsPasswordSSMPath: "ssmpass",
+		},
+	}
+	ssmFactory := func(ctx context.Context) (ssmGetParameterAPI, error) {
+		return fake, nil
+	}
+
+	creds, err := resolveVoipmsCreds(t.Context(), ssmFactory)
+	if err != nil {
+		t.Fatalf("resolveVoipmsCreds() error: %v", err)
+	}
+	if creds.Username != "ssmuser" || creds.Password != "ssmpass" {
+		t.Errorf("creds = %+v, want Username=ssmuser Password=ssmpass", creds)
+	}
+}
+
+// TestResolveVoipmsCreds_SSMFallbackError asserts that when the env vars are
+// unset and SSM errors, resolveVoipmsCreds returns an error that leaks
+// neither the canned api_password value nor any raw SSM param value
+// (leak guard, T-l0v-01).
+func TestResolveVoipmsCreds_SSMFallbackError(t *testing.T) {
+	t.Setenv("VOIPMS_API_USERNAME", "")
+	t.Setenv("VOIPMS_API_PASSWORD", "")
+
+	fake := &fakeSSMGetParameterClient{
+		values: map[string]string{
+			voipmsPasswordSSMPath: "super-secret-password",
+		},
+		errs: map[string]error{
+			voipmsUsernameSSMPath: &smithy.GenericAPIError{Code: "AccessDenied", Message: "not authorized"},
+		},
+	}
+	ssmFactory := func(ctx context.Context) (ssmGetParameterAPI, error) {
+		return fake, nil
+	}
+
+	_, err := resolveVoipmsCreds(t.Context(), ssmFactory)
+	if err == nil {
+		t.Fatal("resolveVoipmsCreds() with SSM error returned nil error, want an error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "super-secret-password") {
+		t.Errorf("resolveVoipmsCreds() error leaked the canned api_password value: %q", msg)
+	}
+	if strings.Contains(msg, voipmsPasswordSSMPath) || strings.Contains(msg, voipmsUsernameSSMPath) {
+		t.Errorf("resolveVoipmsCreds() error leaked a raw SSM param path/value: %q", msg)
 	}
 }

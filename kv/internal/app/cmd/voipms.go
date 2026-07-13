@@ -16,6 +16,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/spf13/cobra"
 )
 
@@ -65,9 +67,12 @@ const (
 )
 
 // --------------------------------------------------------------------------
-// Credentials — read ONLY from the environment (SSM-sourced by the operator
-// per D-04). No literal api_username/api_password value is ever assigned in
-// this file.
+// Credentials — env-first, SSM fallback (D-04). Never a CLI flag (would leak
+// into shell history / process listings), never logged. No literal
+// api_username/api_password value is ever assigned in this file: the
+// process-env read stays os.Getenv-only, and the SSM fallback reads the two
+// parameters below by name — their decrypted values are never interpolated
+// into any log or error string.
 
 // voipmsCreds carries the VoIP.ms REST API credentials.
 type voipmsCreds struct {
@@ -87,6 +92,85 @@ func voipmsCredsFromEnv() (voipmsCreds, error) {
 				"(SSM-sourced — see docs/operators/voipms-provisioning-runbook.md)")
 	}
 	return voipmsCreds{Username: u, Password: p}, nil
+}
+
+// voipmsUsernameSSMPath / voipmsPasswordSSMPath are the SSM SecureString
+// parameter paths for the VoIP.ms API credentials (see
+// docs/operators/voipms-provisioning-runbook.md lines 168-169), used as the
+// fallback source when the VOIPMS_API_* env vars are unset.
+const (
+	voipmsUsernameSSMPath = "/kmv/secrets/use1/voipms/api_username"
+	voipmsPasswordSSMPath = "/kmv/secrets/use1/voipms/api_password"
+)
+
+// voipmsCredsFromSSM reads the VoIP.ms API credentials from SSM
+// (WithDecryption) via the narrow ssmGetParameterAPI seam (telephony.go),
+// so tests can inject a fake and no live AWS call is ever required. Any
+// GetParameter failure is reported without ever interpolating the
+// credential values themselves — only a short, non-sensitive note derived
+// via shortSSMErrorNote.
+func voipmsCredsFromSSM(ctx context.Context, api ssmGetParameterAPI) (voipmsCreds, error) {
+	uOut, err := api.GetParameter(ctx, &ssm.GetParameterInput{
+		Name:           aws.String(voipmsUsernameSSMPath),
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		return voipmsCreds{}, fmt.Errorf("read VoIP.ms credentials from SSM: %s", shortSSMErrorNote(err))
+	}
+	pOut, err := api.GetParameter(ctx, &ssm.GetParameterInput{
+		Name:           aws.String(voipmsPasswordSSMPath),
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		return voipmsCreds{}, fmt.Errorf("read VoIP.ms credentials from SSM: %s", shortSSMErrorNote(err))
+	}
+	creds := voipmsCreds{}
+	if uOut.Parameter != nil && uOut.Parameter.Value != nil {
+		creds.Username = *uOut.Parameter.Value
+	}
+	if pOut.Parameter != nil && pOut.Parameter.Value != nil {
+		creds.Password = *pOut.Parameter.Value
+	}
+	return creds, nil
+}
+
+// resolveVoipmsCreds resolves the VoIP.ms API credentials env-first, then
+// falling back to SSM: VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD win when
+// both are set (env override/testing path, ssmFactory is never invoked);
+// otherwise ssmFactory builds an SSM client and the credentials are read
+// from the well-known SecureString paths. Any failure surfaces ONE clear,
+// leak-free operator-facing error naming both remediation options.
+func resolveVoipmsCreds(ctx context.Context, ssmFactory func(context.Context) (ssmGetParameterAPI, error)) (voipmsCreds, error) {
+	if creds, err := voipmsCredsFromEnv(); err == nil {
+		return creds, nil
+	}
+	api, err := ssmFactory(ctx)
+	if err != nil {
+		return voipmsCreds{}, fmt.Errorf(
+			"could not resolve VoIP.ms API credentials: set VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD, "+
+				"or ensure your AWS profile can read /kmv/secrets/use1/voipms/* (%s)", shortSSMErrorNote(err))
+	}
+	creds, err := voipmsCredsFromSSM(ctx, api)
+	if err != nil {
+		// voipmsCredsFromSSM's error is already a leak-free message (via
+		// shortSSMErrorNote internally) — reuse it directly rather than
+		// re-deriving via shortSSMErrorNote(err), which would only see a
+		// plain *errors.errorString here and fall back to "unavailable",
+		// discarding the more specific note.
+		return voipmsCreds{}, fmt.Errorf(
+			"could not resolve VoIP.ms API credentials: set VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD, "+
+				"or ensure your AWS profile can read /kmv/secrets/use1/voipms/* (%s)", err)
+	}
+	return creds, nil
+}
+
+// resolveVoipmsCreds is a thin Config method delegating to the package-level
+// resolveVoipmsCreds, wiring the ssmFactory to c.SSMClient — *ssm.Client
+// satisfies ssmGetParameterAPI.
+func (c *Config) resolveVoipmsCreds(ctx context.Context) (voipmsCreds, error) {
+	return resolveVoipmsCreds(ctx, func(ctx context.Context) (ssmGetParameterAPI, error) {
+		return c.SSMClient(ctx)
+	})
 }
 
 // --------------------------------------------------------------------------
@@ -332,7 +416,7 @@ func NewVoipmsCmd(cfg *Config) *cobra.Command {
 		Short: "Read the current VoIP.ms account balance",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error {
-			creds, err := voipmsCredsFromEnv()
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
 			if err != nil {
 				return err
 			}
@@ -353,7 +437,7 @@ func NewVoipmsCmd(cfg *Config) *cobra.Command {
 		Short: "Route a DID to the klanker-pbx subaccount",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			creds, err := voipmsCredsFromEnv()
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
 			if err != nil {
 				return err
 			}
@@ -391,7 +475,7 @@ func NewVoipmsCmd(cfg *Config) *cobra.Command {
 		Short: "Create the klanker-pbx subaccount (outbound-disabled, IP-restricted)",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error {
-			creds, err := voipmsCredsFromEnv()
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
 			if err != nil {
 				return err
 			}
