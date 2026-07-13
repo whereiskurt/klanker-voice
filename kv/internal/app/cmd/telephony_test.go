@@ -392,6 +392,72 @@ func TestReadInboundDIDs_ListerErrorYieldsSafeShortNote(t *testing.T) {
 	}
 }
 
+func TestShortVoipmsErrorNote_SurfacesSafeStatusWithHint(t *testing.T) {
+	cases := []struct {
+		name      string
+		err       error
+		wantSub   string // must appear in the note
+		wantHint  string // hint fragment that must appear ("" = none expected)
+		wantPlain bool   // true = expect the generic network/response note
+	}{
+		{
+			name:     "ip_not_enabled surfaces code + whitelist hint",
+			err:      &voipmsStatusError{Method: "getDIDsInfo", Status: "failure", Reason: "ip_not_enabled"},
+			wantSub:  "ip_not_enabled",
+			wantHint: "whitelist this IP",
+		},
+		{
+			name:     "invalid_credentials surfaces code + creds hint",
+			err:      &voipmsStatusError{Method: "getDIDsInfo", Status: "failure", Reason: "invalid_credentials"},
+			wantSub:  "invalid_credentials",
+			wantHint: "check the VoIP.ms API creds",
+		},
+		{
+			name:    "bare status (no error field) still surfaces the code",
+			err:     &voipmsStatusError{Method: "getDIDsInfo", Status: "ip_not_enabled"},
+			wantSub: "ip_not_enabled",
+		},
+		{
+			name:      "unknown code surfaces bare, no invented hint",
+			err:       &voipmsStatusError{Method: "getDIDsInfo", Status: "failure", Reason: "some_new_code"},
+			wantSub:   "some_new_code",
+			wantHint:  "",
+			wantPlain: false,
+		},
+		{
+			name:      "non-status error stays generic",
+			err:       errors.New("call voip.ms method getDIDsInfo: connection refused"),
+			wantPlain: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			note := shortVoipmsErrorNote(tc.err)
+			if tc.wantPlain {
+				if !strings.Contains(note, "network or response error") {
+					t.Errorf("note = %q, want the generic network/response note", note)
+				}
+				return
+			}
+			if !strings.Contains(note, tc.wantSub) {
+				t.Errorf("note = %q, want it to contain %q", note, tc.wantSub)
+			}
+			if tc.wantHint != "" && !strings.Contains(note, tc.wantHint) {
+				t.Errorf("note = %q, want hint %q", note, tc.wantHint)
+			}
+			if len(note) > 120 {
+				t.Errorf("note is %d chars, want <=120: %q", len(note), note)
+			}
+			// No credential/URL must ever appear in a surfaced note.
+			for _, bad := range []string{"api_password", "voip.ms/api", "rest.php"} {
+				if strings.Contains(note, bad) {
+					t.Errorf("note leaked %q: %q", bad, note)
+				}
+			}
+		})
+	}
+}
+
 func TestReadInboundDIDs_ListerSuccessCarriesRecords(t *testing.T) {
 	want := []InboundDIDRecord{
 		{DID: "14165551234", Description: "Main line", Routing: "sip:klanker-pbx", POP: "Toronto"},

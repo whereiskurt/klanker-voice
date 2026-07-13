@@ -197,6 +197,31 @@ func newVoipmsClient(creds voipmsCreds) *voipmsClient {
 	}
 }
 
+// voipmsStatusError is returned by do() when the VoIP.ms envelope reports a
+// non-success result. It carries ONLY the safe response enums — the "status"
+// field and (when present) the granular "error" code (e.g. "ip_not_enabled",
+// "invalid_credentials", "no_did"). It deliberately never captures the request
+// URL or any credential (those live in the query string; see do()'s *url.Error
+// unwrap), so the reason can be surfaced to an operator without leaking secrets.
+type voipmsStatusError struct {
+	Method string
+	Status string // out["status"] — e.g. "failure" or a bare error code
+	Reason string // out["error"] — the granular code, when the envelope carries one
+}
+
+// Code returns the most specific safe reason: the granular "error" code when
+// present, otherwise the "status" field.
+func (e *voipmsStatusError) Code() string {
+	if e.Reason != "" {
+		return e.Reason
+	}
+	return e.Status
+}
+
+func (e *voipmsStatusError) Error() string {
+	return fmt.Sprintf("voip.ms method %s returned status %q (error %q)", e.Method, e.Status, e.Reason)
+}
+
 // do calls a VoIP.ms REST method with the given extra params, appending the
 // auth params and parsing the {"status": "success"|"failure", ...} JSON
 // envelope common to every VoIP.ms REST API method.
@@ -239,7 +264,8 @@ func (vc *voipmsClient) do(ctx context.Context, method string, params url.Values
 
 	status, _ := out["status"].(string)
 	if status != "success" {
-		return out, fmt.Errorf("voip.ms method %s returned status %q", method, status)
+		reason, _ := out["error"].(string)
+		return out, &voipmsStatusError{Method: method, Status: status, Reason: reason}
 	}
 	return out, nil
 }

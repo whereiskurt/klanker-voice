@@ -325,15 +325,48 @@ func readInboundDIDs(ctx context.Context, credsOK bool, lister func(context.Cont
 
 // shortVoipmsErrorNote derives a short, non-sensitive note from a
 // ListInboundDIDs error without ever interpolating the raw request URL or
-// api_password. voipmsClient.do() already unwraps *url.Error before
-// wrapping (so the URL — which carries api_password in its query string —
-// never reaches the error chain in the first place); this is
-// belt-and-suspenders on top of that, mirroring shortSSMErrorNote's shape.
+// api_password. When the error is a *voipmsStatusError, the VoIP.ms response
+// enum (status/error code — never a credential) is surfaced with an
+// actionable hint so the operator can self-diagnose (e.g. ip_not_enabled ->
+// whitelist this IP). For any other error (network/parse) the note stays
+// generic: voipmsClient.do() already unwraps *url.Error before wrapping (so
+// the URL — which carries api_password in its query string — never reaches
+// the error chain), and we never echo a raw transport error on top of that.
 func shortVoipmsErrorNote(err error) string {
 	if err == nil {
 		return "unavailable"
 	}
-	return "VoIP.ms API call failed (see operator logs for detail)"
+	var statusErr *voipmsStatusError
+	if errors.As(err, &statusErr) {
+		code := statusErr.Code()
+		// Defensive length bound: VoIP.ms codes are short enums; anything
+		// unexpectedly long falls back to the generic note rather than risk
+		// echoing an oversized/unknown payload.
+		if code != "" && len(code) <= 40 {
+			if hint := voipmsStatusHint(code); hint != "" {
+				return fmt.Sprintf("VoIP.ms rejected the call: %s (%s)", code, hint)
+			}
+			return fmt.Sprintf("VoIP.ms rejected the call: %s", code)
+		}
+	}
+	return "VoIP.ms API call failed (network or response error)"
+}
+
+// voipmsStatusHint maps the common VoIP.ms error codes to a one-line operator
+// hint. Unknown codes return "" — the caller then surfaces the bare code.
+func voipmsStatusHint(code string) string {
+	switch code {
+	case "ip_not_enabled":
+		return "whitelist this IP in the VoIP.ms API panel"
+	case "invalid_credentials":
+		return "check the VoIP.ms API creds (env or SSM)"
+	case "missing_credentials":
+		return "set VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD or the SSM params"
+	case "no_did":
+		return "no DIDs provisioned on this account"
+	default:
+		return ""
+	}
 }
 
 // --------------------------------------------------------------------------
