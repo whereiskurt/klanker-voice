@@ -41,6 +41,14 @@ SMOKE_TOKEN_ENV_VAR = "KMV_SMOKE_SERVICE_TOKEN"
 TIER_ID_CLAIM = "https://klankermaker.ai/tier_id"
 GROUP_CLAIM = "https://klankermaker.ai/group"
 
+#: Namespaced email/code claims added by Plan 15-01 (LEDG-01) for the
+#: transcript ledger. These names MUST match `config.oidc.claimNames.email`
+#: / `.code` in the auth app (apps/auth/webapp/src/config/index.ts)
+#: byte-for-byte — the same cross-service contract discipline as the pinned
+#: tier/group pair above.
+EMAIL_CLAIM = "https://klankermaker.ai/email"
+CODE_CLAIM = "https://klankermaker.ai/code"
+
 #: Default tier when the claim is absent — matches the auth service's own
 #: no-access default (03-03-SUMMARY.md D3).
 NO_ACCESS_TIER_ID = "no-access"
@@ -66,6 +74,11 @@ class SessionIdentity:
     tier_id: str
     group: str | None
     bypass_accounting: bool = False
+    #: Additive (LEDG-01, Plan 15-01/15-02): the ledger's identity fields,
+    #: read from the token when present. Defaulted None so every existing
+    #: constructor call (including the smoke/service path) stays unchanged.
+    email: str | None = None
+    code: str | None = None
 
 
 def _issuer() -> str:
@@ -152,4 +165,13 @@ def validate_access_token(token: str) -> SessionIdentity:
     sub = str(claims.get("sub") or "")
     tier_id = str(claims.get(TIER_ID_CLAIM) or NO_ACCESS_TIER_ID)
     group = claims.get(GROUP_CLAIM)
-    return SessionIdentity(sub=sub, tier_id=tier_id, group=group, bypass_accounting=False)
+    email = claims.get(EMAIL_CLAIM)
+    code = claims.get(CODE_CLAIM)
+    return SessionIdentity(
+        sub=sub,
+        tier_id=tier_id,
+        group=group,
+        bypass_accounting=False,
+        email=email,
+        code=code,
+    )
