@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "Greenhouse recruiting mode engages ONE TURN LATE on PSTN calls: the caller says the magic word 'greenhouse', KPH answers that turn in the normal persona, and the sticky interview mode (LLM opener asking what role) only fires on the FOLLOWING turn. User wants it to engage on the trigger turn — 'boom next turn'."
 created: 2026-07-13
 updated: 2026-07-13
@@ -93,6 +93,6 @@ verification: |
   - test_interim_early_lock_candidate_only_matches_hidden_sticky: candidate selector matches greenhouse, rejects normal topics, and never re-nominates the active sticky topic.
   - Full suite: 426 passed / 53 skipped (was 422/53; +4 new tests, no regressions). cd apps/voice && .venv/bin/pytest tests/ -q
   PENDING human verification: live PSTN call — say 'greenhouse', confirm the recruiting opener fires on the SAME/next turn (not delayed a full turn).
-files_changed:
+files_changed: apps/voice/src/klanker_voice/knowledge/router.py, apps/voice/tests/test_greenhouse_hidden.py, infra/terraform/live/site/services/telephony-edge/service.hcl
   - apps/voice/src/klanker_voice/knowledge/router.py: import InterimTranscriptionFrame; add _early_lock_candidate() (hidden+sticky-only keyword scan) and _early_lock_via_interim(); handle InterimTranscriptionFrame in process_frame to commit the sticky switch early.
   - apps/voice/tests/test_greenhouse_hidden.py: 4 new regression tests + imports (InterimTranscriptionFrame, TranscriptionFrame, run_test).
