@@ -1,6 +1,6 @@
 # apps/voice — developer targets
 
-.PHONY: env greetings ambience knowledge say voice1-local voice2-local
+.PHONY: env greetings pickup-cue ambience knowledge say voice1-local voice2-local
 
 ## env: fetch the three provider API keys from SSM and write .env (D-10)
 env:
@@ -9,6 +9,11 @@ env:
 ## greetings: Render the KPH greeting clips from the configured pipeline.toml voice
 greetings:
 	.venv/bin/python scripts/render_greetings.py
+
+## pickup-cue: Render the telephony pickup "hey" clip from the configured pipeline.toml voice.
+## Re-run after any pipeline.toml voice_id change (mirrors the `greetings` drift guard, quick task 260713-m9n).
+pickup-cue:
+	.venv/bin/python scripts/render_pickup_cue.py
 
 ## ambience: Render the greenhouse coffee-shop ambient bed (ElevenLabs SFX -> mono 24kHz WAV)
 ## NOTE: the ElevenLabs API key must have the `sound_generation` permission enabled.
