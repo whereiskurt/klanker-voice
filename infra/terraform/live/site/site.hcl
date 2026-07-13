@@ -212,7 +212,20 @@ locals {
         description = "ALTCHA proof-of-work secret"
         keys        = ["secret"]
       }
+      ledger = {
+        description = "Transcription ledger code_hash salt (Phase 15) — HMAC salt for hashing access codes into non-reversible record identifiers; never stored in plaintext outside SOPS"
+        keys        = ["code_hash_salt"]
+      }
     }
+  }
+
+  # Phase 15 (15-04): private, append-only S3 + Athena/Glue ledger for the
+  # both-sides transcription record (LEDG-02). Least-privilege service IAM
+  # lives in services/voice/service.hcl (write-only) and
+  # services/auth/service.hcl (read-only) — see the ledger unit's own
+  # terragrunt.hcl for the enabled-toggle read.
+  ledger = {
+    enabled = true
   }
 
   # Extracted to avoid self-reference within github_oidc block

@@ -58,9 +58,21 @@ sops edit .secrets.sops.json
   "elevenlabs": { "api_key": "..." },
   "jwt":        { "secret": "...", "internal_secret": "..." },
   "oidc":       { "cookie_keys": "..." },
-  "altcha":     { "secret": "..." }
+  "altcha":     { "secret": "..." },
+  "ledger":     { "code_hash_salt": "..." }
 }
 ```
+
+## Operator note: the ledger salt (Phase 15)
+
+`ledger.code_hash_salt` is a random value (e.g. `openssl rand -hex 32`) used to
+HMAC-hash access codes before they're written to the transcription ledger
+(never the raw code). It follows the exact same SOPS → secrets module → SSM
+SecureString → container `valueFrom` flow as every other entry above. Add it
+via `sops edit .secrets.sops.json` at the same time you run the ledger unit's
+operator-SSO `terragrunt apply` (Plan 15-04) — the secrets unit and the
+ledger unit both need to apply for the salt to actually reach the voice
+container.
 
 ## KMS Key Setup (single-region)
 

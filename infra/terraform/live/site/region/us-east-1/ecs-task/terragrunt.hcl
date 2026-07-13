@@ -32,6 +32,19 @@ dependency "ecs_cluster" {
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy"]
 }
 
+# Phase 15 (15-04): the ledger S3 bucket name is random-suffixed (only known
+# after terraform creates it), so it cannot live as a literal in the
+# data-only services/voice/service.hcl. Inject it here instead, the same way
+# task_role_arn is injected from ecs_cluster below.
+dependency "ledger" {
+  config_path = "../ledger"
+
+  mock_outputs = {
+    bucket_name = "kmv-ledger-use1-00000000"
+  }
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "destroy"]
+}
+
 include "module" {
   path   = "${find_in_parent_folders("modules")}/ecs-task/config.hcl"
   expose = true
@@ -53,6 +66,33 @@ inputs = merge(
       for task in include.module.locals.merged_inputs.ecs_tasks :
       merge(task, {
         task_role_arn = try(dependency.ecs_cluster.outputs.task_role_arns[task.cluster_name], task.task_role_arn)
+        # Phase 15 (15-04): inject the ledger bucket name — not known until
+        # the ledger unit applies (random-suffixed S3 bucket name) — onto the
+        # voice (KMV_LEDGER_BUCKET, write path) and auth (LEDGER_BUCKET, read
+        # path / admin report) task containers.
+        containers = (
+          task.name == "voice" ? [
+            for container in task.containers :
+            merge(container, {
+              environment = concat(container.environment, [
+                {
+                  name  = "KMV_LEDGER_BUCKET"
+                  value = dependency.ledger.outputs.bucket_name
+                }
+              ])
+            })
+            ] : task.name == "auth" ? [
+            for container in task.containers :
+            merge(container, {
+              environment = concat(container.environment, [
+                {
+                  name  = "LEDGER_BUCKET"
+                  value = dependency.ledger.outputs.bucket_name
+                }
+              ])
+            })
+          ] : task.containers
+        )
       })
     ]
   }

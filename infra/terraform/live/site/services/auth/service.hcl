@@ -81,6 +81,26 @@ locals {
       sid       = "SesSendMagicLink"
       actions   = ["ses:SendEmail", "ses:SendRawEmail"]
       resources = ["*"]
+    },
+    {
+      # Phase 15 (15-04, T-15-04-02): the admin conversation view lists ledger
+      # objects (ListObjectsV2) to page by day/session. Bucket-level action,
+      # scoped via an s3:prefix condition to the ledger/ prefix only — no
+      # PutObject/DeleteObject anywhere (read-only, append-only posture).
+      sid       = "LedgerListBucket"
+      actions   = ["s3:ListBucket"]
+      resources = ["arn:aws:s3:::kmv-ledger-*"]
+      condition = {
+        test     = "StringLike"
+        variable = "s3:prefix"
+        values   = ["ledger/*"]
+      }
+    },
+    {
+      # Object-level read for the admin view's per-session transcript render.
+      sid       = "LedgerGetObject"
+      actions   = ["s3:GetObject"]
+      resources = ["arn:aws:s3:::kmv-ledger-*/ledger/*"]
     }
   ]
 
@@ -125,7 +145,17 @@ locals {
           { name = "AUTH_SES_REGION", value = "us-east-1" },
           { name = "AUTH_SES_SMTP_FROM", value = "no-reply@auth.{{SITE_DOMAIN}}" },
           { name = "OIDC_VOICE_CLIENT_ID", value = "voice" },
-          { name = "OIDC_VOICE_SECRET", value = "unused-public-pkce-client" }
+          { name = "OIDC_VOICE_SECRET", value = "unused-public-pkce-client" },
+          # Phase 15 (15-04/15-05, T-15-05-01): operator allowlist for the
+          # gated /admin conversation view — comma-separated, case-insensitive
+          # per the approved admin-panel design spec. Not a secret (an email
+          # address is not sensitive credential material); plain env, not SSM.
+          { name = "ADMIN_EMAILS", value = "whereiskurt@gmail.com" }
+          # NOTE: LEDGER_BUCKET is NOT listed here — same reasoning as
+          # KMV_LEDGER_BUCKET in voice/service.hcl (random-suffixed bucket
+          # name unknown at this file's pure-data parse time). Injected at
+          # region/us-east-1/ecs-task/terragrunt.hcl via the same
+          # `dependency "ledger"` block.
         ]
 
         secrets = [
