@@ -653,3 +653,182 @@ async def test_gate_fail_closed_on_quota_denied_after_unlock(
     assert len(goodbye_calls) == 1
     assert ari.count("hangup", arg="chan-1") == 1
     assert controller.calls == {}
+
+
+# --- Phase 15 Plan 03 (LEDG-01): PSTN ledger capture -----------------------
+
+
+async def test_mint_tier_from_caller_id_returns_tier_and_sub_tuple(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """_mint_tier_from_caller_id now returns (tier_id, sub) on success --
+    the mint token's sub is the ONLY place a PSTN caller's raw access code
+    is recoverable (LEDG-01). Every failure path still returns the
+    None-equivalent tuple, never raises."""
+    from klanker_voice.auth import SessionIdentity
+
+    async def _fake_fetch_tel_token(url, headers):
+        return "minted-token"
+
+    def _fake_validate(token):
+        assert token == "minted-token"
+        return SessionIdentity(
+            sub="anon:kphdemo123:uuid-1", tier_id="kph-tier", group=None, bypass_accounting=False
+        )
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._fetch_tel_token", _fake_fetch_tel_token
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.validate_access_token", _fake_validate
+    )
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(tel_mint_url="https://auth.klankermaker.ai/use1/tel"),
+    )
+
+    tier_id, sub = await controller._mint_tier_from_caller_id("+14165551234")
+    assert tier_id == "kph-tier"
+    assert sub == "anon:kphdemo123:uuid-1"
+
+    # Failure paths -- no caller id -- never raise, return the
+    # None-equivalent tuple, and never call the network.
+    assert await controller._mint_tier_from_caller_id("") == (None, None)
+
+
+async def test_mint_tier_from_caller_id_failure_paths_return_none_tuple(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A failed /tel fetch and a token that fails offline validation both
+    fail closed identically -- (None, None), never raises."""
+    from klanker_voice.auth import AuthError
+
+    async def _fake_fetch_tel_token_none(url, headers):
+        return None  # uniform 404/timeout/transport-error shape
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._fetch_tel_token", _fake_fetch_tel_token_none
+    )
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(tel_mint_url="https://auth.klankermaker.ai/use1/tel"),
+    )
+    assert await controller._mint_tier_from_caller_id("+14165551234") == (None, None)
+
+    async def _fake_fetch_tel_token_ok(url, headers):
+        return "minted-token"
+
+    def _fake_validate_raises(token):
+        raise AuthError("bad token")
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._fetch_tel_token", _fake_fetch_tel_token_ok
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.validate_access_token", _fake_validate_raises
+    )
+    assert await controller._mint_tier_from_caller_id("+14165551234") == (None, None)
+
+
+async def test_gated_mint_unlock_ledger_record_has_caller_id_did_and_code_hash(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """LEDG-01: a telephony CallIdentity carries caller_id + did and email
+    stays None; the session's writer starts DISABLED while the §24 gate is
+    locked (nothing captured), and is enabled at unlock with caller_id/did
+    already populated and a non-null code_hash derived from the mint sub."""
+    monkeypatch.setenv("KMV_LEDGER_SALT", "test-salt")
+    from klanker_voice.auth import SessionIdentity
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.quota.start_gate", lambda identity, **kwargs: _gate_result()
+    )
+
+    async def _fake_fetch_tel_token(url, headers):
+        return "minted-token"
+
+    def _fake_validate(token):
+        return SessionIdentity(
+            sub="anon:kphdemo123:uuid-1", tier_id="kph-tier", group=None, bypass_accounting=False
+        )
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._fetch_tel_token", _fake_fetch_tel_token
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.validate_access_token", _fake_validate
+    )
+
+    async def _spy_greet_now(worker, context):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(
+            tel_mint_url="https://auth.klankermaker.ai/use1/tel", gate_mode="dtmf"
+        ),
+        access_pin="4242",
+    )
+
+    await controller.on_stasis_start(_stasis_event(caller_number="4165551234", exten="1000"))
+    active_call = controller.calls["chan-1"]
+    writer = active_call.call_session.writer
+    assert writer is not None
+
+    # Still locked: the writer is disabled -- nothing is captured (T-15-03-01).
+    assert writer.enabled is False
+    await writer.append(role="user", text="should never appear")
+    assert writer._buffer == []
+
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+
+    assert active_call.gate.unlocked is True
+    assert writer.enabled is True
+    assert writer.caller_id == "+14165551234"
+    assert writer.did == "1000"
+    assert writer.email is None
+
+    await writer.append(role="assistant", text="hi, you're through")
+    record = writer._buffer[-1]
+    assert record["caller_id"] == "+14165551234"
+    assert record["did"] == "1000"
+    assert record["email"] is None
+    assert record["code_hash"] is not None
+
+
+async def test_gated_writer_disabled_when_mint_unconfigured(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """When telephony.tel_mint_url is empty (legacy static-tier grant), the
+    writer still starts disabled while locked and enables at unlock, but
+    carries no code (no mint sub -- code_hash stays null)."""
+    _patch_start_gate(monkeypatch)
+
+    async def _spy_greet_now(worker, context):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file, telephony_cfg=_gated_cfg(unlock_tier_id="kph-tier"), access_pin="4242"
+    )
+
+    await controller.on_stasis_start(_stasis_event(caller_number="1001"))
+    active_call = controller.calls["chan-1"]
+    writer = active_call.call_session.writer
+    assert writer.enabled is False
+
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+
+    assert writer.enabled is True
+    await writer.append(role="user", text="hello")
+    assert writer._buffer[-1]["code_hash"] is None

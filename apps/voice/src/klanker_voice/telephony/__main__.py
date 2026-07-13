@@ -57,10 +57,15 @@ import os
 from dotenv import load_dotenv
 from loguru import logger
 
+from klanker_voice import ledger
 from klanker_voice.config import ConfigError, load_config, load_knowledge_config, load_quota_config
 from klanker_voice.telephony.ari import AriClient
 from klanker_voice.telephony.config import load_telephony_config
 from klanker_voice.telephony.controller import DEFAULT_APP_NAME, AsteriskCallController
+
+#: Phase 15 (LEDG-02): bounded well under a normal process-manager
+#: SIGTERM->SIGKILL window -- mirrors server.py's LEDGER_DRAIN_TIMEOUT_SECONDS.
+LEDGER_DRAIN_TIMEOUT_SECONDS = 10.0
 
 #: ARI connection secrets (§13/D-09): env-only, never pipeline.toml.
 ARI_URL_ENV_VAR = "ASTERISK_ARI_URL"
@@ -117,6 +122,10 @@ async def main() -> None:
     try:
         await ari.run()
     finally:
+        # Phase 15 (LEDG-02, Pitfall 3): drain every live call's buffered
+        # ledger records before the ARI connection itself closes -- bounded
+        # so a hung writer can never block process exit.
+        await ledger.flush_all(timeout=LEDGER_DRAIN_TIMEOUT_SECONDS)
         await ari.close()
     logger.info("telephony controller: events WebSocket closed, exiting")
 
