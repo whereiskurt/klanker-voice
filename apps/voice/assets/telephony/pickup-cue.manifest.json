@@ -1,0 +1,9 @@
+{
+  "voiceId": "EIDLidDc73oTUWAedVPt",
+  "model": "eleven_flash_v2_5",
+  "sampleRate": 24000,
+  "clip": {
+    "text": "Hey \u2014 you've reached KPH. Go ahead and say your access phrase.",
+    "file": "kph-hey.wav"
+  }
+}
