@@ -319,3 +319,132 @@ func TestVoipmsRootRegistersCmd(t *testing.T) {
 		t.Fatal("kv root command tree is missing the voipms sub-command")
 	}
 }
+
+// --------------------------------------------------------------------------
+// ListInboundDIDs (getDIDsInfo) — the inbound-DID inventory helper.
+
+// TestListInboundDIDs_ArrayShape asserts the canned array envelope shape
+// returns one InboundDIDRecord per entry with fields populated.
+func TestListInboundDIDs_ArrayShape(t *testing.T) {
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":[
+			{"did":"14165551234","description":"Toronto main line","routing":"sip:klanker-pbx","pop":"Toronto"},
+			{"did":"16135555678","description":"Ottawa overflow","routing":"sip:klanker-pbx","pop":"Toronto"}
+		]}`))
+	})
+
+	got, err := ListInboundDIDs(t.Context(), vc)
+	if err != nil {
+		t.Fatalf("ListInboundDIDs() error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	want := []InboundDIDRecord{
+		{DID: "14165551234", Description: "Toronto main line", Routing: "sip:klanker-pbx", POP: "Toronto"},
+		{DID: "16135555678", Description: "Ottawa overflow", Routing: "sip:klanker-pbx", POP: "Toronto"},
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("got[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+// TestListInboundDIDs_SingleObjectShape asserts the VoIP.ms single-DID quirk
+// (dids is a bare object, not an array) yields exactly one record — not
+// zero, not a panic.
+func TestListInboundDIDs_SingleObjectShape(t *testing.T) {
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":{"did":"14165551234","description":"Only DID","routing":"sip:klanker-pbx","pop":"Toronto"}}`))
+	})
+
+	got, err := ListInboundDIDs(t.Context(), vc)
+	if err != nil {
+		t.Fatalf("ListInboundDIDs() error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	want := InboundDIDRecord{DID: "14165551234", Description: "Only DID", Routing: "sip:klanker-pbx", POP: "Toronto"}
+	if got[0] != want {
+		t.Errorf("got[0] = %+v, want %+v", got[0], want)
+	}
+}
+
+// TestListInboundDIDs_RequestShape asserts ListInboundDIDs sends
+// method=getDIDsInfo to the injected base URL (mirroring
+// TestVoipmsGetBalanceBuildsRequest).
+func TestListInboundDIDs_RequestShape(t *testing.T) {
+	var gotMethod string
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.URL.Query().Get("method")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":[]}`))
+	})
+
+	if _, err := ListInboundDIDs(t.Context(), vc); err != nil {
+		t.Fatalf("ListInboundDIDs() error: %v", err)
+	}
+	if gotMethod != voipmsMethodGetDIDsInfo {
+		t.Errorf("method = %q, want %q", gotMethod, voipmsMethodGetDIDsInfo)
+	}
+	if voipmsMethodGetDIDsInfo != "getDIDsInfo" {
+		t.Errorf("voipmsMethodGetDIDsInfo = %q, want %q", voipmsMethodGetDIDsInfo, "getDIDsInfo")
+	}
+}
+
+// TestListInboundDIDs_MissingDidsKeyIsEmptyNotPanic asserts a missing/oddly
+// typed "dids" key degrades to a non-nil empty slice, no error, no panic.
+func TestListInboundDIDs_MissingDidsKeyIsEmptyNotPanic(t *testing.T) {
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success"}`))
+	})
+
+	got, err := ListInboundDIDs(t.Context(), vc)
+	if err != nil {
+		t.Fatalf("ListInboundDIDs() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("ListInboundDIDs() returned nil, want a non-nil empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("len(got) = %d, want 0", len(got))
+	}
+}
+
+// TestListInboundDIDs_OddlyTypedDidsKeyIsEmptyNotPanic asserts a "dids" key
+// of an unexpected type (e.g. a bare string) also degrades safely.
+func TestListInboundDIDs_OddlyTypedDidsKeyIsEmptyNotPanic(t *testing.T) {
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":"no DIDs found"}`))
+	})
+
+	got, err := ListInboundDIDs(t.Context(), vc)
+	if err != nil {
+		t.Fatalf("ListInboundDIDs() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("ListInboundDIDs() returned nil, want a non-nil empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("len(got) = %d, want 0", len(got))
+	}
+}
+
+// TestListInboundDIDs_FailureStatusIsError asserts a status=failure envelope
+// surfaces as a Go error (inherited from do()).
+func TestListInboundDIDs_FailureStatusIsError(t *testing.T) {
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"failure","error":"invalid_credentials"}`))
+	})
+
+	if _, err := ListInboundDIDs(t.Context(), vc); err == nil {
+		t.Fatal("ListInboundDIDs() with status=failure returned nil error, want an error")
+	}
+}

@@ -286,13 +286,66 @@ func parseTOMLScalarLine(line string) (key, value string, ok bool) {
 }
 
 // --------------------------------------------------------------------------
+// Inbound DIDs (§25 VoIP.ms getDIDsInfo — the numbers the public calls).
+//
+// Distinct from the DID caller-ID -> access-code mint mappings above
+// (PhoneMappingRecord, keyed by the CALLER's number): this section answers
+// "what numbers do people actually dial to reach the agent?" — sourced live
+// from VoIP.ms, since those DIDs are wildcard-routed to the Asterisk edge
+// and are not enumerated anywhere in repo config.
+
+// InboundDIDReport is the Inbound DIDs section of the telephony report.
+// Status carries a short, human-readable degradation note (not configured /
+// API error) — Records is empty whenever Status is non-empty.
+type InboundDIDReport struct {
+	Records []InboundDIDRecord `json:"records"`
+	Status  string             `json:"status,omitempty"`
+}
+
+// readInboundDIDs mirrors readTelephonySecrets' total-degradation
+// philosophy: a missing-creds or VoIP.ms API failure NEVER returns a
+// top-level error — the DynamoDB/SSM/gate-config sections must always
+// render regardless of VoIP.ms's availability (T-k0k-03). When credsOK is
+// false, lister is never invoked and Status explains which env vars to set.
+// When the lister errors, Status is derived via shortVoipmsErrorNote — never
+// the raw error, which could carry the request URL / api_password.
+func readInboundDIDs(ctx context.Context, credsOK bool, lister func(context.Context) ([]InboundDIDRecord, error)) InboundDIDReport {
+	if !credsOK {
+		return InboundDIDReport{
+			Status: "not configured — set VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD to list inbound DIDs",
+		}
+	}
+	records, err := lister(ctx)
+	if err != nil {
+		return InboundDIDReport{
+			Status: fmt.Sprintf("error — %s", shortVoipmsErrorNote(err)),
+		}
+	}
+	return InboundDIDReport{Records: records}
+}
+
+// shortVoipmsErrorNote derives a short, non-sensitive note from a
+// ListInboundDIDs error without ever interpolating the raw request URL or
+// api_password. voipmsClient.do() already unwraps *url.Error before
+// wrapping (so the URL — which carries api_password in its query string —
+// never reaches the error chain in the first place); this is
+// belt-and-suspenders on top of that, mirroring shortSSMErrorNote's shape.
+func shortVoipmsErrorNote(err error) string {
+	if err == nil {
+		return "unavailable"
+	}
+	return "VoIP.ms API call failed (see operator logs for detail)"
+}
+
+// --------------------------------------------------------------------------
 // Assembled report + rendering.
 
 // TelephonyListReport is the full `kv telephony list` output shape.
 type TelephonyListReport struct {
-	DIDs       []PhoneMappingRecord `json:"dids"`
-	Secrets    SecretsReport        `json:"secrets"`
-	GateConfig GateConfigReport     `json:"gateConfig"`
+	InboundDIDs InboundDIDReport     `json:"inboundDids"`
+	DIDs        []PhoneMappingRecord `json:"dids"`
+	Secrets     SecretsReport        `json:"secrets"`
+	GateConfig  GateConfigReport     `json:"gateConfig"`
 }
 
 // defaultTelephonyConfigPath is the default --config path, relative to the
@@ -349,6 +402,16 @@ func NewTelephonyCmd(cfg *Config) *cobra.Command {
 				return err
 			}
 
+			var inboundDIDs InboundDIDReport
+			if creds, err := voipmsCredsFromEnv(); err != nil {
+				inboundDIDs = readInboundDIDs(c.Context(), false, nil)
+			} else {
+				vc := newVoipmsClient(creds)
+				inboundDIDs = readInboundDIDs(c.Context(), true, func(ctx context.Context) ([]InboundDIDRecord, error) {
+					return ListInboundDIDs(ctx, vc)
+				})
+			}
+
 			var secrets SecretsReport
 			if showSecrets {
 				ssmClient, err := cfg.SSMClient(c.Context())
@@ -366,9 +429,10 @@ func NewTelephonyCmd(cfg *Config) *cobra.Command {
 			}
 
 			report := TelephonyListReport{
-				DIDs:       dids,
-				Secrets:    secrets,
-				GateConfig: gateConfig,
+				InboundDIDs: inboundDIDs,
+				DIDs:        dids,
+				Secrets:     secrets,
+				GateConfig:  gateConfig,
 			}
 			return printTelephony(c, report, asJSON)
 		},
@@ -390,6 +454,21 @@ func printTelephony(c *cobra.Command, report TelephonyListReport, asJSON bool) e
 		return enc.Encode(report)
 	}
 
+	fmt.Fprintln(out, "Inbound DIDs (numbers the public calls):")
+	if report.InboundDIDs.Status != "" {
+		fmt.Fprintf(out, "  %s\n", report.InboundDIDs.Status)
+	} else {
+		didW := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(didW, "DID\tDESCRIPTION\tROUTING\tPOP")
+		for _, r := range report.InboundDIDs.Records {
+			fmt.Fprintf(didW, "%s\t%s\t%s\t%s\n", r.DID, r.Description, r.Routing, r.POP)
+		}
+		if err := didW.Flush(); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintln(out, "\nCaller-ID mint mappings (auto-identity by caller ID):")
 	w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(w, "PHONE\tCODE\tTIER\tENABLED")
 	for _, r := range report.DIDs {
