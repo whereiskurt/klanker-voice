@@ -163,3 +163,7 @@ None for this plan's own code — `LEDGER_BUCKET`/`AUTH_LEDGER_ID`/`AUTH_LEDGER_
 ---
 *Phase: 15-private-transcription-ledger-s3-batch-athena-admin-conversat*
 *Completed: 2026-07-13*
+
+## Self-Check: PASSED
+
+All 8 declared files confirmed present on disk; all 4 commit hashes (`eee8c87`, `1c02495`, `5ad4804`, `d896fc3`) confirmed present in `git log --oneline --all`.
