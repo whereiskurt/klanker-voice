@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/spf13/cobra"
@@ -35,21 +36,63 @@ type Config struct {
 	UsageTable  string
 	EndpointURL string
 	Region      string
+	Profile     string
 	LogLevel    string
+}
+
+// resolveAWSProfile implements the operator do-what-I-mean precedence for
+// which AWS shared-config profile to use:
+//  1. AWS_PROFILE set -> honor it verbatim (even alongside static creds).
+//  2. AWS_PROFILE unset but AWS_ACCESS_KEY_ID set -> return "" (no profile),
+//     so CI/static-cred runners are never hijacked by the operator default.
+//  3. Neither set -> "klanker-application", the operator SSO profile.
+func resolveAWSProfile(awsProfileEnv, awsAccessKeyEnv string) string {
+	if awsProfileEnv != "" {
+		return awsProfileEnv
+	}
+	if awsAccessKeyEnv != "" {
+		return ""
+	}
+	return "klanker-application"
+}
+
+// resolveAWSRegion returns awsRegionEnv when set, else the "us-east-1"
+// operator default (the /kmv/secrets/use1/* SSM params and the project's
+// DynamoDB tables all live in use1).
+func resolveAWSRegion(awsRegionEnv string) string {
+	if awsRegionEnv != "" {
+		return awsRegionEnv
+	}
+	return "us-east-1"
+}
+
+// loadAWS is the single AWS-config construction path shared by every
+// AWS-backed client (DynamoClient, SSMClient): it always sets the resolved
+// region and, when c.Profile is non-empty, the shared-config profile too —
+// leaving profile unset falls through to the ambient credential chain
+// (env vars, instance role, etc), which is how --profile "" forces
+// pure-ambient creds.
+func (c *Config) loadAWS(ctx context.Context) (aws.Config, error) {
+	opts := []func(*awsconfig.LoadOptions) error{
+		awsconfig.WithRegion(resolveAWSRegion(c.Region)),
+	}
+	if c.Profile != "" {
+		opts = append(opts, awsconfig.WithSharedConfigProfile(c.Profile))
+	}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+	if err != nil {
+		return aws.Config{}, fmt.Errorf("load aws config: %w", err)
+	}
+	return cfg, nil
 }
 
 // DynamoClient builds an aws-sdk-go-v2 DynamoDB client from the Config,
 // honoring EndpointURL for dynamodb-local (used by roundtrip_test.go and
-// local operator testing) and Region otherwise deferring to the ambient AWS
-// config/credential chain.
+// local operator testing) via loadAWS's shared config-construction path.
 func (c *Config) DynamoClient(ctx context.Context) (*dynamodb.Client, error) {
-	opts := []func(*awsconfig.LoadOptions) error{}
-	if c.Region != "" {
-		opts = append(opts, awsconfig.WithRegion(c.Region))
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
+	cfg, err := c.loadAWS(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+		return nil, err
 	}
 	return dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
 		if c.EndpointURL != "" {
@@ -94,8 +137,10 @@ func NewRootCmd() *cobra.Command {
 		"Voice usage DynamoDB table name, for usage/killswitch (default from KMV_USAGE_TABLE env)")
 	root.PersistentFlags().StringVar(&cfg.EndpointURL, "endpoint-url", os.Getenv("AWS_ENDPOINT_URL_DYNAMODB"),
 		"Override DynamoDB endpoint (for dynamodb-local dev/testing)")
-	root.PersistentFlags().StringVar(&cfg.Region, "region", os.Getenv("AWS_REGION"),
-		"AWS region (defaults to ambient AWS config/env)")
+	root.PersistentFlags().StringVar(&cfg.Region, "region", resolveAWSRegion(os.Getenv("AWS_REGION")),
+		"AWS region (defaults to us-east-1; AWS_REGION env overrides)")
+	root.PersistentFlags().StringVar(&cfg.Profile, "profile", resolveAWSProfile(os.Getenv("AWS_PROFILE"), os.Getenv("AWS_ACCESS_KEY_ID")),
+		"AWS shared-config profile (default klanker-application; empty forces ambient creds; AWS_PROFILE/AWS_ACCESS_KEY_ID honored)")
 
 	root.AddCommand(NewCodeCmd(cfg))
 	root.AddCommand(NewTierCmd(cfg))
