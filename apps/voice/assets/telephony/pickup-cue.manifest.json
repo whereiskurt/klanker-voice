@@ -2,9 +2,8 @@
   "voiceId": "EIDLidDc73oTUWAedVPt",
   "model": "eleven_flash_v2_5",
   "sampleRate": 24000,
-  "note": "Metadata only, hand-authored 2026-07-13 -- kph-hey.wav has NOT been rendered yet (requires ELEVENLABS_API_KEY, a human step: `make -C apps/voice pickup-cue`). This manifest declares the voice/text the render WILL use, so the drift guard (tests/test_pickup_cue_voice_drift.py) can already prove voiceId parity with pipeline.toml. pickup_cue.load_hey_clip() degrades to ring-only until the .wav is committed.",
   "clip": {
-    "text": "Hey — you've reached KPH. Go ahead and say your access phrase.",
+    "text": "Hey \u2014 you've reached KPH. Go ahead and say your access phrase.",
     "file": "kph-hey.wav"
   }
 }
