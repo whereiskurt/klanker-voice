@@ -127,7 +127,7 @@ async def test_flush_writes_one_put_object_with_expected_key_and_body(fake_s3):
         r"^ledger/dt=\d{4}-\d{2}-\d{2}/\d{6}Z-sess-flush-\d{4}\.jsonl$", key
     ), key
 
-    body = call["Body"]
+    body = call["Body"].decode("utf-8")
     lines = body.strip("\n").split("\n")
     assert len(lines) == 2
     records = [json.loads(line) for line in lines]
@@ -154,7 +154,7 @@ async def test_put_failure_keeps_batch_buffered_for_retry(fake_s3):
     await writer.flush()
 
     assert len(fake_s3.calls) == 1
-    body = fake_s3.calls[0]["Body"]
+    body = fake_s3.calls[0]["Body"].decode("utf-8")
     assert json.loads(body.strip("\n"))["text"] == "will retry"
 
 
