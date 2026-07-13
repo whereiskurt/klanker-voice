@@ -11,6 +11,7 @@ No AWS/network is required — the deployed ICE/RTP proof itself is 04-03's
 from __future__ import annotations
 
 import asyncio
+import types
 from unittest.mock import AsyncMock, MagicMock
 
 
@@ -49,13 +50,17 @@ def test_offer_negotiates_real_sdp_answer_for_stubbed_identity(monkeypatch):
     bypass_accounting) identity, driving the real offer-handling code path
     in-process — no deploy, no real ICE connect, no real media flow.
 
-    ``server._run_session`` (the per-session Pipecat pipeline: Deepgram STT +
-    Anthropic LLM + ElevenLabs TTS) is stubbed to a no-op: it's a fire-and-
-    forget background task the real handler kicks off after the SDP answer
-    is already computed, and constructing it needs real provider credentials
-    this in-process test never has. Stubbing it isolates exactly the seam
-    this test targets (offer -> aiortc negotiation -> answer) without
-    reaching into unrelated provider wiring (see 04-03-SUMMARY.md deviations).
+    ``server.create_call_session`` (09-01: the transport-neutral seam that
+    now owns pipeline construction — Deepgram STT + Anthropic LLM +
+    ElevenLabs TTS — previously built inside the fire-and-forget
+    ``_run_session`` task) is stubbed to a no-op returning a fake
+    ``CallSession``: constructing the real pipeline needs real provider
+    credentials this in-process test never has, and (09-01 timing shift)
+    pipeline construction now happens synchronously inside the connection
+    callback rather than in a background task. Stubbing it isolates exactly
+    the seam this test targets (offer -> aiortc negotiation -> answer)
+    without reaching into unrelated provider wiring (see 04-03-SUMMARY.md
+    deviations).
     """
     from fastapi.testclient import TestClient
 
@@ -69,8 +74,12 @@ def test_offer_negotiates_real_sdp_answer_for_stubbed_identity(monkeypatch):
     monkeypatch.setattr(server, "validate_access_token", lambda token: bypass_identity)
     # No real STUN network call during the in-process answer negotiation.
     monkeypatch.setattr(server._webrtc_handler, "_ice_servers", [])
-    # No real Pipecat pipeline/provider construction for this transport-sanity check.
-    monkeypatch.setattr(server, "_run_session", AsyncMock())
+    # No real Pipecat pipeline/provider construction for this transport-sanity
+    # check: create_call_session is stubbed to return a fake CallSession whose
+    # lifecycle is never actually started/stopped (run() is a no-op), so no
+    # CloudWatch/DynamoDB call is ever attempted either.
+    fake_call_session = types.SimpleNamespace(lifecycle=object(), run=AsyncMock())
+    monkeypatch.setattr(server, "create_call_session", AsyncMock(return_value=fake_call_session))
     # 04-04: SessionLifecycle.start()/stop() (CloudWatch metric emission) now
     # fire for every negotiated session, including bypass ones. This dev
     # environment carries real AWS credentials — never let a transport-only

@@ -112,3 +112,19 @@ variable "nlb" {
     logs_force_destroy         = true
   }
 }
+
+# Phase 12 (D-01, T-12-07-01): CIDR allow-list for the dedicated
+# telephony-edge security group (SIP/RTP ingress, e.g. the VoIP.ms Toronto
+# POP /32s). Deliberately its own variable — NOT folded into the generic
+# security groups above — so a consumer must explicitly attach it (see the
+# module's standalone `telephony_edge_security_group_id` output); it is
+# never part of the default `security_group_ids` list output, which
+# includes `webrtc_udp` (0.0.0.0/0 on UDP 20000-20100) and would defeat the
+# POP-lock if merged in. Default `[]` (every site/region that doesn't set
+# this) creates the security group with zero ingress rules — closed, not
+# open — so this addition is backward-compatible everywhere it isn't used.
+variable "telephony_edge_pop_cidrs" {
+  type        = list(string)
+  description = "CIDR blocks (e.g. VoIP.ms Toronto POP /32s) allowed to reach the telephony-edge security group on SIP/RTP. Empty = zero ingress rules (closed)."
+  default     = []
+}

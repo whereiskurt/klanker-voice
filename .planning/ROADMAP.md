@@ -320,3 +320,164 @@ Phases execute in order: 1 → 2 → 3 → 4 → 5 → **7** → **6** (Phases 1
 Plans:
 
 - [ ] TBD (run /gsd-plan-phase 8 to break down)
+
+---
+
+## Milestone v1.1: Telephony (VoIP.ms / Payphone)
+
+**Started:** 2026-07-11
+**Authoritative spec:** `docs/superpowers/specs/2026-07-11-voipms-telephony-integration.md` (interview-validated; addenda §23–§25 for phone→code→tier identity, the silent call-answer gate, and DEF CON hardening)
+**Goal:** A caller on the public telephone network — or the physical payphone through an ATA — can hold a natural conversation with the existing Klanker Voice agent, by adding an Asterisk SIP/PSTN edge and a Klanker-side media transport, reusing the existing Pipecat cascade (STT → LLM → TTS), quota gates, and session lifecycle unchanged. Inbound-only in v1.1; fail-closed at every layer; financial blast radius capped.
+
+**Phase ↔ spec mapping** (spec §19 implementation phases A–F):
+
+| Roadmap phase | Spec phase | Delivers |
+|---------------|-----------|----------|
+| Phase 9  | A | Transport-neutral shared call runtime (refactor, no telephony code) |
+| Phase 10 | B | Offline media adapter — PCMU codec, RTP, `TelephonyTransport` |
+| Phase 11 | C | Local Asterisk — ARI controller, bridges, external media, softphone call |
+| Phase 12 | D | VoIP.ms inbound DID reaches the agent from the cellular network |
+| Phase 13 | E | Physical payphone via its own ATA subaccount |
+| Phase 14 | F | Production hardening — Terraform, SSM, alarms, failure routing, runbook |
+
+**Execution order:** Phases 9 → 10 → 11 → 12 → 13 → 14 (strict dependency chain; each spec exit criterion gates the next).
+
+### Phase 9: VoIP.ms Telephony — Call Runtime Extraction
+
+**Goal:** Extract a transport-neutral shared call runtime (`apps/voice/src/klanker_voice/call_runtime.py`) from `server.py` so both the existing WebRTC path and future telephony construct, run, and idempotently close one live voice session through the same seam — a behavior-preserving refactor with the browser voice path unchanged. (Spec Phase A, §6 / §19-A / §21.)
+**Requirements**: none (telephony milestone has no REQ-IDs yet — coverage driven by the 6 success criteria + CONTEXT D-01..D-08)
+**Depends on:** Phase 5 (the deployed WebRTC voice path being refactored)
+**Plans:** 1/1 plans complete
+**Success Criteria** (what must be TRUE):
+
+  1. `call_runtime.py` exposes a narrow API to construct, run, and idempotently close a session around an arbitrary Pipecat `BaseTransport` (the spec §6 `CallSession` / `create_call_session(*, transport, identity, cfg, channel, metadata)` shape), owning quota-gate → ambience → `build_pipeline(cfg, transport)` → observers → `SessionLifecycle` → callbacks → greeting → one idempotent close path
+  2. The WebRTC `/api/offer` path is converted to use the shared runtime; quota start-gate, `SessionLifecycle`, observers, greeting (`greet_now`/`greet_first`), warning + goodbye callbacks, reconnect grace, RTVI, and ambience-mixer behavior are all preserved
+  3. Browser voice works exactly as before — every existing lifecycle / quota / greeting / connection-teardown test still passes (spec §19-A exit criterion)
+  4. `close()` is idempotent and lifecycle `release()` fires exactly once on worker or transport termination (single release path, §6.10) — the WebRTC-specific reconnect-race teardown (`webrtc.py`) is preserved, not generalized into the shared runtime
+  5. No SIP / Asterisk / RTP / codec / infrastructure code is introduced (Phase A boundary, §21.6), and no STT/LLM/TTS provider construction is duplicated (§22.2 — `factories.py` remains the single source)
+  6. Focused tests prove transport-neutral construction, idempotent close, and release-on-worker/transport-termination; a short architecture note documents the extracted seam and any existing coupling that resisted clean extraction (§21.7 / §21.9)
+
+Plans:
+
+- [x] 09-01-PLAN.md — Extract transport-neutral `call_runtime.py` (CallSession/create_call_session), convert the WebRTC `/api/offer` path to it, focused tests + architecture note (behavior-preserving refactor)
+
+**Waves:** 1 → {09-01}
+
+### Phase 10: VoIP.ms Telephony — Offline Media Adapter
+
+**Goal:** Recorded telephone audio traverses the real Klanker pipeline without SIP — add a PCMU (G.711 μ-law) codec, an RTP parser/packetizer, and the Pipecat-compatible `TelephonyTransport` (input/output processors, stateful 8 kHz↔pipeline-rate resampling, interruption flush). (Spec Phase B, §7–§10 / §19-B.)
+**Requirements**: TBD
+**Depends on:** Phase 9
+**Plans:** 2/2 plans complete
+**Wave 1**
+
+- [x] 10-01-PLAN.md — PCMU μ-law codec + RFC 3550 RTP parser/packetizer + offline in-memory RtpMediaSession + known-vector tests (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 10-02-PLAN.md — TelephonyTransport (input/output processors, per-direction 8 kHz boundary resampler, interruption flush, fire-once events) + §19-B offline pipeline-traversal proof (Wave 2)
+
+**Success Criteria** (what must be TRUE):
+
+  1. PCMU decode/encode pass known vectors; RTP sequence/timestamp/SSRC handling tolerates reordering, duplicates, and a single missing 20 ms packet (silence insertion acceptable)
+  2. `TelephonyTransport` emits correct Pipecat `InputAudioRawFrame`s from RTP and PCMU RTP from `OutputAudioRawFrame`s, with a stateful streaming resampler at the 8 kHz boundary (no per-frame drift)
+  3. Interruption flushes the output queue (≤20–60 ms application buffer); `stop()` is idempotent and the disconnect event fires exactly once
+  4. Recorded telephone audio (WAV → synthetic RTP) traverses the real `build_pipeline` end-to-end **offline** — RTP → `InputAudioRawFrame` in, `OutputAudioRawFrame` → captured PCMU RTP out — with no Asterisk and no live SIP (spec §19-B exit criterion). This is a hermetic path-traversal proof (no real provider APIs / network); the live Deepgram→ElevenLabs round-trip over telephone audio is deferred to a Phase 11 live eval (per CONTEXT D-08/D-10 — Phase B builds no providers).
+
+### Phase 11: VoIP.ms Telephony — Local Asterisk Edge
+
+**Goal:** A local SIP softphone call holds a full conversation with the agent through Asterisk — add the Asterisk configs (PJSIP/ARI/dialplan), an ARI/Stasis call controller that creates external-media channels + mixing bridges, and the call registry, wiring hangup to `lifecycle.release()`. (Spec Phase C, §7 / §13 / §19-C, plus the silent answer-gate §24 verified outside the LLM.)
+**Requirements**: none (coverage driven by success criteria 1-4 + CONTEXT decisions D-01..D-09)
+**Depends on:** Phase 10
+**Plans:** 7/7 plans complete
+
+Plans:
+**Wave 1**
+
+- [x] 11-01-PLAN.md — [telephony] config loader + credential-regex widening (D-09)
+- [x] 11-02-PLAN.md — Asterisk configs (inbound-only Stasis, private ARI) + docker-compose harness (D-01, D-07)
+- [x] 11-03-PLAN.md — socket-backed RtpMediaSession behind the Phase-10 Protocol (D-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 11-04-PLAN.md — raw-aiohttp ARI client (REST + events WS) (D-06)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 11-05-PLAN.md — AsteriskCallController + ActiveCall registry + idempotent teardown + §16 lifecycle tests (D-02)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 11-06-PLAN.md — the silent §24 answer-gate: GateProcessor + passphrase/PIN + redaction boundary + fail-closed (D-05)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 11-07-PLAN.md — standalone telephony entrypoint + SIPp fake-media CI test + manual §19-C proof (D-08, D-07)
+
+**Success Criteria** (what must be TRUE):
+
+  1. Asterisk configs (`pjsip.conf`, `ari.conf`, `extensions.conf`) exist with a narrow inbound-only Stasis dialplan; ARI is authenticated and private-only
+  2. An ARI controller allocates a media session, creates the external-media channel + bridge, constructs a Klanker `CallSession`, and keys an `ActiveCall` registry by channel ID
+  3. On `ChannelDestroyed`/hangup the controller closes the `CallSession`, releases lifecycle exactly once, and tears down bridge + external channel + RTP socket (no leaked resources)
+  4. A local SIP softphone reaches the Stasis app, hears the greeting (not clipped), converses, interrupts the agent, and hangs up cleanly (spec §19-C exit criterion)
+
+### Phase 12: VoIP.ms Telephony — Inbound DID
+
+**Goal:** A public VoIP.ms DID reliably reaches the agent from the cellular network — provision a dedicated `klanker-pbx` subaccount, register Asterisk, route the DID, apply the phone→code→tier identity (§23) + silent answer-gate (§24), and the security restrictions. (Spec Phase D, §4 / §11 / §23–§25 / §19-D.)
+**Requirements**: none (telephony milestone has no REQ-IDs — coverage driven by the 4 success criteria + CONTEXT D-01..D-06)
+**Depends on:** Phase 11
+**Plans:** 7/8 plans executed
+**Success Criteria** (what must be TRUE):
+
+  1. A dedicated `klanker-pbx` VoIP.ms subaccount (strong unique SIP password, IP-restricted, outbound disabled) is registered and the DID routes to it; secrets live only in SSM
+  2. A caller ID maps to an existing access code → tier via the existing mint path (§23); caller-ID alone grants at most the default minimal tier, and the silent DTMF-PIN / 4-word passphrase gate (§24, verified outside the LLM) is the only path to a high/`kph-tier` grant
+  3. Quota is enforced by the existing `SessionLifecycle` (1 concurrent, short max duration, small daily cap); a call from a mobile phone completes a multi-turn conversation and hangs up cleanly from either side (spec §19-D exit criterion)
+  4. Fail-closed behavior holds: a scanner/unknown caller who fails the gate burns no STT/LLM/TTS quota and gets a static goodbye + hangup; Klanker unavailable → static unavailable message, never a silent open call
+
+Plans:
+**Wave 1**
+
+- [x] 12-01-PLAN.md — `kv voipms` API automation + operator provisioning runbook (§25.F order) (D-03) [Wave 1]
+- [x] 12-02-PLAN.md — Auth §23 mint path: E.164 normalization + sparse byPhone GSI + resolvePhoneToCode + private no-oracle /tel route + tests (D-02) [Wave 1]
+- [x] 12-03-PLAN.md — `kv code phone` + electro gsi3 byPhone key writers + normalization-parity tests (D-05) [Wave 1]
+- [x] 12-04-PLAN.md — Asterisk VoIP.ms registration trunk (inbound-only, ulaw-only) + render extension + config-lint tests (D-01) [Wave 1]
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 12-05-PLAN.md — [BLOCKING] provision byPhone GSI live on kmv-auth-electro + seed kph-tier/baseline tier/Kurt→defcon34 (D-05) [Wave 2]
+- [x] 12-06-PLAN.md — Controller wiring: caller-ID→/tel mint→entitled tier composed with the unchanged §24 gate + fail-closed (D-02/D-05/D-04) [Wave 2]
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 12-07-PLAN.md — Minimal secure telephony-edge deploy: POP-locked SG + SSM valueFrom + Dockerfile (D-01/D-04) [Wave 3]
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 12-08-PLAN.md — Manual §19-D cellular proof (D-06) [Wave 4]
+
+**Waves:** 1 → {12-01, 12-02, 12-03, 12-04} → 2 → {12-05, 12-06} → 3 → {12-07} → 4 → {12-08}
+
+### Phase 13: VoIP.ms Telephony — Physical Payphone
+
+**Goal:** The physical payphone handset converses naturally with the agent — register the ATA on its own `payphone-ata` subaccount, verify the VoIP.ms echo test, call the Klanker DID, and tune ATA gain/DTMF only if measured necessary. (Spec Phase E, §4 / §19-E; no Klanker code specific to the ATA.)
+**Requirements**: TBD
+**Depends on:** Phase 12
+**Plans:** 0 plans
+**Success Criteria** (what must be TRUE):
+
+  1. The ATA is registered on its own `payphone-ata` subaccount (isolated credential, incapable of expensive destinations) and passes the VoIP.ms echo test independently
+  2. The payphone calls the Klanker DID like any other telephone and holds a natural two-way conversation (spec §19-E exit criterion)
+  3. Any gain/DTMF tuning needed is documented; no Klanker-side code change is required specifically for the ATA (§22.8)
+
+### Phase 14: VoIP.ms Telephony — Production Hardening
+
+**Goal:** The telephony edge is production-ready and DEF-CON-hostile-safe — Terraform/Terragrunt for an isolated `telephony-edge` deploy, SSM secrets, alarms + dashboards, failure routing, load/concurrency test, and an operations runbook. (Spec Phase F, §15 / §17 / §18 / §25 / §19-F / §20.)
+**Requirements**: TBD
+**Depends on:** Phase 13
+**Plans:** 0 plans
+**Success Criteria** (what must be TRUE):
+
+  1. An isolated `telephony-edge` service is deployed via Terraform/Terragrunt (separately deployable from `voice`/`auth`); SIP/RTP ingress is restricted to VoIP.ms POP ranges and ARI is never internet-exposed
+  2. Telephony metrics/alarms exist (`ActivePstnCalls`, setup latency, packet loss/jitter, hangup reason, gate-fail rate, ANY outbound attempt, balance drop) without caller-ID cardinality
+  3. Failure routing is verified: pipeline mid-call error, lost Klanker media, registration failure, and quota-denied all fail closed without leaving open PSTN charges; outbound calling is disabled everywhere
+  4. An operations runbook covers registration, DID routing kill-switch, credential rotation, and one-way-audio debugging; the spec §20 Definition of Done checklist is satisfied

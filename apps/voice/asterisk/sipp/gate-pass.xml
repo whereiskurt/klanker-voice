@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  Klanker gate-pass scenario (Phase 11 Plan 07, D-07/R4).
+
+  A SIPp UAC scenario exercising the local Asterisk edge's inbound call
+  path end-to-end at the SIP transaction layer: INVITE -> 200 OK -> ACK ->
+  (a short pause standing in for the caller staying silent through the §24
+  answer-gate) -> a pre-recorded RTP/PCMU pcap replay of either the spoken
+  4-word passphrase or DTMF PIN tones (see fixtures/README.md for how this
+  fixture is recorded) -> a pause for the agent to greet/converse -> BYE.
+
+  This is the "SIP client" half of D-07's "SIP client -> Asterisk -> fake
+  Klanker media transport" split. SIPp only proves the SIP
+  signaling/transaction layer landed correctly (its own exit code + call
+  stats); it does NOT and cannot assert anything about the Klanker-side
+  behavior (gate unlock, greeting-not-clipped, hangup) -- those assertions
+  live in the deterministic controller-level fake-media test
+  (tests/test_telephony_integration.py) and, for the perceptual
+  greeting-not-clipped judgment specifically, the documented manual §19-C
+  softphone proof (asterisk/README.md). This scenario is opt-in local-only
+  tooling (docker-compose.yml's `sipp` service, `profiles: [integration]`)
+  -- never required for CI green.
+
+  Usage (against a running docker-compose Asterisk instance, see
+  asterisk/README.md):
+
+    docker compose --profile integration run --rm sipp
+
+  or directly against a locally installed sipp binary:
+
+    cd apps/voice/asterisk/sipp
+    sipp -sf gate-pass.xml -s dev-softphone 127.0.0.1:5060 -m 1
+-->
+<scenario name="Klanker gate-pass: INVITE -> 200 -> ACK -> passphrase pcap -> BYE">
+  <send retrans="500">
+    <![CDATA[
+
+      INVITE sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+      From: klanker-sipp <sip:sipp@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>
+      Call-ID: [call_id]
+      CSeq: 1 INVITE
+      Contact: <sip:sipp@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Subject: klanker gate-pass integration
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=user1 53655765 2353687637 IN IP[local_ip_type] [local_ip]
+      s=-
+      c=IN IP[media_ip_type] [media_ip]
+      t=0 0
+      m=audio [media_port] RTP/AVP 0 101
+      a=rtpmap:0 PCMU/8000
+      a=rtpmap:101 telephone-event/8000
+      a=fmtp:101 0-15
+      a=sendrecv
+
+    ]]>
+  </send>
+
+  <recv response="100" optional="true"/>
+  <recv response="180" optional="true"/>
+  <recv response="200" rtd="true"/>
+
+  <send>
+    <![CDATA[
+
+      ACK sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+      From: klanker-sipp <sip:sipp@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 1 ACK
+      Contact: <sip:sipp@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- §24 silent answer-gate: the line must stay dark here (no greeting/
+       LLM/TTS from Klanker) -- SIPp deliberately sends nothing during this
+       pause. The perceptual "genuinely silent, not a ring/beep" judgment
+       is a human-ear call (manual §19-C proof), not something this
+       scripted scenario asserts. -->
+  <pause milliseconds="500"/>
+
+  <!-- Replays a short recorded RTP/PCMU capture: either the caller
+       speaking the 4-word passphrase, or RFC2833 DTMF tones for the PIN
+       (two separate fixture files -- see fixtures/README.md for the
+       recording recipe). Swap the filename below to exercise the other
+       gate_mode factor. Missing fixture -> sipp fails loudly (this
+       scenario does not silently skip). -->
+  <nop>
+    <action>
+      <exec play_pcap_audio="fixtures/gate-pass-passphrase.pcap"/>
+    </action>
+  </nop>
+
+  <!-- Gate-unlock -> greet -> a short simulated conversation window. -->
+  <pause milliseconds="4000"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      BYE sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+      From: klanker-sipp <sip:sipp@[local_ip]:[local_port]>;tag=[call_number]
+      To: <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 2 BYE
+      Contact: <sip:sipp@[local_ip]:[local_port]>
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200" crlf="true"/>
+
+  <!-- Unused (no repeat/statistics tuning needed for a single-call, m=1
+       integration run) -- kept for scenario-file completeness/diffability
+       against SIPp's own reference scenarios. -->
+  <ResponseTimeRepartition value="10, 20, 30, 40, 50, 100, 150, 200"/>
+  <CallLengthRepartition value="10, 50, 100, 500, 1000, 5000, 10000"/>
+
+</scenario>

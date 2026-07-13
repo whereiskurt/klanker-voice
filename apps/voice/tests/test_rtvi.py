@@ -1,7 +1,9 @@
 """RTVI wiring tests (05-01, CLNT-03/04/06, D-09).
 
 Task 1: RTVIProcessor placement in build_pipeline + RTVIObserverParams +
-the worker built in server._run_session carries an RTVIObserver.
+the worker built by klanker_voice.call_runtime.create_call_session (09-01:
+the transport-neutral seam extracted from server.py's former
+``_run_session``) carries an RTVIObserver.
 
 Task 2: LatencyReportObserver emits one composed ``kmv-latency``
 RTVIServerMessageFrame per finalized turn — the HUD's live data source.
@@ -58,7 +60,7 @@ def _cfg() -> PipelineConfig:
 
 class _FakeTransport:
     """Minimal transport double: .input()/.output() FrameProcessors plus a
-    no-op event_handler decorator (server._run_session registers
+    no-op event_handler decorator (create_call_session registers
     on_client_disconnected/on_client_connected handlers on the transport)."""
 
     def input(self) -> FrameProcessor:
@@ -106,59 +108,54 @@ class TestTask1RTVIPlacement:
         assert params.user_transcription_enabled is True
         assert params.metrics_enabled is True
 
-    def test_run_session_worker_observers_include_rtvi_observer(self, monkeypatch, stub_provider_keys):
-        """server._run_session builds a worker whose observers list carries an
+    def test_create_call_session_worker_observers_include_rtvi_observer(
+        self, stub_provider_keys
+    ):
+        """klanker_voice.call_runtime.create_call_session (09-01: the
+        transport-neutral seam extracted from server.py's former
+        ``_run_session``) builds a worker whose observers list carries an
         RTVIObserver alongside the pre-existing latency/teardown observers.
 
-        Heavy runtime bits (real WebRTC transport, WorkerRunner.run(), greet
-        wiring) are stubbed — this test isolates the worker/observer wiring
-        seam, matching test_smoke.py's stubbing precedent for _run_session's
-        neighbors.
+        Heavy runtime bits (real WebRTC transport, ``CallSession.run()``)
+        are never exercised — ``create_call_session`` only *constructs* the
+        session, it doesn't run the pipeline — so the real ``PipelineWorker``
+        can be built directly against the fake transport with no stubbing.
         """
-        import server
-        from klanker_voice import quota
-        from klanker_voice.session import SessionLifecycle, TeardownObserver
+        import asyncio as _asyncio
 
-        captured: dict = {}
+        from klanker_voice import call_runtime, quota
+        from klanker_voice.config import load_duplex_config, load_knowledge_config, load_quota_config
+        from klanker_voice.session import TeardownObserver
 
-        class _FakeWorker:
-            def __init__(self, pipeline, *, observers=None):
-                captured["observers"] = observers or []
-
-        def _fake_build_worker(pipeline, *, observers=None):
-            return _FakeWorker(pipeline, observers=observers)
-
-        class _FakeRunner:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def add_workers(self, worker):
-                pass
-
-            async def run(self):
-                pass
-
-            async def cancel(self, *args, **kwargs):
-                pass
-
-        monkeypatch.setattr(server, "SmallWebRTCTransport", lambda **kwargs: _FakeTransport())
-        monkeypatch.setattr(server, "build_worker", _fake_build_worker)
-        monkeypatch.setattr(server, "WorkerRunner", _FakeRunner)
-        monkeypatch.setattr(server, "register_greet_first", lambda *a, **k: None)
-
-        lifecycle = SessionLifecycle(
-            user_id="u1",
+        gate_result = quota.GateResult(
             session_id="s1",
             tier=quota.Tier(
                 tier_id="demo", session_max_seconds=120, period_max_seconds=600, max_concurrent=2
             ),
-            quota_config=server.load_quota_config(),
+            session_max_seconds=120,
+            remaining_daily_seconds=600,
             bypass_accounting=True,
         )
 
-        asyncio.run(server._run_session(connection=object(), lifecycle=lifecycle))
+        call_session = _asyncio.run(
+            call_runtime.create_call_session(
+                transport=_FakeTransport(),
+                identity=call_runtime.CallIdentity(subject="u1", authenticated=True),
+                gate_result=gate_result,
+                cfg=_cfg(),
+                knowledge_cfg=load_knowledge_config(),
+                duplex_cfg=load_duplex_config(),
+                quota_cfg=load_quota_config(),
+                channel="webrtc",
+                metadata={},
+            )
+        )
 
-        observers = captured["observers"]
+        # PipelineWorker wraps the observers list passed to build_worker() in
+        # its private WorkerObserver proxy — inspect the real thing rather
+        # than stubbing build_worker (a fake worker lacks the `.name`/
+        # `.attach()` real WorkerRunner.add_workers() requires).
+        observers = call_session.worker._observer._observers
         assert any(isinstance(o, RTVIObserver) for o in observers)
         assert any(isinstance(o, LatencyReportObserver) for o in observers)
         assert any(isinstance(o, TeardownObserver) for o in observers)
@@ -172,7 +169,9 @@ class TestPacingFnWiring:
     feature (built + unit-tested in 07-05's test_knowledge_pacing.py) is dead
     code in the deployed bot:
       1. ``build_pipeline`` forwards the fn to ``KnowledgeRouterProcessor``.
-      2. ``server._run_session`` passes ``lifecycle.remaining_seconds`` into
+      2. ``klanker_voice.call_runtime.create_call_session`` (09-01: the
+         transport-neutral seam extracted from server.py's former
+         ``_run_session``) passes ``lifecycle.remaining_seconds`` into
          ``build_pipeline``.
     The dev/eval path (bot.py) supplies nothing → stays ``None`` (no session
     cap there), so no regression for existing callers.
@@ -201,17 +200,18 @@ class TestPacingFnWiring:
         )
         assert router._remaining_seconds_fn is None
 
-    def test_run_session_sources_remaining_seconds_from_lifecycle(
+    def test_create_call_session_sources_remaining_seconds_from_lifecycle(
         self, monkeypatch, stub_provider_keys
     ):
-        """``server._run_session`` must hand ``lifecycle.remaining_seconds`` to
-        ``build_pipeline`` so the deployed router paces to the real session
-        clock. Heavy runtime bits stubbed (same seam as the RTVI-observer test
-        above); ``build_pipeline`` is wrapped to capture its kwarg while still
-        running for real."""
-        import server
-        from klanker_voice import quota
-        from klanker_voice.session import SessionLifecycle
+        """``klanker_voice.call_runtime.create_call_session`` must hand
+        ``lifecycle.remaining_seconds`` to ``build_pipeline`` so the deployed
+        router paces to the real session clock. ``build_pipeline`` (as
+        imported into ``call_runtime``'s namespace) is wrapped to capture its
+        kwarg while still running for real."""
+        import asyncio as _asyncio
+
+        from klanker_voice import call_runtime, quota
+        from klanker_voice.config import load_duplex_config, load_knowledge_config, load_quota_config
 
         captured: dict = {}
 
@@ -219,48 +219,37 @@ class TestPacingFnWiring:
             captured["remaining_seconds_fn"] = kwargs.get("remaining_seconds_fn")
             return build_pipeline(cfg, transport, **kwargs)
 
-        class _FakeWorker:
-            def __init__(self, pipeline, *, observers=None):
-                pass
+        monkeypatch.setattr(call_runtime, "build_pipeline", _capturing_build_pipeline)
 
-        class _FakeRunner:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def add_workers(self, worker):
-                pass
-
-            async def run(self):
-                pass
-
-            async def cancel(self, *args, **kwargs):
-                pass
-
-        monkeypatch.setattr(server, "SmallWebRTCTransport", lambda **kwargs: _FakeTransport())
-        monkeypatch.setattr(server, "build_pipeline", _capturing_build_pipeline)
-        monkeypatch.setattr(
-            server, "build_worker", lambda pipeline, *, observers=None: _FakeWorker(pipeline)
-        )
-        monkeypatch.setattr(server, "WorkerRunner", _FakeRunner)
-        monkeypatch.setattr(server, "register_greet_first", lambda *a, **k: None)
-
-        lifecycle = SessionLifecycle(
-            user_id="u1",
+        gate_result = quota.GateResult(
             session_id="s1",
             tier=quota.Tier(
                 tier_id="demo", session_max_seconds=120, period_max_seconds=600, max_concurrent=2
             ),
-            quota_config=server.load_quota_config(),
+            session_max_seconds=120,
+            remaining_daily_seconds=600,
             bypass_accounting=True,
         )
 
-        asyncio.run(server._run_session(connection=object(), lifecycle=lifecycle))
+        call_session = _asyncio.run(
+            call_runtime.create_call_session(
+                transport=_FakeTransport(),
+                identity=call_runtime.CallIdentity(subject="u1", authenticated=True),
+                gate_result=gate_result,
+                cfg=_cfg(),
+                knowledge_cfg=load_knowledge_config(),
+                duplex_cfg=load_duplex_config(),
+                quota_cfg=load_quota_config(),
+                channel="webrtc",
+                metadata={},
+            )
+        )
 
         fn = captured["remaining_seconds_fn"]
         assert fn is not None
         # Bound methods are re-created per attribute access, so compare identity
         # via __self__ (the exact lifecycle instance) rather than `is`.
-        assert getattr(fn, "__self__", None) is lifecycle
+        assert getattr(fn, "__self__", None) is call_session.lifecycle
 
 
 # ---------------------------------------------------------------------------

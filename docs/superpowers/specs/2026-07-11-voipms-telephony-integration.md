@@ -1,0 +1,1272 @@
+# Klanker Voice: VoIP.ms / Payphone Telephony Integration Plan
+
+**Repository:** `whereiskurt/klanker-voice`  
+**Audience:** implementation agent working directly in the repository  
+**Status:** proposed implementation plan  
+**Primary goal:** allow a caller on the public telephone network—or the physical payphone connected through an ATA—to talk to the existing Klanker Voice agent.
+
+---
+
+## 1. Executive summary
+
+Do **not** build a separate telephone-specific AI pipeline.
+
+`klanker-voice` already has a transport-neutral Pipecat cascade:
+
+```text
+transport.input()
+  -> STT
+  -> optional duplex controller
+  -> knowledge router
+  -> user context aggregator
+  -> Anthropic LLM
+  -> ElevenLabs TTS
+  -> transport.output()
+  -> assistant context aggregator
+```
+
+The telephony project should add a new audio transport at the edge and continue using the existing:
+
+- Deepgram STT selection
+- Smart Turn / Flux turn detection
+- `DuplexController`
+- Anthropic Haiku configuration
+- ElevenLabs TTS and pronunciation filtering
+- knowledge routing and retrieval
+- greeting behavior
+- quota gates and session lifecycle
+- metrics, teardown observers, and ECS scale-in protection
+
+### Recommended first production architecture
+
+```text
+Caller / payphone
+      |
+    PSTN
+      |
+  VoIP.ms DID
+      |
+  SIP trunk or SIP URI
+      |
+ Asterisk edge service
+      |
+ ARI External Media: RTP/PCM
+      |
+ Telephony transport adapter
+      |
+ Existing Klanker Pipecat pipeline
+```
+
+Use **Asterisk as the SIP/PSTN boundary** and add a Klanker-side media adapter. This is lower risk than embedding a full SIP registrar, transaction layer, SDP negotiator, RTP NAT traversal implementation, and DTMF stack directly into the Python voice service.
+
+The physical payphone remains independent:
+
+```text
+Payphone -> ATA -> VoIP.ms subaccount
+```
+
+It can call the Klanker DID like any other telephone. Incoming PSTN callers can also reach the same agent.
+
+---
+
+## 2. Existing codebase findings
+
+The primary runtime is under:
+
+```text
+apps/voice/
+```
+
+The Python package is:
+
+```text
+apps/voice/src/klanker_voice/
+```
+
+Important existing seams:
+
+### `pipeline.py`
+
+`build_pipeline(cfg, transport, ...)` already accepts a Pipecat `BaseTransport`.
+
+This is the most important integration seam. The current processor graph begins with `transport.input()` and ends with `transport.output()`. Telephony should preserve this contract.
+
+The pipeline also already supports:
+
+- optional RTVI processing
+- optional full-duplex handling through `DuplexController`
+- a per-session `RetrievalIndex`
+- knowledge topic routing before aggregation
+- immediate greeting through `greet_now()`
+- deterministic TTS goodbye through `TTSSpeakFrame`
+
+### `factories.py`
+
+All AI service creation is centralized:
+
+- Deepgram Nova-3
+- Deepgram Flux
+- Anthropic
+- ElevenLabs
+- VAD and user-turn strategies
+
+Do not duplicate provider construction in telephony code. A phone call should use the same `PipelineConfig` and factory functions as WebRTC.
+
+### `pipeline.toml`
+
+This is explicitly the single stage-selection surface.
+
+Current relevant defaults observed in the repository include:
+
+- Deepgram Nova-3
+- Smart Turn v3
+- Anthropic Claude Haiku 4.5
+- ElevenLabs Flash v2.5
+- configured voice, speed, and voice settings
+
+Add a `[telephony]` section only for transport/media behavior. Do not add provider credentials or parallel STT/LLM/TTS settings.
+
+### `session.py`
+
+`SessionLifecycle` already owns:
+
+- session duration
+- accounting ticks
+- concurrency bookkeeping
+- active-session CloudWatch metrics
+- ECS task scale-in protection
+- reconnect and silence teardown
+- warning and hard-stop callbacks
+- one idempotent release path
+
+A telephone call must create and release this lifecycle exactly as a browser session does.
+
+For telephony, a SIP hangup or Asterisk channel destruction is terminal. It should normally release immediately rather than using a browser-style reconnect grace period.
+
+### `server.py`
+
+This is the current deployed service entry point and owns live connection setup.
+
+Avoid putting SIP transaction logic directly into this already-large file. Add a telephony module and expose a narrow call-session function from shared runtime code.
+
+### `webrtc.py`
+
+WebRTC-specific connection and ICE configuration is isolated. Follow the same pattern by introducing a telephony-specific module rather than adding branches throughout WebRTC code.
+
+---
+
+## 3. Scope
+
+### Phase 1 scope
+
+Implement inbound calls from a VoIP.ms DID to the Klanker agent.
+
+Acceptance flow:
+
+```text
+1. Call the DID.
+2. Asterisk answers.
+3. Klanker creates a normal quota-controlled session.
+4. The configured greeting is heard.
+5. Caller audio reaches Deepgram.
+6. Klanker responses return through ElevenLabs.
+7. Caller can interrupt the agent.
+8. Hanging up releases all resources promptly.
+9. Existing web sessions continue to work unchanged.
+```
+
+### Phase 1.5 scope
+
+Allow the ATA-connected payphone to call the same DID.
+
+No Klanker code should be required specifically for the ATA. It is simply a SIP endpoint registered to VoIP.ms.
+
+### Later scope
+
+- outbound calls initiated by Klanker
+- DTMF menus or actions
+- transfer to Kurt's mobile
+- simultaneous ring / fallback routing
+- voicemail or call recording
+- multiple DIDs mapped to personas
+- SMS entry point
+- direct SIP endpoint without Asterisk
+
+---
+
+## 4. VoIP.ms configuration
+
+Create a dedicated VoIP.ms subaccount for the PBX/agent. Do not reuse the ATA's credentials.
+
+Suggested logical accounts:
+
+```text
+main account
+├── subaccount: payphone-ata
+└── subaccount: klanker-pbx
+```
+
+### PBX subaccount
+
+Set the device type to the equivalent of:
+
+```text
+Asterisk / IP PBX / gateway / VoIP switch
+```
+
+Use a dedicated SIP password.
+
+Select one VoIP.ms POP and use the same POP for:
+
+- the PBX registration/trunk
+- the DID routing
+
+For Ontario, choose based on measured latency and reliability rather than naming alone.
+
+### DID routing
+
+Route the DID to the `klanker-pbx` SIP subaccount.
+
+An alternative is routing the DID to an external SIP URI exposed by the Asterisk edge. Start with registration-based trunking unless infrastructure constraints strongly favor URI routing.
+
+### Codecs
+
+For the first implementation, prefer:
+
+```text
+PCMU / G.711 μ-law, 8 kHz, mono
+```
+
+Reasons:
+
+- universal PSTN compatibility
+- minimal transcoding surprises
+- Asterisk support
+- predictable 20 ms RTP packetization
+
+G.722 can be added for SIP-to-SIP HD audio, but ordinary PSTN calls will remain narrowband.
+
+### Security controls
+
+Apply:
+
+- dedicated subaccount
+- strong generated credential
+- IP restriction when the service has stable egress
+- international dialing disabled unless explicitly needed
+- account and per-call spending limits
+- maximum call duration
+- TLS/SRTP when supported end-to-end
+- no SIP credentials in Git or `pipeline.toml`
+
+Keep the ATA account incapable of expensive destinations where possible.
+
+---
+
+## 5. Proposed repository changes
+
+Suggested files:
+
+```text
+apps/voice/
+├── asterisk/
+│   ├── extensions.conf
+│   ├── pjsip.conf
+│   ├── ari.conf
+│   └── README.md
+├── src/klanker_voice/
+│   ├── call_runtime.py
+│   └── telephony/
+│       ├── __init__.py
+│       ├── config.py
+│       ├── controller.py
+│       ├── media.py
+│       ├── transport.py
+│       └── types.py
+├── tests/
+│   ├── test_telephony_config.py
+│   ├── test_telephony_media.py
+│   ├── test_telephony_lifecycle.py
+│   └── test_telephony_transport.py
+└── pipeline.toml
+```
+
+Infrastructure additions should follow the repository's current Terragrunt layout, probably as a distinct service:
+
+```text
+infra/terraform/live/site/.../services/telephony-edge/
+```
+
+Keep the Asterisk process separate from `apps/voice` unless there is a compelling operational reason to co-locate them.
+
+---
+
+## 6. Extract a shared call runtime
+
+Before adding telephony, extract the reusable session setup currently embedded in `server.py`.
+
+Target API:
+
+```python
+@dataclass
+class CallSession:
+    session_id: str
+    worker: PipelineWorker
+    lifecycle: SessionLifecycle
+
+    async def run(self) -> None: ...
+    async def close(self, reason: str) -> None: ...
+
+
+async def create_call_session(
+    *,
+    transport: BaseTransport,
+    identity: CallIdentity,
+    cfg: PipelineConfig,
+    channel: Literal["webrtc", "pstn"],
+    metadata: dict[str, str],
+) -> CallSession:
+    ...
+```
+
+Responsibilities:
+
+1. authenticate or resolve the caller identity
+2. call the quota start gate
+3. build ambience mixer when compatible
+4. build the existing pipeline
+5. create observers
+6. create `SessionLifecycle`
+7. wire warning and stop callbacks
+8. wire transport disconnect handling
+9. register or invoke greeting
+10. return a session object with one idempotent close path
+
+Both WebRTC and telephony should use this function.
+
+Do not attempt a large rewrite of all of `server.py`. Extract only the path needed to prevent duplicated lifecycle and pipeline wiring.
+
+---
+
+## 7. Telephony media boundary
+
+### Recommended Asterisk mechanism
+
+Use:
+
+- PJSIP for VoIP.ms
+- ARI/Stasis for call control
+- ARI External Media for audio exchange
+
+High-level call sequence:
+
+```text
+VoIP.ms sends SIP INVITE
+  -> Asterisk PJSIP endpoint/trunk
+  -> dialplan answers
+  -> channel enters Stasis app
+  -> controller creates External Media channel
+  -> caller and external-media channel join a mixing bridge
+  -> Klanker receives and sends RTP
+  -> channel hangup closes Klanker session
+```
+
+### Why not direct SIP in Phase 1?
+
+Direct SIP would require the application to correctly own:
+
+- SIP registration refresh
+- digest authentication
+- INVITE/re-INVITE/ACK/BYE transaction state
+- SDP offer/answer
+- RTP port allocation
+- NAT and public-address advertisement
+- symmetric RTP
+- DTMF negotiation
+- codec negotiation and transcoding
+- retransmission timers
+- provider-specific quirks
+- malformed and hostile internet traffic
+
+Asterisk already handles these concerns well. Klanker should own conversational media and agent behavior.
+
+---
+
+## 8. `TelephonyTransport`
+
+Implement a Pipecat-compatible transport.
+
+Conceptual API:
+
+```python
+class TelephonyTransport(BaseTransport):
+    def __init__(
+        self,
+        *,
+        call_id: str,
+        media: RtpMediaSession,
+        params: TelephonyTransportParams,
+    ) -> None:
+        ...
+
+    def input(self) -> FrameProcessor:
+        ...
+
+    def output(self) -> FrameProcessor:
+        ...
+
+    async def start(self) -> None:
+        ...
+
+    async def stop(self) -> None:
+        ...
+```
+
+### Input path
+
+```text
+RTP PCMU payload
+  -> sequence/jitter handling
+  -> μ-law decode
+  -> signed 16-bit PCM
+  -> optional resample 8 kHz -> pipeline input rate
+  -> Pipecat InputAudioRawFrame
+```
+
+### Output path
+
+```text
+Pipecat OutputAudioRawFrame
+  -> resample pipeline rate -> 8 kHz
+  -> signed PCM -> μ-law encode
+  -> 20 ms framing
+  -> RTP packetization
+  -> Asterisk external-media address
+```
+
+### Transport events
+
+Expose telephony equivalents of existing connection events:
+
+```text
+on_client_connected
+on_client_disconnected
+```
+
+For a new answered call, emit connected once the media path is ready. This allows existing greeting registration to work.
+
+On SIP/ARI hangup:
+
+```text
+transport stop
+-> cancel worker
+-> lifecycle.release()
+-> remove call registry entry
+```
+
+Make every step idempotent.
+
+---
+
+## 9. Audio details
+
+### Narrowband reality
+
+PSTN audio is normally approximately:
+
+```text
+8 kHz
+mono
+G.711
+telephone-band speech
+```
+
+Do not send 44.1 or 48 kHz audio to the SIP side and assume Asterisk will always make good choices.
+
+### Deepgram input
+
+Confirm the Pipecat Deepgram service receives accurate sample-rate metadata after decoding. The input frame's sample rate must match the actual PCM.
+
+Deepgram can process 8 kHz telephone audio, but test recognition quality with:
+
+- payphone handset
+- background room noise
+- Canadian and US telephone paths
+- speakerphone
+- clipped or quiet callers
+
+### ElevenLabs output
+
+The existing ElevenLabs service may generate at a higher sample rate. Downsample once, at the telephony transport boundary.
+
+Use a stateful streaming resampler. Avoid independently resampling each tiny frame because that can create boundary artifacts and clock drift.
+
+### Packetization
+
+Start with:
+
+```text
+codec: PCMU
+clock: 8000 Hz
+packet time: 20 ms
+samples per packet: 160
+payload type: negotiated, commonly 0 for PCMU
+```
+
+Do not assume RTP payload type without reading the negotiated/external-media format.
+
+### Jitter and loss
+
+Asterisk should absorb the public SIP/RTP edge. The Klanker external-media path is under our control, but the adapter should still tolerate:
+
+- minor reordering
+- duplicate packets
+- a missing packet
+- timestamp discontinuity at startup
+
+For an MVP, silence insertion for a missing 20 ms packet is acceptable.
+
+---
+
+## 10. Turn-taking and barge-in
+
+Preserve the current user-turn strategy selection.
+
+The telephone transport must not add a second VAD or endpointing system. The repository explicitly prevents double endpointing for Deepgram Flux; telephony must not undo that.
+
+### Interruption behavior
+
+When caller speech begins while TTS is playing:
+
+1. existing Pipecat interruption frames should stop downstream speech
+2. queued outbound audio in the Klanker adapter must be flushed
+3. Asterisk/media buffers should be kept shallow
+4. RTP should resume with live response audio after the next turn
+
+Add a transport method such as:
+
+```python
+async def flush_output_audio(self) -> None:
+    ...
+```
+
+Wire it to the relevant interruption frame or processor event.
+
+Target buffering:
+
+```text
+20-60 ms application output queue
+```
+
+Large output buffers make phone agents feel uninterruptible.
+
+### Echo
+
+A normal handset provides acoustic isolation. Speakerphones and poorly configured ATAs may produce echo.
+
+Do not enable application echo cancellation first. Let the endpoint/ATA/Asterisk path handle it. Add AEC only after measuring a real problem.
+
+---
+
+## 11. Identity, authentication, and quota policy
+
+A PSTN caller does not have the existing browser JWT.
+
+Introduce a `CallIdentity` abstraction:
+
+```python
+@dataclass(frozen=True)
+class CallIdentity:
+    subject: str
+    caller_id: str | None
+    did: str | None
+    authenticated: bool
+    auth_method: str
+```
+
+### MVP identity
+
+For a private prototype:
+
+```text
+subject = "pstn:<normalized-caller-id>"
+authenticated = false
+```
+
+Do not trust caller ID as strong authentication.
+
+### Better private access
+
+Offer one of:
+
+- allowlisted caller IDs plus a PIN
+- DTMF PIN on answer
+- short spoken passphrase verified outside the LLM
+- call-back verification
+- dedicated unlisted DID with strict quota
+
+Never pass authentication secrets into the conversational LLM context.
+
+### Quota mapping
+
+Add a telephone tier or map calls to an existing constrained tier.
+
+Recommended prototype limits:
+
+```text
+maximum concurrent PSTN calls: 1
+maximum call duration: 10 minutes
+daily PSTN minutes: small explicit cap
+outbound calling: disabled
+```
+
+Use the existing `SessionLifecycle`; do not implement an independent telephone timer.
+
+---
+
+## 12. Greeting behavior
+
+The existing WebRTC path uses a connection event to invoke the greet-first behavior.
+
+For telephone calls:
+
+1. answer the channel
+2. establish external media
+3. start the Klanker worker
+4. emit `on_client_connected`
+5. greet
+
+Do not greet before the bridge and media receiver are ready, or the first words will be clipped.
+
+Add roughly 100-250 ms of readiness margin only if tests show clipping. Do not use an arbitrary multi-second sleep.
+
+A future improvement is using the repository's pre-rendered greeting clip on PSTN, but first preserve the canonical `greet_now()` path so persona and greeting behavior remain consistent.
+
+---
+
+## 13. Asterisk controller
+
+Create a small controller service or module that consumes ARI events.
+
+Conceptual responsibilities:
+
+```python
+class AsteriskCallController:
+    async def on_stasis_start(self, event: StasisStart) -> None:
+        # accept only expected inbound context
+        # normalize ANI and DID
+        # allocate media session
+        # create external-media channel
+        # create bridge
+        # attach both channels
+        # create Klanker CallSession
+        # start the worker
+
+    async def on_channel_destroyed(self, event: ChannelDestroyed) -> None:
+        # close CallSession
+        # close media sockets
+        # delete bridge/external channel
+```
+
+Maintain:
+
+```python
+calls: dict[str, ActiveCall]
+```
+
+Key by the original Asterisk channel ID or an explicit generated call ID.
+
+An `ActiveCall` should contain:
+
+- original SIP channel ID
+- external media channel ID
+- bridge ID
+- RTP media session
+- Klanker `CallSession`
+- caller ID
+- DID
+- creation timestamp
+- closed flag / lock
+
+Use structured logs with call ID but never log SIP passwords, auth headers, or full PINs.
+
+---
+
+## 14. Configuration
+
+Add a non-secret section to `pipeline.toml`:
+
+```toml
+[telephony]
+enabled = false
+provider = "voipms"
+edge = "asterisk-ari"
+
+codec = "pcmu"
+sample_rate = 8000
+packet_ms = 20
+
+max_concurrent_calls = 1
+answer_timeout_seconds = 15
+hangup_on_pipeline_error = true
+require_pin = false
+```
+
+Secrets stay in environment/SSM:
+
+```text
+ASTERISK_ARI_URL
+ASTERISK_ARI_USERNAME
+ASTERISK_ARI_PASSWORD
+VOIPMS_SIP_USERNAME
+VOIPMS_SIP_PASSWORD
+VOIPMS_SIP_HOST
+TELEPHONY_ACCESS_PIN
+```
+
+Extend `config.py` credential-name rejection to cover new secret-looking fields if necessary.
+
+The SIP password should be consumed by the Asterisk service, not passed into the Klanker Python process.
+
+---
+
+## 15. Infrastructure
+
+### Network
+
+Asterisk needs:
+
+- SIP signaling access to the selected VoIP.ms POP
+- RTP access according to configured port range
+- access from Klanker/controller to ARI
+- a stable externally reachable address if receiving direct SIP URI traffic
+
+For registration-based trunking, provider traffic still requires correct NAT and RTP advertisement.
+
+Avoid placing SIP behind an HTTP ALB.
+
+Viable AWS patterns:
+
+```text
+Asterisk on ECS/EC2 with public IP or NLB UDP/TCP listeners
+```
+
+For a first version, a small EC2 instance or ECS task with explicit host networking may be simpler than forcing stateful SIP and a broad RTP range through an awkward load-balancer design.
+
+### Security groups
+
+Restrict SIP/RTP ingress to documented VoIP.ms POP ranges when operationally practical.
+
+ARI must be private-only and authenticated.
+
+Do not expose ARI to the internet.
+
+### Deployment isolation
+
+Keep Asterisk and the AI voice task separately deployable:
+
+```text
+telephony-edge
+voice
+auth/webapp
+```
+
+A voice deployment should not force the SIP registrar to disconnect if this can be avoided.
+
+### Observability
+
+Add metrics:
+
+```text
+ActivePstnCalls
+PstnCallDurationSeconds
+PstnCallSetupLatencyMs
+PstnInboundPacketsLost
+PstnInputJitterMs
+PstnAudioQueueDepthMs
+PstnHangupReason
+```
+
+Reuse existing per-stage Pipecat latency observers.
+
+Add dimensions conservatively to avoid CloudWatch cardinality explosion. Do not use caller ID as a metric dimension.
+
+---
+
+## 16. Testing strategy
+
+### Unit tests
+
+#### Codec
+
+- PCMU decode known vectors
+- PCMU encode known vectors
+- 160-sample packet framing
+- incomplete-frame buffering
+- clipping behavior
+- silence behavior
+
+#### RTP
+
+- sequence increment
+- timestamp increment by 160
+- SSRC stability
+- duplicate packet handling
+- one missing packet
+- wraparound
+
+#### Transport
+
+- RTP input emits correct Pipecat audio frame
+- Pipecat output emits PCMU RTP
+- interruption flushes output
+- stop is idempotent
+- disconnect event fires once
+
+#### Lifecycle
+
+- ARI hangup invokes `release()`
+- worker failure hangs up the call
+- quota rejection does not leave an Asterisk bridge
+- simultaneous hangup and timeout release once
+- active call slot is returned
+
+### Integration tests
+
+Use a local Asterisk container and SIP test client.
+
+Test:
+
+```text
+SIP client -> Asterisk -> fake Klanker media transport
+```
+
+Then:
+
+```text
+SIP client -> Asterisk -> real pipeline using test credentials
+```
+
+Assertions:
+
+- caller hears greeting
+- prerecorded caller WAV is transcribed
+- response audio returns
+- hangup cleans all resources
+- two calls obey configured concurrency
+- long silence triggers teardown
+- interruption stops bot audio promptly
+
+### End-to-end VoIP.ms tests
+
+1. route DID to PBX
+2. call from mobile
+3. call from payphone ATA
+4. run VoIP.ms echo test independently to validate ATA
+5. verify two-way audio
+6. verify caller-ID normalization
+7. verify hangup from each side
+8. verify fail-closed behavior when Klanker is unavailable
+
+---
+
+## 17. Failure behavior
+
+Define explicit outcomes.
+
+### Klanker unavailable before answer
+
+Asterisk should:
+
+```text
+play a short static unavailable message
+hang up
+```
+
+Optionally route to Kurt's cell later.
+
+### Pipeline fails mid-call
+
+Use existing fatal-error teardown observer, then:
+
+```text
+stop generated audio
+optionally play static apology
+hang up
+release lifecycle
+```
+
+Do not leave a silent open call consuming PSTN charges.
+
+### Asterisk loses Klanker media
+
+End the call after a short bounded timeout.
+
+### VoIP.ms registration fails
+
+Emit an alarm and keep the web voice service unaffected.
+
+### Quota denied
+
+Do not construct the expensive STT/LLM/TTS pipeline. Play a static message and hang up.
+
+---
+
+## 18. Security requirements
+
+Treat public SIP as hostile input.
+
+Required:
+
+- no default or anonymous ARI access
+- ARI private network only
+- narrow dialplan context
+- inbound calls cannot reach arbitrary extensions
+- outbound dialing disabled in Phase 1
+- strict call duration and concurrency caps
+- SIP passwords from SSM/secrets only
+- no SIP auth material in logs
+- validate ARI event fields
+- normalize telephone numbers before storage
+- rate-limit calls per source where possible
+- prevent caller-controlled DID/persona path traversal
+- do not let DTMF or caller speech execute tools without existing authorization
+- call recording disabled by default
+- disclose recording if it is later enabled
+
+The LLM must never decide whether a caller is authenticated.
+
+---
+
+## 19. Implementation phases
+
+### Phase A — refactor without behavior change
+
+- add `call_runtime.py`
+- move reusable pipeline/lifecycle setup out of `server.py`
+- keep WebRTC behavior passing all tests
+- add channel metadata to logs
+
+**Exit criterion:** browser voice works exactly as before.
+
+### Phase B — offline media adapter
+
+- add PCMU codec
+- add RTP parser/packetizer
+- add telephony transport processors
+- test with WAV and synthetic RTP
+- implement interruption flushing
+
+**Exit criterion:** recorded telephone audio can traverse the real Klanker pipeline without SIP.
+
+### Phase C — local Asterisk
+
+- add Asterisk configs
+- add ARI controller
+- create/destroy bridges and external media
+- connect a local SIP softphone
+- exercise greeting, conversation, interruption, hangup
+
+**Exit criterion:** local SIP call has a full conversation.
+
+### Phase D — VoIP.ms inbound DID
+
+- create dedicated subaccount
+- register Asterisk
+- route DID
+- apply security restrictions
+- test from cellular network
+
+**Exit criterion:** public DID reliably reaches Klanker.
+
+### Phase E — physical payphone
+
+- register ATA on its own subaccount
+- verify echo test
+- call Klanker DID
+- tune ATA gain and DTMF only if needed
+
+**Exit criterion:** payphone handset can converse naturally with Klanker.
+
+### Phase F — production hardening
+
+- Terraform/Terragrunt
+- SSM secrets
+- alarms and dashboards
+- rolling-deploy behavior
+- failure routing
+- load/concurrency test
+- runbook
+
+---
+
+## 20. Definition of done
+
+- [ ] No STT/LLM/TTS provider logic duplicated
+- [ ] Existing WebRTC path remains operational
+- [ ] One inbound PSTN call can complete a multi-turn conversation
+- [ ] Greeting is not clipped
+- [ ] Caller interruption stops TTS quickly
+- [ ] SIP hangup releases worker, quota heartbeat, call slot, bridge, and RTP socket
+- [ ] Hard session timeout also hangs up SIP
+- [ ] Fatal pipeline errors do not leave open calls
+- [ ] VoIP.ms and Asterisk credentials are outside Git
+- [ ] Outbound calling is disabled
+- [ ] Unit, local SIP, and public DID tests are documented
+- [ ] Operations runbook explains registration, routing, and one-way-audio debugging
+
+---
+
+## 21. Initial implementation prompt for the dev agent
+
+Implement **Phase A only** first.
+
+1. Read:
+   - `AGENTS.md`
+   - `.claude/CLAUDE.md`
+   - `apps/voice/server.py`
+   - `apps/voice/bot.py`
+   - `apps/voice/console.py`
+   - `apps/voice/src/klanker_voice/pipeline.py`
+   - `apps/voice/src/klanker_voice/session.py`
+   - `apps/voice/src/klanker_voice/webrtc.py`
+   - existing tests around lifecycle, quota, greeting, and connection teardown
+
+2. Identify the smallest reusable unit that builds and owns one live voice session independently of WebRTC request handling.
+
+3. Add `apps/voice/src/klanker_voice/call_runtime.py` with a narrow API for constructing, running, and idempotently closing a session around an arbitrary Pipecat `BaseTransport`.
+
+4. Convert the existing WebRTC server path to use it.
+
+5. Preserve:
+   - quota gate behavior
+   - `SessionLifecycle`
+   - observers
+   - greeting behavior
+   - warning and goodbye callbacks
+   - reconnect behavior
+   - RTVI behavior
+   - ambience mixer behavior
+   - all existing metrics and teardown guarantees
+
+6. Do not add SIP, Asterisk, RTP, codecs, or infrastructure in this phase.
+
+7. Add focused tests proving:
+   - transport-neutral construction
+   - WebRTC path behavior is unchanged
+   - close is idempotent
+   - lifecycle release occurs on worker/transport termination
+
+8. Run the repository's documented formatting, type-checking, and test commands.
+
+9. Produce:
+   - code changes
+   - tests
+   - a short architecture note describing the extracted seam
+   - explicit notes about assumptions or existing coupling that prevented a clean extraction
+
+Stop after Phase A and report the exact files changed and test results.
+
+---
+
+## 22. Notes and decisions to preserve
+
+1. **Asterisk is an edge adapter, not the agent runtime.**
+2. **The existing `build_pipeline(cfg, transport)` contract is the center of the design.**
+3. **Telephone audio conversion belongs in the transport boundary.**
+4. **Existing Deepgram turn strategy rules remain authoritative.**
+5. **Existing session lifecycle remains the single source of truth for teardown and quota.**
+6. **Caller ID is metadata, not authentication.**
+7. **Phase 1 is inbound-only and must not become an open calling relay.**
+8. **The ATA/payphone needs no special integration with Klanker beyond being able to call the DID.**
+
+---
+
+## 23. Addendum (2026-07-11, Kurt) — pre-established phone → code → tier identity
+
+Refines §11. Rather than treating a PSTN call as an anonymous unauthenticated
+`pstn:<caller-id>` subject, telephony **reuses the existing auth token logic** —
+the same access-code → tier → minted-OIDC-token path the just-shipped bypass
+`/join` feature uses. A phone number is pre-mapped to an existing access code.
+
+**Flow:**
+
+1. **Pre-establish a phone → code mapping.** A known caller ID maps to an existing
+   access code. Example: `5195551010` → code `defcon34`.
+2. **Resolve code → tier** with the existing `resolveAccessCode(code)` (auth app,
+   `apps/auth/webapp/src/entities/access-code.ts`).
+3. **Mint a token** carrying that tier via the existing minting path
+   (`apps/auth/webapp/src/lib/bypass-token.ts` `mintAnonToken`): RS256, signed with
+   `OIDC_JWKS`, `aud = voice`, namespaced `tier_id`/`group` claims — validates in
+   the voice service unchanged. Suggested `sub = "tel:<code>:<uuid>"` (mirrors
+   bypass `anon:<code>:<uuid>`).
+4. The telephone session then flows through the SAME `start_gate` /
+   `SessionLifecycle` / quota as a browser session — no independent telephone auth
+   or timer (consistent with §11 and §22.5).
+
+**`kph-tier` (unlimited):** a `Tier` row with effectively unlimited
+`sessionMaxSeconds` / `periodMaxSeconds` / `maxConcurrent` — Kurt's own access
+(his number / payphone → `defcon34` → `kph-tier`). Other numbers/DIDs map to the
+constrained tiers of §11 (1 concurrent, ~10 min, small daily cap).
+
+**Data model — reuse the bypass-join pattern:** add a `phone` attribute + a sparse
+GSI (e.g. `byPhone`, pk `phone#<E.164>`) to the `AccessCode` entity — a direct
+mirror of the `bypassToken` / `byBypassToken` gsi2 work (remember: ElectroDB
+LOWERCASES keys by default, so normalize the phone to a canonical E.164 digit form
+before it becomes a key; casing is moot for digits but normalization matters).
+Add a `kv code phone <code> --add <e164>` operator command mirroring
+`kv code bypass`. The caller-ID lookup + mint live in the auth app (or a shared
+helper); the Asterisk controller passes the **normalized** caller ID (§13).
+
+**SECURITY CAVEAT (do not skip):** caller ID is **spoofable** on the PSTN, so a
+phone → tier grant trusts a spoofable identifier (tension with §22.6 "caller ID is
+metadata, not authentication"). For a private prototype with tight caps this is an
+acceptable risk — BUT binding the **unlimited `kph-tier`** to caller ID *alone* is
+dangerous (anyone spoofing `5195551010` would get unlimited metered access).
+Recommendation: caller-ID-only mapping is fine for **low/capped** tiers; require a
+**second factor** (DTMF PIN or a short spoken passphrase verified OUTSIDE the LLM,
+per §11) before granting `kph-tier` or any high/unlimited tier. Unknown caller IDs →
+a default minimal tier or reject — never an open grant. The LLM must never decide
+authentication (§18).
+
+---
+
+## 24. Addendum (2026-07-11, Kurt) — call-answer security gate ("unlock, then talk")
+
+Implements the §23 second factor. On answer the agent **stays silent** — no
+greeting, no LLM turn, no TTS — until the caller proves access via **EITHER**
+factor (both supported; either one unlocks). The silence is intentional: a caller
+who does not know the ritual hears nothing and hangs up; no prompt is given (fits
+the private/covert intent of the phrase examples). An optional single neutral tone
+on answer is allowed if a fully dead line proves too confusing in testing.
+
+**Factor 1 — DTMF PIN, within 10 s of answer.** Caller enters a keypad PIN;
+Asterisk surfaces digits via ARI DTMF events; the controller compares to
+`TELEPHONY_ACCESS_PIN` (SSM). Handled at the Asterisk/controller layer — never in
+the LLM. 10 s window from answer.
+
+**Factor 2 — spoken 4-word passphrase (all 4 within the 10 s window).** SSM stores a
+set of **4 secret words** (`TELEPHONY_PASSPHRASE_WORDS`). During the gate, STT runs
+and the matcher checks whether **all 4 words are present** in the normalized
+transcript — **order-independent**, so the caller may bury them anywhere across a
+couple of natural sentences (e.g. "yeah, I'm calling about the *greenhouse* — tell
+*Edward* the *snowden* report *shipped*"). All 4 seen within the window → unlock.
+Matching is set-membership on lower-cased tokens, done OUTSIDE the LLM (§18); do not
+require them to be contiguous or in order. This is the primary/recommended mode
+(buried + order-free = deniable; a single fixed phrase is easier to overhear).
+
+**Never-recognized / never-echoed guarantees (hard requirements):**
+- The 4 words live ONLY in SSM. They are **never** placed in the LLM context —
+  before OR after unlock — never in the greeting/persona/system prompt, never in any
+  provider request. The bot cannot echo what it never receives.
+- **Redact before anywhere:** the pre-unlock transcript contains the secret words,
+  so it is NOT forwarded to the LLM and NOT written to the transcript ledger or logs
+  verbatim — drop the pre-unlock transcript entirely (or scrub the 4 words from it)
+  before it leaves the gate. Post-unlock conversation flows normally.
+- The matcher never logs which words matched, the words themselves, or the raw
+  unlock utterance. Log only `unlocked{method:"passphrase", call_id}`.
+- Compare via constant-ish set membership on normalized tokens; never surface a
+  per-word "3 of 4 matched" oracle to the caller (silent until all 4 land).
+
+**Quiet-gate mechanics:**
+- The pipeline is built only far enough to run STT (+ receive DTMF) during the gate;
+  OUTPUT is suppressed (no `greet_now()`, no LLM, no TTS). Caller hears silence.
+- **On unlock:** grant the caller's tier (§23 — a passing gate is what upgrades a
+  caller-ID-mapped capped tier to `kph-tier`/high tiers; which PIN/phrase → which
+  tier is pre-established), THEN run the normal path — `greet_now()` + LLM + TTS.
+  The greeting fires HERE, not before (consistent with §12 "don't greet before
+  ready").
+- **Fail-closed (§17/§18):** if neither factor lands within the window (10 s,
+  configurable), play a short static goodbye/unavailable and **hang up** — never
+  leave a silent open call burning PSTN charges. STT runs during the gate (needed to
+  catch the words); the LLM/TTS never engage until unlock, so the expensive turn
+  loop is only built after a pass.
+
+**Config/secrets:** add to the `[telephony]` block (non-secret):
+`require_gate = true`, `gate_mode = "either"` (`"passphrase"` | `"pin"` |
+`"either"`), `gate_window_seconds = 10`. SSM-only (never git/`pipeline.toml`/logs,
+never in LLM context §18): `TELEPHONY_ACCESS_PIN` (DTMF) and
+`TELEPHONY_PASSPHRASE_WORDS` (the 4 words). Log unlock events by method
+(`dtmf`/`passphrase`) + call ID only — never the PIN, the words, or the utterance.
+
+**Relationship to the existing `greenhouse` keyword:** that is a persona/topic
+unlock INSIDE the knowledge router (`greenhouse` → recruiting mode); this telephony
+gate is a SEPARATE security/auth layer verified outside the LLM. They may share
+phrase vocabulary, and a phrase MAY do both (e.g. "greenhouse recruiting" unlocks
+the call AND lands in greenhouse recruiting mode once the LLM is engaged) — but keep
+the mechanisms distinct: the gate decides ACCESS/tier; the router decides PERSONA.
+
+---
+
+## 25. Addendum (2026-07-11, Kurt) — hardening for a hostile / DEF CON audience
+
+This DID will be handed to DEF CON attendees. Assume active adversaries: toll-fraud
+attempts, SIP scanning, caller-ID spoofing, quota-burn/DoS, and voice jailbreak.
+Design every layer to fail closed and cap financial blast radius.
+
+### A. Financial blast radius (toll fraud is the #1 telephony risk)
+- **Inbound-ONLY in Phase 1** (reaffirms §22.7): no outbound anywhere. VoIP.ms
+  subaccounts have outbound DISABLED; the Asterisk dialplan has NO outbound context.
+- **Disable international + premium destinations** at the VoIP.ms account level.
+- **Keep the VoIP.ms balance LOW; auto-recharge OFF** (or a hard cap). A full
+  compromise can only drain what is loaded. Set low-balance + spend alerts.
+- Per-call **max duration** and a **daily minute cap** at both VoIP.ms and in
+  `SessionLifecycle` (§11).
+
+### B. Portal & API account security
+- **2FA on the VoIP.ms portal.** Strong unique portal password.
+- **API:** strong unique `api_password` (≠ portal password), **IP-whitelisted**. Use
+  the setup IP now, then **re-lock** — never leave `0.0.0.0` whitelisted in prod.
+- All SIP/ARI secrets in SSM only; never git, `pipeline.toml`, or logs.
+
+### C. SIP edge hardening (against scanners)
+- **Separate subaccounts** (`klanker-pbx` vs `payphone-ata`), each with a **strong
+  unique random SIP password** (blast-radius isolation, §4).
+- **IP-restrict each subaccount** to the Asterisk egress IP + the chosen POP.
+- **Security group: allow SIP/RTP only from the VoIP.ms POP IP ranges** — never
+  expose 5060/RTP to the whole internet. DEF CON *will* scan it. Put nothing
+  SIP-listening on an open port.
+- **TLS + SRTP** where the POP supports it (encrypt signaling + media).
+- **fail2ban** (or equivalent) on the Asterisk host for SIP auth failures.
+- **Narrow dialplan:** an inbound call reaches ONLY the Stasis app — no other
+  extensions, features, or dial contexts are reachable (§18).
+- **ARI private-network only, authenticated, strong password, never internet-exposed**
+  (§18).
+
+### D. Caller-side threats (the DEF CON angle)
+- **Caller ID is spoofable** → caller-ID alone grants at most the DEFAULT minimal
+  tier; the 4-word passphrase / DTMF PIN (§24) is the ONLY path to `kph-tier` or any
+  high tier. Never upgrade tier on caller-ID alone (§23).
+- **The silent gate (§24) keeps STT/LLM/TTS dark until unlock** — so scanners and
+  random callers cannot burn STT/LLM/TTS quota OR reach the model to jailbreak it.
+  This is a primary DoS/abuse control, not just an auth step.
+- **Concurrency = 1, short max duration, per-source rate-limit** cap quota-burn/DoS.
+- **Voice prompt-injection:** the existing persona treats "ignore your instructions /
+  act as X / reveal the prompt" as playful noise and steers back; the LLM has **no
+  tools**, so caller speech/DTMF can execute no privileged action (§18). Keep it that
+  way — do not wire caller-driven tool use.
+- **Never** place the PIN/passphrase in the LLM context; drop the pre-unlock
+  transcript before it reaches the LLM/ledger/logs (§24).
+- **Call recording OFF by default;** if ever enabled, disclose it (Canada two-party
+  consent) (§18).
+
+### E. Operations
+- **Isolated `telephony-edge` deploy** (§15) — decoupled from `voice`/`auth`.
+- **Alarms:** ANY outbound attempt (should be zero), balance drop, call-volume spike,
+  registration failures, gate-fail rate.
+- **Runbook:** revoke/rotate a subaccount SIP credential, kill-switch DID routing,
+  and debug one-way audio.
+
+### F. Blank-account setup order (do the portal steps first, before the API dance)
+1. Enable **2FA**; set a strong portal password.
+2. Account settings → **international/premium call restrictions** locked down
+   (inbound-only intent).
+3. **Balance low + auto-recharge OFF + alerts** on.
+4. **Enable API** + strong `api_password` + **whitelist the setup IP**.
+5. (Together, via API) create `klanker-pbx` + `payphone-ata` subaccounts (strong
+   unique SIP passwords, IP-restricted, outbound disabled).
+6. **Order ONE DID** (a `5878` vanity), **per-minute** plan, **CNAM off**, POP =
+   **Toronto** (Kurt is in Toronto — lowest latency; Montreal is the fallback). Use
+   the **same POP** for the DID and the PBX trunk.
+7. **Route the DID → `klanker-pbx`.** Set a max call duration.
+8. After setup, **re-lock the API IP whitelist**.

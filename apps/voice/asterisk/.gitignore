@@ -1,0 +1,5 @@
+# Rendered ari.conf/pjsip.conf carry REAL secrets (ARI/SIP passwords)
+# substituted in by render_configs.py at container start (D-09). Never
+# commit this directory -- the tracked templates next to it stay
+# placeholder-only forever.
+.rendered/

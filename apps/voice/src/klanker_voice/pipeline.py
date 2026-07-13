@@ -15,6 +15,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.processors.frameworks.rtvi import RTVIProcessor
 from pipecat.transports.base_transport import BaseTransport
 
@@ -70,6 +71,7 @@ def build_pipeline(
     knowledge_cfg: KnowledgeConfig | None = None,
     duplex_cfg: DuplexConfig | None = None,
     remaining_seconds_fn: Callable[[], float | None] | None = None,
+    gate_processor: FrameProcessor | None = None,
 ) -> BuiltPipeline:
     """Assemble the canonical cascade pipeline from config.
 
@@ -110,6 +112,16 @@ def build_pipeline(
     for the life of the session). It's handed to ``KnowledgeRouterProcessor``,
     which queries it on the same deep-turn condition that fires the ack, so
     the local BM25 query's cost is ack-masked.
+
+    Phase 11 (D-05, §24 silent answer-gate): ``gate_processor`` is an
+    additive, optional ``FrameProcessor`` (see ``klanker_voice.telephony.
+    gate.GateProcessor``) inserted immediately after ``stt`` and before the
+    duplex/router stage — the same architectural slot pattern as
+    ``KnowledgeRouterProcessor``. ``None`` (the default, every WebRTC
+    caller) reproduces the byte-identical processor order every prior phase
+    shipped; a telephony caller passes a real ``GateProcessor`` so the
+    pipeline stays dark (no transcript reaches the router/LLM) until the
+    caller proves access.
     """
     stt = build_stt(cfg)
     llm = build_llm(cfg)
@@ -142,6 +154,15 @@ def build_pipeline(
     if rtvi is not None:
         processors.append(rtvi)
     processors.append(stt)
+    # Phase 11 (D-05): the §24 silent answer-gate, when present, sits
+    # immediately after stt and BEFORE the duplex controller/router -- while
+    # locked it never forwards a transcription frame, so neither the duplex
+    # backchannel logic nor the router ever sees pre-unlock speech (the
+    # structural redaction boundary, D-05e/R5). None (every WebRTC caller)
+    # is a no-op insertion -- the shipped cascade stays byte-for-byte
+    # unchanged.
+    if gate_processor is not None:
+        processors.append(gate_processor)
     # Full-duplex (voice2): the DuplexController sits between STT and the
     # router so it sees the STT transcripts, the upstream bot-speaking frames,
     # AND the source-queued InterruptionFrame *before* it reaches the

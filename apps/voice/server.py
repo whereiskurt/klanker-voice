@@ -32,7 +32,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from pipecat.processors.frameworks.rtvi import RTVIObserver
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.request_handler import (
@@ -41,28 +40,19 @@ from pipecat.transports.smallwebrtc.request_handler import (
     SmallWebRTCRequestHandler,
 )
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-from pipecat.workers.runner import WorkerRunner
 
 from klanker_voice import quota, session, variants
 from klanker_voice import version as server_version
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
+from klanker_voice.call_runtime import CallIdentity, create_call_session
 from klanker_voice.config import (
     load_config,
     load_duplex_config,
     load_knowledge_config,
     load_quota_config,
 )
-from klanker_voice.observers import LatencyReportObserver
-from klanker_voice.pipeline import (
-    build_ambience_mixer,
-    build_pipeline,
-    build_worker,
-    inject_warning_instruction,
-    register_greet_first,
-    speak_goodbye,
-)
-from klanker_voice.rtvi import build_rtvi_observer_params, build_rtvi_processor
-from klanker_voice.session import SessionLifecycle, TeardownObserver
+from klanker_voice.pipeline import build_ambience_mixer
+from klanker_voice.session import SessionLifecycle
 from klanker_voice.webrtc import (
     build_ice_servers,
     gather_public_candidates,
@@ -146,137 +136,6 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def _run_session(
-    connection: SmallWebRTCConnection,
-    lifecycle: SessionLifecycle,
-    variant: str = variants.DEFAULT_VARIANT,
-) -> None:
-    """Build and run the pipeline over an established SmallWebRTC
-    connection, wiring the D-04/D-05 spoken wind-down and D-06/D-07 idle-
-    teardown layers onto the real worker/transport/context (04-05) —
-    :class:`SessionLifecycle` deliberately never holds these references
-    itself (module docstring), so this is the one seam that closes the loop
-    between its callback hooks and the live pipeline.
-
-    ``variant`` (full-duplex, 2026-07-10) selects which pipeline config the
-    session runs — ``voice1`` (default) is today's ``pipeline.toml``; ``voice2``
-    is ``configs/voice2.toml`` (Flux STT + duplex controller). It only steers
-    the *pipeline* (stt/turn/llm/tts/persona/knowledge/duplex); auth, transport,
-    teardown, and the site-wide budget ``quota`` are variant-independent, so
-    quota is always sourced from the default config.
-    """
-    config_path = variants.variant_config_path(variant)  # None -> default pipeline.toml
-    cfg = load_config(config_path)
-    knowledge_cfg = load_knowledge_config(config_path)
-    duplex_cfg = load_duplex_config(config_path)
-    quota_cfg = load_quota_config()  # global budget guardrail — never per-variant
-
-    # Greenhouse coffee-shop bed (260710): a per-session SoundfileMixer on the
-    # output transport, OFF until the router enables it while greenhouse is
-    # active. Pin audio_out_sample_rate to the WAV's rate (the mixer won't
-    # resample). No mixer -> the shared default params (byte-identical to before).
-    mixer = build_ambience_mixer(cfg)
-    transport_params = (
-        TransportParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            audio_out_sample_rate=cfg.greenhouse.ambience_sample_rate,
-            audio_out_mixer=mixer,
-        )
-        if mixer is not None
-        else _WEBRTC_TRANSPORT_PARAMS
-    )
-    transport = SmallWebRTCTransport(
-        params=transport_params,
-        webrtc_connection=connection,
-    )
-    rtvi = build_rtvi_processor()
-    # 07-05 / D-06 time-aware pacing: source the router's remaining_seconds from
-    # THIS session's live lifecycle (the same instance that owns the service
-    # timer + countdown), so KPH tightens its answers as the session clock runs
-    # down. The dev/eval path (bot.py) supplies nothing -> stays None (no cap).
-    built = build_pipeline(
-        cfg,
-        transport,
-        rtvi=rtvi,
-        knowledge_cfg=knowledge_cfg,
-        duplex_cfg=duplex_cfg,
-        remaining_seconds_fn=lifecycle.remaining_seconds,
-    )
-    worker = build_worker(
-        built.pipeline,
-        observers=[
-            LatencyReportObserver(cfg),
-            RTVIObserver(rtvi, params=build_rtvi_observer_params()),
-            TeardownObserver(lifecycle),
-        ],
-    )
-    if cfg.persona.greet_first:
-        register_greet_first(transport, worker, built.context)
-    runner = WorkerRunner(handle_sigint=False)
-    await runner.add_workers(worker)
-
-    async def _on_warning() -> None:
-        # D-04 natural warning: a high-priority LLM-context instruction, not
-        # spoken verbatim by code.
-        await inject_warning_instruction(worker, built.context, quota_cfg.warning_copy)
-
-    async def _on_stop() -> None:
-        # D-04/D-05: the deterministic goodbye bypasses the LLM, gets up to
-        # goodbye_grace_seconds to finish, then a hard close. WorkerRunner
-        # .cancel is pipecat's own documented hangup call ("typically on
-        # transport disconnect") and is idempotent, so a racing idle-
-        # teardown layer calling it again is a harmless no-op.
-        await speak_goodbye(worker, quota_cfg.goodbye_copy)
-        await asyncio.sleep(quota_cfg.goodbye_grace_seconds)
-        await runner.cancel("session wind-down complete")
-
-    lifecycle.on_warning = _on_warning
-    lifecycle.on_stop = _on_stop
-    # D-06 layer 3 fallback / belt-and-suspenders: every idle-teardown layer
-    # (transport disconnect + reconnect grace, silence watchdog, pipeline
-    # stall) releases the DB/metric bookkeeping via SessionLifecycle.release()
-    # on its own; on_released is what actually ends *this* running pipeline
-    # once that happens, so an abandoned session never keeps burning STT/LLM/
-    # TTS spend after its slot has already been freed.
-    lifecycle.on_released = runner.cancel
-
-    @transport.event_handler("on_client_disconnected")
-    async def _on_client_disconnected(transport, client):  # noqa: ANN001 — pipecat handler shape
-        await lifecycle.on_transport_disconnected()
-
-    @transport.event_handler("on_client_connected")
-    async def _on_client_reconnected(transport, client):  # noqa: ANN001 — pipecat handler shape
-        # Fires both for the very first connect (register_greet_first's own
-        # handler greets there) and again if ICE reconnects after a drop —
-        # cancelling a pending reconnect-grace teardown is a no-op the rest
-        # of the time (D-07).
-        await lifecycle.on_transport_reconnected()
-
-    await runner.run()
-
-
-async def _start_and_run_tracked_session(
-    connection: SmallWebRTCConnection,
-    lifecycle: SessionLifecycle,
-    variant: str = variants.DEFAULT_VARIANT,
-) -> None:
-    """Start the session lifecycle (metric + scale-in protection + service
-    timer/tick, QUOT-02/INFR-06), run the pipeline, then always stop the
-    lifecycle on exit (success, error, or cancellation) — this is what
-    releases the heartbeat lease and the active-session slot.
-
-    Started as its own fire-and-forget task (not awaited inline in the
-    connection callback) so a slow AWS call in ``lifecycle.start()`` never
-    delays the SDP answer.
-    """
-    await lifecycle.start()
-    try:
-        await _run_session(connection, lifecycle, variant)
-    finally:
-        await lifecycle.stop()
-
-
 def _wire_connection_teardown(
     connection: SmallWebRTCConnection, lifecycle: SessionLifecycle
 ) -> None:
@@ -342,27 +201,64 @@ async def _negotiate_webrtc(
     leaks a phantom slot.
     """
     webrtc_request = SmallWebRTCRequest.from_dict(dict(body))
-    quota_cfg = load_quota_config()
+    quota_cfg = load_quota_config()  # global budget guardrail — never per-variant
 
     async def _connection_callback(connection: SmallWebRTCConnection) -> None:
-        lifecycle = SessionLifecycle(
-            user_id=identity.sub,
-            session_id=gate_result.session_id,
-            tier=gate_result.tier,
-            quota_config=quota_cfg,
-            bypass_accounting=gate_result.bypass_accounting,
+        # variant-aware config load (full-duplex, 2026-07-10): ``voice1``
+        # (default) is today's ``pipeline.toml``; ``voice2`` is
+        # ``configs/voice2.toml`` (Flux STT + duplex controller). Only steers
+        # the *pipeline* — auth, transport, teardown, and the site-wide
+        # ``quota`` budget are variant-independent (quota_cfg above).
+        config_path = variants.variant_config_path(variant)  # None -> default pipeline.toml
+        cfg = load_config(config_path)
+        knowledge_cfg = load_knowledge_config(config_path)
+        duplex_cfg = load_duplex_config(config_path)
+
+        # WebRTC-specific (D-03): the ambience mixer + TransportParams must be
+        # attached at transport construction time, so they're built here, not
+        # inside the shared runtime. Greenhouse coffee-shop bed (260710): a
+        # per-session SoundfileMixer on the output transport, OFF until the
+        # router enables it while greenhouse is active. Pin
+        # audio_out_sample_rate to the WAV's rate (the mixer won't resample).
+        # No mixer -> the shared default params (byte-identical to before).
+        mixer = build_ambience_mixer(cfg)
+        transport_params = (
+            TransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                audio_out_sample_rate=cfg.greenhouse.ambience_sample_rate,
+                audio_out_mixer=mixer,
+            )
+            if mixer is not None
+            else _WEBRTC_TRANSPORT_PARAMS
+        )
+        # WebRTC-specific (D-03): transport construction stays here; the
+        # shared runtime accepts an already-built BaseTransport.
+        transport = SmallWebRTCTransport(
+            params=transport_params,
+            webrtc_connection=connection,
+        )
+
+        call_session = await create_call_session(
+            transport=transport,
+            identity=CallIdentity(subject=identity.sub, authenticated=True),
+            gate_result=gate_result,
+            cfg=cfg,
+            knowledge_cfg=knowledge_cfg,
+            duplex_cfg=duplex_cfg,
+            quota_cfg=quota_cfg,
+            channel="webrtc",
+            metadata={"pc_id": connection.pc_id},
         )
         SESSIONS[connection.pc_id] = SessionRecord(
-            identity=identity, gate_result=gate_result, lifecycle=lifecycle
+            identity=identity, gate_result=gate_result, lifecycle=call_session.lifecycle
         )
         # Wire the abrupt-close release trigger BEFORE spawning the run task,
         # so a client that vanishes during the slow ``lifecycle.start()``
         # window still reaches release() (voice-concurrency-slot-leak BUG 1).
-        _wire_connection_teardown(connection, lifecycle)
+        _wire_connection_teardown(connection, call_session.lifecycle)
         pc_id = connection.pc_id
-        task = asyncio.create_task(
-            _start_and_run_tracked_session(connection, lifecycle, variant)
-        )
+        task = asyncio.create_task(call_session.run())
         # Retain a strong ref (see SESSION_TASKS) and pop both registries once
         # the session task ends, however it ends.
         SESSION_TASKS[pc_id] = task
@@ -391,8 +287,10 @@ async def _negotiate_webrtc(
         answer["session_max_seconds"] = gate_result.session_max_seconds
         # Display-only per-variant label (subtle live-UI tag, mirrors the
         # session_max_seconds plumbing above): a lightweight, deliberate extra
-        # TOML parse -- the full pipeline config isn't loaded yet at this point
-        # (that happens later, inside the fire-and-forget _run_session).
+        # TOML parse -- ``_connection_callback`` (above) loads its own copy of
+        # ``cfg`` for the pipeline, but that happens inside the request
+        # handler's callback and isn't threaded back out here, so this reads
+        # the config a second time purely for the label.
         label_cfg = load_config(variants.variant_config_path(variant))
         answer["variant_label"] = label_cfg.label
         # Server/pipeline build stamp (VERSION concept V2): the short git SHA of

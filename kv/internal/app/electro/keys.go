@@ -9,6 +9,7 @@
 //	AccessCode  primary pk: "code#${code}"    sk: "code#"
 //	            gsi1    pk: "accesscodes#"    sk: "code#${code}"
 //	            gsi2    pk: "bypass#${bypassToken}" sk: "bypass#"  (SPARSE, bypass /join)
+//	            gsi3    pk: "phone#${phone}"  sk: "phone#"         (SPARSE, §23 caller-ID mint)
 //	Tier        primary pk: "tier#${tierId}"  sk: "tier#"
 //	            gsi1    pk: "tiers#"          sk: "tier#${tierId}"
 //
@@ -16,6 +17,12 @@
 // feature (2026-07-10-bypass-join-login-design). It is SPARSE: only codes with
 // a bypassToken set carry gsi2pk/gsi2sk. `kv code bypass` SETs both with these
 // exact templates; the webapp's resolveBypassToken queries this index.
+//
+// The AccessCode gsi3 (byPhone) index powers the §23 VoIP.ms caller-ID mint
+// path (Phase 12 Plan 02/03). It is SPARSE, mirroring gsi2 exactly: only
+// codes with a `phone` set carry gsi3pk/gsi3sk. `kv code phone --add` SETs
+// both with these exact templates; the webapp's resolvePhoneToCode queries
+// this index.
 //
 // `code` and `tierId` are normalized lowercase+trim identically to the
 // webapp's `normalizeCode()` (access-code.ts) and the Tier entity's `set`
@@ -44,6 +51,7 @@ const (
 
 	GSI1IndexName = "gsi1pk-gsi1sk-index"
 	GSI2IndexName = "gsi2pk-gsi2sk-index"
+	GSI3IndexName = "gsi3pk-gsi3sk-index"
 )
 
 // NormalizeCode lowercases+trims a raw code exactly like the webapp's
@@ -96,6 +104,23 @@ func AccessCodeGSI2PK(bypassToken string) string {
 // (empty composite in the ElectroDB template).
 func AccessCodeGSI2SK() string {
 	return "bypass#"
+}
+
+// AccessCodeGSI3PK builds the AccessCode gsi3 (byPhone) partition key:
+// "phone#${phone}". The phone value is expected to already be normalized to
+// canonical E.164 (digits + a single leading '+') by the caller — unlike
+// code/tierId, no case transform is applied here: digits have no casing, and
+// (mirroring the gsi2 bypassToken casing note) the webapp entity's byPhone
+// index also declares casing:"none", so this key writer must not alter the
+// input in any way.
+func AccessCodeGSI3PK(phone string) string {
+	return "phone#" + phone
+}
+
+// AccessCodeGSI3SK is the AccessCode gsi3 sort key: the constant "phone#"
+// (empty composite in the ElectroDB template).
+func AccessCodeGSI3SK() string {
+	return "phone#"
 }
 
 // --- Tier key templates ---

@@ -33,9 +33,22 @@ ALLOWED_TURN_STRATEGIES = frozenset({"vad_timeout", "smart_turn_v3"})
 
 #: Field names that suggest credential material. A secret pasted into the TOML
 #: must fail loudly at load time instead of silently loading (T-1-04).
+#: Widened for Phase 11 (D-09): the §24 telephony answer-gate's secret-looking
+#: field-name stems (a numeric unlock code, a spoken multi-word phrase) must
+#: also be refused before parse, alongside the pre-existing key/secret/token
+#: stems -- those secrets come exclusively from env/SSM, never TOML.
+#:
+#: ``words`` is deliberately matched as a *whole* field name only (``^words$``),
+#: not via the shared ``(?:^|_)...(?:_|$)`` compound-boundary group used by the
+#: other stems: the existing ``[duplex]`` table already ships legitimate
+#: fields ending in ``_words`` (``backchannel_words``, ``max_backchannel_words``
+#: -- a listening-cue lexicon and a word-count knob, not a secret), so a
+#: compound-boundary match on ``words`` would false-positive-reject real,
+#: non-secret config. ``passphrase`` (compound-boundary) still independently
+#: catches a smuggled ``passphrase_words``-shaped field.
 _CREDENTIAL_FIELD_RE = re.compile(
     r"(?:^|_)(?:api_?key|key|keys|secret|secrets|token|tokens|password|passwd|"
-    r"credential|credentials|bearer|auth)(?:_|$)|apikey",
+    r"credential|credentials|bearer|auth|pin|passphrase|pass_?word)(?:_|$)|apikey|^words$",
     re.IGNORECASE,
 )
 

@@ -1,0 +1,143 @@
+# Local Asterisk edge dev harness (Phase 11, D-07; one-command §19-C proof
+# added in quick-task 260712-ckd).
+#
+# Portable, macOS-Docker-Desktop-safe: explicit `ports:` publishing (no
+# `network_mode: host`, which only works reliably on Linux) + the
+# `host.docker.internal` DNS name Docker Desktop always resolves from
+# inside a container back to the host, for the Klanker RTP listener a later
+# plan (the standalone telephony controller, D-08) binds on the host side.
+#
+# Image is a pinned version tag, never `latest` (T-11-02-SC) -- see README
+# for the module smoke check that proves this image actually ships
+# res_ari/res_stasis compiled in.
+#
+# A plain `docker compose up` now brings up THREE services wired together:
+# `asterisk-config-render` (renders real secrets from `.env` into gitignored
+# `.rendered/{ari,pjsip}.conf`) -> `asterisk` (bind-mounts the rendered
+# copies) -> `klanker-telephony` (the standalone controller, sharing
+# Asterisk's network namespace so it reaches ARI at 127.0.0.1:8088 without
+# ARI ever being published on the host -- §18/§25.C).
+services:
+  # Renders apps/voice/asterisk/{ari,pjsip}.conf's `${VAR}` placeholders with
+  # real secrets from `.env` into ./.rendered/ (gitignored) BEFORE Asterisk
+  # starts. No profile -- runs on a plain `docker compose up`. See
+  # render_configs.py's own docstring (D-09: renders only into the
+  # gitignored output dir, never back into the tracked templates).
+  asterisk-config-render:
+    image: python:3.12-slim
+    container_name: klanker-asterisk-config-render
+    environment:
+      - ASTERISK_ARI_PASSWORD=${ASTERISK_ARI_PASSWORD:-}
+      - SOFTPHONE_SIP_PASSWORD=${SOFTPHONE_SIP_PASSWORD:-}
+      # Host-reachable media address for the SDP c= line (see pjsip.conf
+      # transport comment). Defaults to loopback, but the §19-C softphone proof
+      # REQUIRES this be your host LAN IP or no caller audio flows.
+      - TELEPHONY_MEDIA_ADDRESS=${TELEPHONY_MEDIA_ADDRESS:-127.0.0.1}
+    volumes:
+      - ./:/templates:ro
+      - ./.rendered:/out
+    command: ["python", "/templates/render_configs.py", "--templates", "/templates", "--out", "/out"]
+
+  asterisk:
+    image: andrius/asterisk:22.10.1_debian-trixie
+    container_name: klanker-asterisk-dev
+    depends_on:
+      asterisk-config-render:
+        condition: service_completed_successfully
+    ports:
+      - "5060:5060/udp" # SIP signaling (PJSIP transport-udp)
+      - "10000-10020:10000-10020/udp" # RTP media range (rtp.conf)
+      # ARI (8088) is intentionally NOT published here: the klanker-telephony
+      # service below reaches it at 127.0.0.1:8088 by sharing this service's
+      # own network namespace, so ARI has zero host surface (§18/§25.C).
+    volumes:
+      - ./http.conf:/etc/asterisk/http.conf:ro
+      - ./.rendered/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./.rendered/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./rtp.conf:/etc/asterisk/rtp.conf:ro
+    extra_hosts:
+      # Docker Desktop resolves this automatically on macOS/Windows; this
+      # entry is a no-op there and makes the same compose file also work on
+      # Linux hosts, where the mapping isn't automatic.
+      - "host.docker.internal:host-gateway"
+
+  # The standalone telephony controller (klanker_voice.telephony, D-08),
+  # wired to Asterisk over ARI with zero new host-published surface: it
+  # shares Asterisk's own network namespace (mirrors the `sipp` service
+  # below exactly), so `http://127.0.0.1:8088` resolves INSIDE that shared
+  # namespace without ARI ever being published on the host (§18/§25.C is a
+  # strict tightening here, not a relaxation -- see the `asterisk` service's
+  # own removed `8088:8088` publish, now dead surface with zero purpose).
+  # No profile -- part of the default `docker compose up` stack.
+  klanker-telephony:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: klanker-telephony-dev
+    network_mode: "service:asterisk"
+    depends_on:
+      - asterisk
+    env_file:
+      # `required: false`: a fresh checkout has neither file until a human
+      # completes user_setup (`cp .env.example .env` in both apps/voice/ and
+      # apps/voice/asterisk/) -- `docker compose config`/`up` must not hard
+      # -fail before that step; the controller itself fails loudly with a
+      # ConfigError if ARI creds are still unset (see `restart: "no"` above).
+      - path: ../.env
+        required: false
+      - path: .env
+        required: false
+    environment:
+      - KLANKER_PIPELINE_CONFIG=configs/telephony.toml
+      - ASTERISK_ARI_URL=http://127.0.0.1:8088
+      - ASTERISK_ARI_USERNAME=klanker
+    working_dir: /app
+    command: ["python", "-m", "klanker_voice.telephony.controller"]
+    # If `.env` is unfilled the controller raises ConfigError by design
+    # (D-09) -- it must fail loudly once, not crash-loop.
+    restart: "no"
+
+  # SIPp scenario runner (Phase 11 Plan 07, D-07/R4) -- the opt-in, local-
+  # only "fuller run" companion to the CI-required deterministic fake-media
+  # test (tests/test_telephony_integration.py). `profiles: [integration]`
+  # keeps this out of a plain `docker compose up` -- it only starts via
+  # `docker compose --profile integration run --rm sipp` (or `up sipp`),
+  # never implicitly, and is never required for CI green.
+  #
+  # Built from the official SIPp source (11-RESEARCH.md R4's own citation:
+  # github.com/SIPp/sipp ships an in-repo Dockerfile, `docker build
+  # --target=bin`) rather than an unverified third-party Docker Hub image.
+  # TODO(human, before first real `--profile integration` run): confirm the
+  # current SIPp release tag at https://github.com/SIPp/sipp/releases and
+  # update the ref below if newer -- this pin was not verified against a
+  # live network fetch in this sandbox. An outdated pin does NOT block CI:
+  # the CI-facing check (tests/test_telephony_integration.py's
+  # docker-availability-gated case) only runs `docker compose config`
+  # against this file, never a build/pull.
+  sipp:
+    profiles: ["integration"]
+    container_name: klanker-sipp-dev
+    build:
+      context: https://github.com/SIPp/sipp.git#v3.7.2
+      dockerfile: docker/Dockerfile
+      target: bin
+    depends_on:
+      - asterisk
+    # Shares the asterisk service's network namespace so `127.0.0.1:5060`
+    # inside this container reaches the asterisk container directly --
+    # sidesteps the same macOS Docker Desktop cross-container addressing
+    # question the asterisk service's own external_media_address/
+    # external_signaling_address comments describe (pjsip.conf).
+    network_mode: "service:asterisk"
+    volumes:
+      - ./sipp:/sipp:ro
+    entrypoint: ["/usr/local/bin/sipp"]
+    command:
+      - "-sf"
+      - "/sipp/gate-pass.xml"
+      - "-s"
+      - "dev-softphone"
+      - "127.0.0.1:5060"
+      - "-m"
+      - "1"

@@ -103,6 +103,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(NewUsageCmd(cfg))
 	root.AddCommand(NewKillswitchCmd(cfg))
 	root.AddCommand(NewKnowledgeCmd(cfg))
+	root.AddCommand(NewVoipmsCmd(cfg))
 
 	return root
 }

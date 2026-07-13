@@ -204,6 +204,46 @@ class SessionLifecycle:
             self._timer_task = asyncio.create_task(self._service_timer())
             self._watchdog_task = asyncio.create_task(self._silence_watchdog())
 
+    async def upgrade_from_bypass(
+        self, *, tier: quota.Tier, session_id: str, user_id: str
+    ) -> None:
+        """Phase 11 §24 gate unlock seam (D-05a/c, Rule 2 auto-add — see
+        11-06-SUMMARY.md): promote an already-``start()``-ed
+        ``bypass_accounting=True`` placeholder lifecycle (constructed BEFORE
+        the caller proved access, so the telephony controller can build the
+        persistent gated pipeline up front without engaging any real
+        accounting/timer — see ``klanker_voice.telephony.controller``) into
+        a REAL metered session, once ``quota.start_gate`` actually grants a
+        tier at unlock.
+
+        This dataclass is not frozen: ``tier``/``session_id``/``user_id``/
+        ``bypass_accounting`` are mutated in place so the TeardownObserver
+        and ``on_released``/``on_warning``/``on_stop`` wiring already
+        attached at construction time keep referencing the SAME object — no
+        second ``SessionLifecycle`` is ever built for one call.
+
+        Re-stamps ``_started_at`` to NOW (not the original construction/
+        answer time) so :meth:`remaining_seconds` measures conversational
+        time from the real start of service, not from when the caller
+        first answered and was still proving access. Then starts the
+        tick/timer/watchdog loops :meth:`start` itself would have started
+        had ``bypass_accounting`` been False from the beginning — a no-op
+        if the session has already been released (mirrors :meth:`start`'s
+        own ``_stopped`` guard: a call that hangs up mid-gate must never
+        resurrect a released session).
+        """
+        if self._stopped:
+            return
+        self.tier = tier
+        self.session_id = session_id
+        self.user_id = user_id
+        self.bypass_accounting = False
+        self._started_at = self.clock()
+        self._last_tick_at = self.clock()
+        self._tick_task = asyncio.create_task(self._tick_loop())
+        self._timer_task = asyncio.create_task(self._service_timer())
+        self._watchdog_task = asyncio.create_task(self._silence_watchdog())
+
     async def release(self) -> None:
         """The single idempotent teardown path every layer funnels through
         (D-02 wall-clock cutoff, and the D-06 three idle layers): cancels

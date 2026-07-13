@@ -48,8 +48,9 @@ locals {
 
   # Load service definitions from live/site/services/
   service_conf = {
-    auth  = read_terragrunt_config("./services/auth/service.hcl")
-    voice = read_terragrunt_config("./services/voice/service.hcl")
+    auth           = read_terragrunt_config("./services/auth/service.hcl")
+    voice          = read_terragrunt_config("./services/voice/service.hcl")
+    telephony_edge = read_terragrunt_config("./services/telephony-edge/service.hcl")
   }
 
   email = {
@@ -140,22 +141,26 @@ locals {
     enabled = true
     repositories = concat(
       local.service_conf.auth.locals.ecr_repositories,
-      local.service_conf.voice.locals.ecr_repositories
+      local.service_conf.voice.locals.ecr_repositories,
+      local.service_conf.telephony_edge.locals.ecr_repositories
     )
   }
 
   ecs_tasks = {
     # Phase 4 (04-02): voice task. Phase 5 deploy: auth task added — the auth
     # identity service is stood up so the browser client's OIDC sign-in works.
+    # Phase 12 (12-07): telephony-edge task added — the deployed Asterisk
+    # PSTN edge (D-01/D-04).
     enabled        = true
     enable_logging = true
-    tasks          = [local.service_conf.voice.locals.task, local.service_conf.auth.locals.task]
+    tasks          = [local.service_conf.voice.locals.task, local.service_conf.auth.locals.task, local.service_conf.telephony_edge.locals.task]
   }
 
   ecs_services = {
     # Phase 4 (04-02): voice service. Phase 5 deploy: auth service added.
+    # Phase 12 (12-07): telephony-edge service added.
     enabled  = true
-    services = [local.service_conf.voice.locals.service, local.service_conf.auth.locals.service]
+    services = [local.service_conf.voice.locals.service, local.service_conf.auth.locals.service, local.service_conf.telephony_edge.locals.service]
   }
 
   # Cross-regional secrets (provider API keys, JWT secrets, etc.)

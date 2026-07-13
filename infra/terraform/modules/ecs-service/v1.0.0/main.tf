@@ -254,8 +254,11 @@ resource "aws_ecs_service" "service" {
   force_new_deployment = each.value.force_new_deployment
 
   network_configuration {
-    subnets          = each.value.subnets
-    security_groups  = var.security_group_ids
+    subnets = each.value.subnets
+    # Phase 12 (T-12-07-01): a per-service override (keyed by service name,
+    # `each.key`) takes precedence over the shared default list — see
+    # `security_group_overrides`'s own doc comment in variables.tf.
+    security_groups  = lookup(var.security_group_overrides, each.key, var.security_group_ids)
     assign_public_ip = each.value.assign_public_ip
   }
 
