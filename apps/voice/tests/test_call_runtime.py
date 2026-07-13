@@ -20,10 +20,14 @@ import asyncio
 
 import pytest
 
+from pipecat.processors.aggregators.llm_response_universal import (
+    AssistantTurnStoppedMessage,
+    UserTurnMessageAddedMessage,
+)
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.base_transport import BaseTransport
 
-from klanker_voice import quota, session
+from klanker_voice import call_runtime, quota, session
 from klanker_voice.call_runtime import CallIdentity, CallSession, create_call_session
 from klanker_voice.config import DuplexConfig, QuotaConfig, load_config, load_knowledge_config
 from klanker_voice.session import SessionLifecycle
@@ -113,7 +117,13 @@ def _gate_result(**overrides) -> quota.GateResult:
     return quota.GateResult(**base)
 
 
-async def _build_call_session(make_config_file, *, transport: BaseTransport | None = None) -> CallSession:
+async def _build_call_session(
+    make_config_file,
+    *,
+    transport: BaseTransport | None = None,
+    identity: CallIdentity | None = None,
+    gate_result: quota.GateResult | None = None,
+) -> CallSession:
     config_path = make_config_file()
     cfg = load_config(config_path)
     # The real repo pipeline.toml's [knowledge] table -- KnowledgeConfig is a
@@ -123,8 +133,8 @@ async def _build_call_session(make_config_file, *, transport: BaseTransport | No
 
     return await create_call_session(
         transport=transport or FakeTransport(),
-        identity=CallIdentity(subject="tester", authenticated=True),
-        gate_result=_gate_result(),
+        identity=identity or CallIdentity(subject="tester", authenticated=True),
+        gate_result=gate_result or _gate_result(),
         cfg=cfg,
         knowledge_cfg=knowledge_cfg,
         duplex_cfg=DuplexConfig(),
@@ -132,6 +142,35 @@ async def _build_call_session(make_config_file, *, transport: BaseTransport | No
         channel="webrtc",
         metadata={},
     )
+
+
+def _capture_built_pipeline(monkeypatch) -> list:
+    """Monkeypatch ``call_runtime.build_pipeline`` to also record every real
+    ``BuiltPipeline`` it constructs -- gives the test a handle onto the SAME
+    ``user_aggregator``/``assistant_aggregator`` objects ``create_call_session``
+    itself registers the ledger tap on (real pipecat ``FrameProcessor``
+    objects, not fakes -- proves the wiring against the actual event-handler
+    contract, RESEARCH Pattern 1)."""
+    captured: list = []
+    original = call_runtime.build_pipeline
+
+    def _wrapped(*args, **kwargs):
+        built = original(*args, **kwargs)
+        captured.append(built)
+        return built
+
+    monkeypatch.setattr(call_runtime, "build_pipeline", _wrapped)
+    return captured
+
+
+async def _fire_event(aggregator, event_name: str, *args) -> None:
+    """Directly await every handler registered for ``event_name`` --
+    bypasses pipecat's own task-based async dispatch
+    (``BaseObject._call_event_handler`` schedules handlers as background
+    tasks rather than awaiting them inline) so assertions on writer state
+    are deterministic, with no stray ``asyncio.sleep(0)``."""
+    for handler in aggregator._event_handlers[event_name].handlers:
+        await handler(aggregator, *args)
 
 
 async def test_create_call_session_is_transport_neutral(make_config_file, stub_provider_keys, fake_aws):
@@ -208,3 +247,160 @@ async def test_transport_termination_triggers_single_release(make_config_file, s
 
     metric_calls = [c for c in fake_aws["cloudwatch"].calls if c[0] == "put_metric_data"]
     assert len(metric_calls) == 1  # the _stopped guard collapsed both terminal paths into one
+
+
+# --- Phase 15 (LEDG-01/LEDG-02): the ledger tap (Task 1) -------------------
+
+
+async def test_ledger_tap_registers_and_appends_both_roles(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """create_call_session registers on_user_turn_message_added and
+    on_assistant_turn_stopped on the real aggregator objects build_pipeline()
+    constructs; firing them appends role="user"/role="assistant" records
+    with the message content to the session's writer (RESEARCH Pattern 1)."""
+    captured = _capture_built_pipeline(monkeypatch)
+
+    call_session = await _build_call_session(
+        make_config_file, gate_result=_gate_result(bypass_accounting=False)
+    )
+    built = captured[0]
+
+    assert "on_user_turn_message_added" in built.user_aggregator._event_handlers
+    assert "on_assistant_turn_stopped" in built.assistant_aggregator._event_handlers
+
+    await _fire_event(
+        built.user_aggregator,
+        "on_user_turn_message_added",
+        UserTurnMessageAddedMessage(content="hello there", timestamp="t1", user_id="u1"),
+    )
+    await _fire_event(
+        built.assistant_aggregator,
+        "on_assistant_turn_stopped",
+        AssistantTurnStoppedMessage(content="hi, how can I help?", interrupted=False, timestamp="t2"),
+    )
+
+    records = call_session.writer._buffer
+    assert [r["role"] for r in records] == ["user", "assistant"]
+    assert records[0]["text"] == "hello there"
+    assert records[1]["text"] == "hi, how can I help?"
+    assert records[1]["interrupted"] is False
+
+
+async def test_ledger_assistant_empty_content_skipped_interrupted_recorded(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """An assistant message with empty content (e.g. interrupted before any
+    tokens) appends nothing; one with content and interrupted=True records
+    interrupted=True."""
+    captured = _capture_built_pipeline(monkeypatch)
+    call_session = await _build_call_session(
+        make_config_file, gate_result=_gate_result(bypass_accounting=False)
+    )
+    built = captured[0]
+
+    await _fire_event(
+        built.assistant_aggregator,
+        "on_assistant_turn_stopped",
+        AssistantTurnStoppedMessage(content="", interrupted=False, timestamp="t1"),
+    )
+    assert call_session.writer._buffer == []
+
+    await _fire_event(
+        built.assistant_aggregator,
+        "on_assistant_turn_stopped",
+        AssistantTurnStoppedMessage(content="cut off mid", interrupted=True, timestamp="t2"),
+    )
+    assert len(call_session.writer._buffer) == 1
+    assert call_session.writer._buffer[0]["interrupted"] is True
+
+
+async def test_ledger_bypass_session_writer_disabled(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """gate_result.bypass_accounting=True (smoke/bypass -- the default
+    _gate_result()) constructs the writer disabled -- firing both events
+    appends nothing (T-15-03-02, anti-pattern "ledgering bypass sessions")."""
+    captured = _capture_built_pipeline(monkeypatch)
+    call_session = await _build_call_session(make_config_file)  # default bypass_accounting=True
+    built = captured[0]
+
+    assert call_session.writer.enabled is False
+
+    await _fire_event(
+        built.user_aggregator,
+        "on_user_turn_message_added",
+        UserTurnMessageAddedMessage(content="should not be captured", timestamp="t1", user_id=None),
+    )
+    await _fire_event(
+        built.assistant_aggregator,
+        "on_assistant_turn_stopped",
+        AssistantTurnStoppedMessage(content="also not captured", interrupted=False, timestamp="t2"),
+    )
+
+    assert call_session.writer._buffer == []
+
+
+async def test_run_finally_closes_writer_exactly_once_on_error(
+    make_config_file, stub_provider_keys, fake_aws
+):
+    """CallSession.run()'s finally calls writer.close() even when the
+    runner raises (Pitfall 3: the final flush must survive an error)."""
+    call_session = await _build_call_session(make_config_file)
+
+    async def _raising_run() -> None:
+        raise RuntimeError("boom")
+
+    call_session.runner.run = _raising_run
+
+    with pytest.raises(RuntimeError):
+        await call_session.run()
+
+    assert call_session.writer._closed is True
+
+
+async def test_run_finally_closes_writer_on_cancellation(
+    make_config_file, stub_provider_keys, fake_aws
+):
+    """Same guarantee under cancellation, not just an ordinary exception --
+    matches the heartbeat-release guarantee run()'s finally already provides."""
+    call_session = await _build_call_session(make_config_file)
+
+    async def _cancelling_run() -> None:
+        raise asyncio.CancelledError()
+
+    call_session.runner.run = _cancelling_run
+
+    with pytest.raises(asyncio.CancelledError):
+        await call_session.run()
+
+    assert call_session.writer._closed is True
+
+
+async def test_ledger_identity_plumbing_email_and_code_hash(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A WebRTC CallIdentity carrying email + code yields a first record
+    with that email and a non-null code_hash -- identity plumbing end-to-end
+    through the writer (Pitfall 4)."""
+    monkeypatch.setenv("KMV_LEDGER_SALT", "test-salt")
+    captured = _capture_built_pipeline(monkeypatch)
+
+    call_session = await _build_call_session(
+        make_config_file,
+        identity=CallIdentity(
+            subject="auth0|abc123", authenticated=True, email="dad@example.com", code="kphdemo123"
+        ),
+        gate_result=_gate_result(bypass_accounting=False),
+    )
+    built = captured[0]
+
+    await _fire_event(
+        built.user_aggregator,
+        "on_user_turn_message_added",
+        UserTurnMessageAddedMessage(content="hi KPH", timestamp="t1", user_id="u1"),
+    )
+
+    record = call_session.writer._buffer[0]
+    assert record["email"] == "dad@example.com"
+    assert record["code_hash"] is not None
