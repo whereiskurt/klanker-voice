@@ -334,7 +334,7 @@ Plans:
   4. Client shows a visible "sessions may be recorded" notice (establishes the no-expectation-of-privacy posture)
   5. Quota data stays in DynamoDB; transcripts live only in S3 — no co-mingling
 
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 **Requirements mapping (LEDG-01..05 ↔ the 5 Success Criteria):** LEDG-01 = SC1 (record shape: role/text/email-or-caller/ts/session_id/turn_seq/salted code_hash); LEDG-02 = SC2 (batched newline-JSON to private SSE date-partitioned S3 + Athena table); LEDG-03 = SC3 (operator threaded conversation view); LEDG-04 = SC4 ("sessions may be recorded" client notice); LEDG-05 = SC5 (quota in DynamoDB, transcripts only in S3 — no co-mingling).
 
