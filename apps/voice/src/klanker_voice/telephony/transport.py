@@ -87,7 +87,9 @@ call -- see 10-02-SUMMARY.md).
 
 from __future__ import annotations
 
+import asyncio
 import random
+import time
 
 from pipecat.audio.utils import create_stream_resampler
 from pipecat.frames.frames import (
@@ -247,6 +249,21 @@ class TelephonyOutputTransport(BaseOutputTransport):
         self._output_resampler = create_stream_resampler(clear_after_secs=None)
         self._framer = PcmFramer(samples_per_packet=params.samples_per_packet)
         self._packetizer = RtpPacketizer(ssrc=random.getrandbits(32), params=params)
+        # Real-time RTP send clock (D-05/D-06): one packet per packet_time_ms.
+        # pipecat's BaseOutputTransport drains its audio queue as fast as
+        # possible and relies on each transport's write_audio_frame to supply
+        # real-time back-pressure (local audio blocks on the sound device,
+        # Daily sleeps per frame, WebRTC hands off to a media-clock-paced
+        # track). A UDP sendto() returns instantly and supplies none, so
+        # WITHOUT this clock a whole TTS utterance's RTP is blasted at
+        # Asterisk's externalMedia channel in a burst -- Asterisk has no
+        # read-side jitterbuffer on a UnicastRTP externalMedia leg and
+        # forwards the burst straight to VoIP.ms/PSTN, so the caller hears
+        # constant garble on every utterance (inbound is clean only because
+        # Asterisk paces its OWN transmission). See .planning/debug/resolved/
+        # telephony-outbound-garble.md.
+        self._packet_interval = params.packet_time_ms / 1000.0
+        self._next_send_time: float | None = None
         self._torn_down = False
 
     async def start(self, frame: StartFrame) -> None:
@@ -256,23 +273,48 @@ class TelephonyOutputTransport(BaseOutputTransport):
     async def write_audio_frame(self, frame: OutputAudioRawFrame) -> bool:
         """The one sink override (D-05/D-06): resample once at the 8 kHz
         boundary, mu-law encode per 160-sample frame, RTP packetize
-        (seq/ts/SSRC/payload-type all owned by ``RtpPacketizer``), write."""
+        (seq/ts/SSRC/payload-type all owned by ``RtpPacketizer``), then send
+        each packet on a real-time clock (:meth:`_pace`) so exactly one 20 ms
+        packet leaves per 20 ms wall-clock. The pacing is essential, not
+        cosmetic: without it the packets are flushed to Asterisk's
+        externalMedia socket in a burst and the caller hears constant garble
+        (see :attr:`_next_send_time` note in ``__init__``)."""
         pcm_8k = await self._output_resampler.resample(
             frame.audio, frame.sample_rate, self._telephony_params.clock_rate
         )
         for pcm_frame in self._framer.push(pcm_8k):
             ulaw_frame = ulaw_encode(pcm_frame)
             rtp_packet = self._packetizer.packetize(ulaw_frame)
+            await self._pace()
             await self._media.write_packet(rtp_packet)
         return True
+
+    async def _pace(self) -> None:
+        """Block until this packet's scheduled real-time send instant.
+
+        Advances a monotonic schedule by exactly one ``packet_interval`` per
+        packet. Resyncs the schedule to ``now`` whenever we have fallen more
+        than one interval behind (the first packet, inter-utterance silence,
+        or a post-barge-in ``flush``) so a natural pause never produces a
+        catch-up burst -- it simply restarts the cadence cleanly."""
+        now = time.monotonic()
+        if self._next_send_time is None or now > self._next_send_time + self._packet_interval:
+            self._next_send_time = now
+        delay = self._next_send_time - now
+        if delay > 0:
+            await asyncio.sleep(delay)
+        self._next_send_time += self._packet_interval
 
     async def flush(self) -> None:
         """D-07: drop any buffered-but-incomplete outbound PCM tail so stale
         audio doesn't bleed into the caller's next turn after a barge-in.
         The framer is stateful across ``write_audio_frame`` calls (D-02);
         replacing it discards exactly that incomplete tail (never-yet-sent
-        audio) with no effect on already-written RTP."""
+        audio) with no effect on already-written RTP. Also resets the
+        real-time send clock so the next utterance restarts the 20 ms cadence
+        from its own first packet instead of inheriting a stale schedule."""
         self._framer = PcmFramer(samples_per_packet=self._telephony_params.samples_per_packet)
+        self._next_send_time = None
 
     async def handle_interruptions(self, frame: InterruptionFrame) -> None:
         """D-07 flush hook, invoked from :meth:`process_frame` below.

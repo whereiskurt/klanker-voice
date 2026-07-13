@@ -196,6 +196,56 @@ async def test_output_frame_emits_pcmu_rtp():
     assert diffs == {params.samples_per_packet}  # ts += 160 per packet, D-03
 
 
+async def test_output_rtp_is_real_time_paced_not_bursted():
+    """Regression (telephony-outbound-garble): outbound RTP must leave on a
+    real-time clock -- exactly one packet per ``packet_time_ms`` -- NOT in a
+    burst. pipecat's BaseOutputTransport drains its audio queue as fast as
+    possible and relies on ``write_audio_frame`` to supply real-time
+    back-pressure; a bare UDP ``sendto`` supplies none, so without the send
+    clock the whole utterance is flushed to Asterisk's externalMedia socket
+    in milliseconds and the PSTN caller hears constant garble. This test
+    asserts the wall-clock spacing between emitted packets is ~20 ms, not ~0.
+    """
+    import time
+
+    params = TelephonyTransportParams()  # packet_time_ms=20, samples_per_packet=160
+
+    class _TimingMedia(OfflineRtpMediaSession):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.send_times: list[float] = []
+
+        async def write_packet(self, packet: bytes) -> None:
+            self.send_times.append(time.monotonic())
+            await super().write_packet(packet)
+
+    media = _TimingMedia()
+    transport = TelephonyTransport(call_id="pace-call", media=media, params=params)
+    output = transport.output()
+
+    # 500 ms of audio at the pipeline rate. The SOXR stream resampler buffers
+    # some lookahead, so one write emits somewhat fewer than the raw-duration
+    # packet count -- enough to measure real-time spacing across several gaps.
+    pcm = _tone_pcm(PIPELINE_OUTPUT_SAMPLE_RATE * 500 // 1000)
+    frame = OutputAudioRawFrame(
+        audio=pcm, sample_rate=PIPELINE_OUTPUT_SAMPLE_RATE, num_channels=1
+    )
+
+    await output.write_audio_frame(frame)
+
+    assert len(media.send_times) >= 5  # several 20 ms packets actually emitted
+    gaps = [b - a for a, b in zip(media.send_times, media.send_times[1:])]
+    # Each gap should be close to one packet interval (0.020 s). Generous
+    # bounds tolerate event-loop scheduling jitter but still fail hard on the
+    # burst bug (which produces sub-millisecond gaps).
+    assert gaps, "expected multiple paced packets"
+    for g in gaps:
+        assert 0.010 <= g <= 0.040, f"packet gap {g * 1000:.1f}ms not ~20ms (burst regression?)"
+    # Total elapsed must reflect real time, proving no burst.
+    total = media.send_times[-1] - media.send_times[0]
+    assert total >= (len(media.send_times) - 1) * 0.015
+
+
 # --- Task 2: interruption flush (D-07) ------------------------------------
 
 
