@@ -334,14 +334,14 @@ Plans:
   4. Client shows a visible "sessions may be recorded" notice (establishes the no-expectation-of-privacy posture)
   5. Quota data stays in DynamoDB; transcripts live only in S3 — no co-mingling
 
-**Plans:** 6 plans
+**Plans:** 1/6 plans executed
 
 **Requirements mapping (LEDG-01..05 ↔ the 5 Success Criteria):** LEDG-01 = SC1 (record shape: role/text/email-or-caller/ts/session_id/turn_seq/salted code_hash); LEDG-02 = SC2 (batched newline-JSON to private SSE date-partitioned S3 + Athena table); LEDG-03 = SC3 (operator threaded conversation view); LEDG-04 = SC4 ("sessions may be recorded" client notice); LEDG-05 = SC5 (quota in DynamoDB, transcripts only in S3 — no co-mingling).
 
 Plans:
 **Wave 1** *(parallel: no file overlap — auth claims, ledger core, infra, client notice)*
 
-- [ ] 15-01-PLAN.md — Auth token claims: namespaced email + code claims via extraTokenClaims + activeCode stamp (LEDG-01)
+- [x] 15-01-PLAN.md — Auth token claims: namespaced email + code claims via extraTokenClaims + activeCode stamp (LEDG-01)
 - [ ] 15-02-PLAN.md — Ledger core module: LedgerWriter (buffer/flush/salted code_hash/registry) + auth.py claim read (LEDG-01, LEDG-05)
 - [ ] 15-04-PLAN.md — Ledger terraform: private SSE bucket + Athena projection DDL + least-privilege IAM + SSM salt (operator apply) (LEDG-02, LEDG-05)
 - [ ] 15-06-PLAN.md — Client "sessions may be recorded" notice on the pre-connect screen (LEDG-04)

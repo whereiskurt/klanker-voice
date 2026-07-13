@@ -61,6 +61,10 @@
 - [x] **KV-04**: Operator can flip the site-wide kill-switch via `kv`
 - [x] **KV-05**: Operator can run a deployed smoke test (offer + ICE reachability) via `kv`
 
+### Private Transcription Ledger
+
+- [x] **LEDG-01**: Access token carries namespaced email + code claims (magic-link) so the voice service can build a complete ledger record from the validated token alone
+
 ## v2 Requirements (Deferred)
 
 - **KV-06**: Live session inspection (`kv sessions`) — defer until a multi-user event is scheduled
@@ -124,3 +128,4 @@ Coverage: 38/38 v1 requirements mapped (PIPE-10 promoted from v2-deferred in Pha
 | KV-03 | Phase 4 | Complete |
 | KV-04 | Phase 4 | Complete |
 | KV-05 | Phase 4 | Complete |
+| LEDG-01 | Phase 15 | Complete |
