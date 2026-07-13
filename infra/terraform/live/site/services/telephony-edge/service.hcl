@@ -58,17 +58,60 @@ locals {
         values   = ["ssm.us-east-1.amazonaws.com"]
       }
     },
+    # The in-container call_runtime enforces the SAME quota system as the voice
+    # service (spec: "every session must be quota-gated"). A telephony call's
+    # gate-unlock reads tier limits + writes the usage/concurrency ledger, so
+    # this role needs the identical DynamoDB/CloudWatch/ECS grants the voice
+    # task role carries — WITHOUT them, gate-unlock threw AccessDenied on
+    # dynamodb:GetItem(kmv-voice-usage) and telephony calls bypassed quota
+    # entirely (surfaced by the first live PSTN call). Mirrors voice
+    # service.hcl's UsageTableCrud/TiersTableRead/SessionMetricsPublish/
+    # TaskScaleInProtection statements. (PublicIpEniLookup is intentionally
+    # omitted — the edge discovers its media address via checkip, not the ENI.)
+    {
+      sid     = "UsageTableCrud"
+      actions = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
+      resources = [
+        "arn:aws:dynamodb:*:*:table/kmv-voice-usage",
+        "arn:aws:dynamodb:*:*:table/kmv-voice-usage/index/*"
+      ]
+    },
+    {
+      sid     = "TiersTableRead"
+      actions = ["dynamodb:GetItem", "dynamodb:Query"]
+      resources = [
+        "arn:aws:dynamodb:*:*:table/kmv-auth-electro",
+        "arn:aws:dynamodb:*:*:table/kmv-auth-electro/index/*"
+      ]
+    },
+    {
+      sid       = "SessionMetricsPublish"
+      actions   = ["cloudwatch:PutMetricData"]
+      resources = ["*"]
+      condition = {
+        test     = "StringEquals"
+        variable = "cloudwatch:namespace"
+        values   = ["klanker-voice/ecs"]
+      }
+    },
+    {
+      sid       = "TaskScaleInProtection"
+      actions   = ["ecs:UpdateTaskProtection", "ecs:DescribeTasks"]
+      resources = ["arn:aws:ecs:*:*:task/app-use1-kmv/*"]
+    },
   ]
 
   task = {
     name         = "telephony-edge"
     regions      = ["us-east-1"]
     cluster_name = "app"
-    # Asterisk + the controller is lighter than the full Pipecat pipeline
-    # (no aiortc/WebRTC ICE gathering at runtime) — matches 12-RESEARCH.md's
-    # sizing.
-    task_cpu    = 512
-    task_memory = 1024
+    # 0.5 vCPU (the original 12-RESEARCH sizing) starved the real-time audio
+    # thread on the first live PSTN call — the caller heard heavily garbled
+    # TTS because Asterisk + µ-law transcode + 8k↔24k resampling + Deepgram +
+    # Claude + ElevenLabs cannot share half a core without underruns. Bumped
+    # to 2 vCPU / 4 GB (matching the voice service's real-time headroom).
+    task_cpu    = 2048
+    task_memory = 4096
 
     # T-12-07-05 / 12-05 hard constraint: dedicated least-privilege task
     # role (the ecs-task module creates one because this list is non-empty)
@@ -82,8 +125,8 @@ locals {
         # auth) so build-telephony-edge.yml can deploy the immutable
         # ${github.sha} image it just built.
         image     = "telephony-edge:${get_env("TF_VAR_TELEPHONY_EDGE_IMAGE_TAG", "4db4b4665556d16662f94da7cc66d052ac3a048f")}"
-        cpu       = 512
-        memory    = 1024
+        cpu       = 2048
+        memory    = 4096
         essential = true
 
         # Asterisk needs a writable root filesystem: render_configs.py
