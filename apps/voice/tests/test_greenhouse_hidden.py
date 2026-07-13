@@ -8,7 +8,12 @@ A `hidden: true` topic must be:
 """
 from __future__ import annotations
 
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.frames.frames import (
+    InterimTranscriptionFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,
+)
+from pipecat.tests.utils import run_test
 
 from klanker_voice.config import load_config, load_knowledge_config
 from klanker_voice.knowledge.prompt_assembly import (
@@ -156,3 +161,109 @@ def test_hidden_topics_excluded_from_fallback_candidates():
     ]
     visible = [t for t in topics if not t.get("hidden")]
     assert {t["id"] for t in visible} == {"klanker-maker"}
+
+
+# --- Interim early-lock (greenhouse-one-turn-late fix, 2026-07-12) --------------
+#
+# Root cause: on PSTN, one spoken turn fragments into several finalized
+# transcripts. The user-aggregator fires an LLM inference on an earlier
+# fragment (no keyword) before the "greenhouse" FINAL reaches the router, and
+# the Anthropic service reads the shared `system_instruction` at generation
+# time -- so that inference answers in the normal persona and the recruiting
+# opener slips to the next turn. WebRTC's single clean final avoids the race.
+# Fix: detect the hidden+sticky magic word on INTERIM transcripts (streamed
+# continuously during speech, before any turn-stop inference) and commit the
+# swap early, so it precedes the premature inference.
+
+
+def _make_router(monkeypatch_env=None):
+    return KnowledgeRouterProcessor(
+        cfg=load_config(),
+        knowledge_cfg=load_knowledge_config(),
+        llm=_FakeLLM(),
+        initial_topic="klanker-maker",
+        fallback_classify=_never_fallback,
+    )
+
+
+async def test_interim_greenhouse_early_locks_before_any_final():
+    # The magic word arriving in an INTERIM transcript must swap block1 to the
+    # greenhouse pack immediately -- BEFORE any final transcript / inference --
+    # so the answering turn is already in recruiting mode (closes the PSTN
+    # fragmentation race that made the opener land one turn late).
+    router = _make_router()
+    assert router._active_topic == "klanker-maker"
+    assert router._llm._settings.system_instruction is None
+
+    await run_test(
+        router,
+        frames_to_send=[InterimTranscriptionFrame("hey, i'm from greenhouse", "u", "t")],
+        expected_down_frames=None,
+    )
+
+    assert router._active_topic == "greenhouse"
+    # block1 was swapped onto the live LLM service (the recruiting pack).
+    assert router._llm._settings.system_instruction is not None
+
+
+async def test_interim_lock_then_final_greenhouse_is_a_sticky_noop(monkeypatch):
+    # After the interim early-lock, the eventual FINAL "greenhouse" must be a
+    # sticky no-op: no second switch, no ack -- guaranteeing exactly ONE opener
+    # (no double-response) on both the telephony and WebRTC paths.
+    router = _make_router()
+    pushed = []
+
+    async def _capture(frame, direction=None):
+        pushed.append(frame)
+
+    monkeypatch.setattr(router, "push_frame", _capture)
+
+    # Interim locks greenhouse early.
+    await router._early_lock_via_interim("i'm from greenhouse")
+    assert router._active_topic == "greenhouse"
+
+    # The FINAL keyword transcript now arrives -> sticky branch, no re-commit.
+    pushed.clear()
+    await router._handle_utterance("i'm from greenhouse")
+    assert router._active_topic == "greenhouse"
+    assert pushed == []  # no ack, no second swap
+
+
+async def test_interim_never_early_locks_a_normal_topic(monkeypatch):
+    # Interim transcripts are noisy/unstable: a NORMAL topic keyword in an
+    # interim must NOT switch topics (only hidden+sticky magic words early-lock)
+    # -- and the same-vendor Haiku fallback must NEVER run on an interim.
+    called = {"fallback": False}
+
+    async def _boom_fallback(utterance, topics, *, model):
+        called["fallback"] = True
+        raise AssertionError("fallback must never run on an interim transcript")
+
+    router = KnowledgeRouterProcessor(
+        cfg=load_config(),
+        knowledge_cfg=load_knowledge_config(),
+        llm=_FakeLLM(),
+        initial_topic="klanker-maker",
+        fallback_classify=_boom_fallback,
+    )
+
+    await run_test(
+        router,
+        frames_to_send=[InterimTranscriptionFrame("tell me about defcon run", "u", "t")],
+        expected_down_frames=None,
+    )
+
+    assert router._active_topic == "klanker-maker"  # unchanged
+    assert router._llm._settings.system_instruction is None  # never swapped
+    assert called["fallback"] is False
+
+
+async def test_interim_early_lock_candidate_only_matches_hidden_sticky():
+    # Direct unit check of the candidate selector: the greenhouse magic word
+    # is a candidate; a normal-topic keyword is not.
+    router = _make_router()
+    assert router._early_lock_candidate("okay, greenhouse") == "greenhouse"
+    assert router._early_lock_candidate("tell me about klanker maker") is None
+    # Once already active, an interim never re-nominates it (no double-commit).
+    router._active_topic = "greenhouse"
+    assert router._early_lock_candidate("greenhouse again") is None
