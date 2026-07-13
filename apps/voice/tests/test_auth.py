@@ -186,3 +186,49 @@ def test_recognize_service_credential_unset_never_matches(monkeypatch):
 def test_missing_token_raises_auth_error():
     with pytest.raises(auth.AuthError):
         auth.validate_access_token("")
+
+
+def test_email_and_code_claims_surface_on_session_identity(keypair):
+    """LEDG-01: a token carrying the namespaced email/code claims (Plan
+    15-01) produces a SessionIdentity with matching .email/.code."""
+    private_key, _ = keypair
+    token = mint_token(
+        private_key,
+        extra_claims={
+            auth.TIER_ID_CLAIM: "kph-tier",
+            auth.EMAIL_CLAIM: "dad@example.com",
+            auth.CODE_CLAIM: "defcon34",
+        },
+    )
+
+    identity = auth.validate_access_token(token)
+
+    assert identity.email == "dad@example.com"
+    assert identity.code == "defcon34"
+
+
+def test_missing_email_and_code_claims_default_to_none(keypair):
+    """Magic-link tokens issued before Plan 15-01 deploys (no email/code
+    claims) must still validate, with both fields defaulting to None."""
+    private_key, _ = keypair
+    token = mint_token(private_key, extra_claims={auth.TIER_ID_CLAIM: "kph-tier"})
+
+    identity = auth.validate_access_token(token)
+
+    assert identity.email is None
+    assert identity.code is None
+
+
+def test_smoke_service_path_still_returns_none_email_and_code(monkeypatch, offline_jwks):
+    monkeypatch.setenv(auth.SMOKE_TOKEN_ENV_VAR, "s3kr1t-smoke-credential")
+
+    identity = auth.validate_access_token("s3kr1t-smoke-credential")
+
+    assert identity == auth.SessionIdentity(
+        sub=auth.SMOKE_SERVICE_SUB,
+        tier_id=auth.NO_ACCESS_TIER_ID,
+        group=None,
+        bypass_accounting=True,
+        email=None,
+        code=None,
+    )
