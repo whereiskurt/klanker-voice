@@ -1,18 +1,11 @@
 {
   "voiceId": "EIDLidDc73oTUWAedVPt",
   "model": "eleven_flash_v2_5",
+  "note": "greeting-1.mp3 is a HAND-PICKED SPLICED take (2026-07-12, Kurt-approved delivery). Do NOT re-run `make greetings` casually — a fresh render of the same text will replace this exact delivery with a random new one. Re-render only on a voice_id/settings change, then re-audition.",
   "clips": [
     {
-      "text": "Hey, how's it going \u2014 I'm KPH, Kurt's concierge. I can tell you about a bunch of his GitHub projects and DEF CON run. What do you wanna hear about?",
+      "text": "Hey! <break time=\"0.6s\" /> You've reached K P H. <break time=\"0.7s\" /> Kurt's virtual assistant. <break time=\"0.8s\" /> Ah — his Klanker! <break time=\"0.8s\" /> How can I help?",
       "file": "greeting-1.mp3"
-    },
-    {
-      "text": "Hey \u2014 KPH here, Kurt's concierge. I've got the rundown on his projects and DEF CON run. What's got your interest?",
-      "file": "greeting-2.mp3"
-    },
-    {
-      "text": "Hey there \u2014 I'm KPH, Kurt's concierge. Ask me about his GitHub work or DEF CON run. Where do you wanna start?",
-      "file": "greeting-3.mp3"
     }
   ]
 }
