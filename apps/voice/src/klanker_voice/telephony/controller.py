@@ -79,6 +79,15 @@ The PIN (``TELEPHONY_ACCESS_PIN``) and passphrase words
 :class:`AsteriskCallController` construction (or injected directly for
 tests) -- never re-read per call, never logged (D-05e).
 
+**Pickup cue (quick task 260713-m9n).** Both finish paths register a
+fire-once ``on_client_connected`` handler (:meth:`_register_pickup_cue`)
+that plays a short ring + pre-rendered KPH "hey" prompt
+(:func:`~klanker_voice.telephony.pickup_cue.play_pickup_cue`) the moment the
+media path is ready -- including during the §24 gate window, before unlock.
+It is additive to (never replaces) the existing ``on_client_connected``
+wiring, and is pre-rendered OUTBOUND-only audio (no transcription forward,
+no LLM turn, no TTS call), so the D-05d cost invariant is unchanged.
+
 **Logging discipline (§13).** Structured logs always carry the call ID.
 This module NEVER logs SIP passwords, ARI auth headers, or full
 PIN/passphrase values -- :class:`~klanker_voice.telephony.ari.AriError`
@@ -109,6 +118,7 @@ from klanker_voice.pipeline import greet_now, speak_goodbye
 from klanker_voice.telephony.ari import AriClient, AriError
 from klanker_voice.telephony.config import TelephonyConfig
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf
+from klanker_voice.telephony.pickup_cue import play_pickup_cue
 from klanker_voice.telephony.rtp_socket import SocketRtpMediaSession
 from klanker_voice.telephony.transport import TelephonyTransport
 from klanker_voice.telephony.types import RtpMediaSession, TelephonyTransportParams
@@ -451,6 +461,32 @@ class AsteriskCallController:
             identity=identity,
         )
 
+    def _register_pickup_cue(self, transport: TelephonyTransport, call_session: CallSession) -> None:
+        """Quick task 260713-m9n: register a fire-once ``on_client_connected``
+        handler that plays the ring+hey pickup cue the moment the media path
+        is ready. Additive -- ``TelephonyTransport`` fires
+        ``on_client_connected`` exactly once (its own internal fire-once
+        guard, transport.py), and pipecat's event-handler registry supports
+        multiple handlers per event name (``BaseObject.add_event_handler``
+        appends to a list) -- ``create_call_session``'s own handler(s)
+        (lifecycle reconnect, and the D-05c-gated ``register_greet_first``
+        for the ungated flow) are never replaced or suppressed by this one.
+
+        Called from BOTH the gated and ungated finish paths, right after
+        ``create_call_session`` and before the worker task is spawned --
+        during the gate window (before unlock) on the gated path. The cue is
+        pre-rendered, OUTBOUND-only audio: it forwards no transcription
+        frame, invokes no LLM turn, and makes no TTS API call, so the D-05d
+        "no billed turn until unlock" invariant is unchanged (T-M9N-01).
+        Caller speech mid-cue flushes it via the pipeline's existing
+        ``InterruptionFrame`` (``telephony.pickup_cue`` module docstring,
+        T-M9N-02) -- inbound audio still flows to STT for passphrase
+        matching regardless."""
+
+        @transport.event_handler("on_client_connected")
+        async def _on_pickup_cue_ready(transport, client):  # noqa: ANN001 -- pipecat handler shape
+            await play_pickup_cue(call_session.worker)
+
     async def _finish_stasis_start_ungated(
         self,
         *,
@@ -518,6 +554,7 @@ class AsteriskCallController:
             created_at=time.time(),
         )
         self.calls[sip_channel_id] = active_call
+        self._register_pickup_cue(transport, call_session)
 
         # R6: a hard session timeout (SessionLifecycle's own D-02 wall-clock
         # cutoff) must ALSO reach the SIP channel -- runner.cancel() alone
@@ -702,6 +739,7 @@ class AsteriskCallController:
         )
         self.calls[sip_channel_id] = active_call
         active_call_holder["call"] = active_call
+        self._register_pickup_cue(transport, call_session)
 
         # R6: a hard session timeout (only reachable once the gate has
         # unlocked and SessionLifecycle.upgrade_from_bypass has started the
