@@ -254,6 +254,9 @@ func scanTelephonyBlock(r io.Reader) GateConfigReport {
 			report.UnlockTierID = value
 		}
 	}
+	// Best-effort: a read error mid-scan returns whatever was parsed so far —
+	// the gate-config section is advisory and never fatal to `telephony list`.
+	_ = scanner.Err()
 	return report
 }
 
@@ -266,12 +269,12 @@ func parseTOMLScalarLine(line string) (key, value string, ok bool) {
 	if strings.HasPrefix(line, "#") {
 		return "", "", false
 	}
-	idx := strings.Index(line, "=")
-	if idx < 0 {
+	rawKey, rawValue, found := strings.Cut(line, "=")
+	if !found {
 		return "", "", false
 	}
-	key = strings.TrimSpace(line[:idx])
-	value = strings.TrimSpace(line[idx+1:])
+	key = strings.TrimSpace(rawKey)
+	value = strings.TrimSpace(rawValue)
 	if commentIdx := strings.Index(value, " #"); commentIdx >= 0 {
 		value = strings.TrimSpace(value[:commentIdx])
 	}
