@@ -17,7 +17,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -352,19 +351,16 @@ type TelephonyListReport struct {
 // kv binary's working directory (the repo root in normal operator usage).
 const defaultTelephonyConfigPath = "apps/voice/configs/telephony.toml"
 
-// SSMClient builds an aws-sdk-go-v2 SSM client from the Config, mirroring
-// DynamoClient. Region defaults to "us-east-1" (the /kmv/secrets/use1/*
-// params live in region use1) when c.Region is unset, honoring the ambient
-// credential chain — no EndpointURL override needed (SSM has no local dev
-// substitute like dynamodb-local).
+// SSMClient builds an aws-sdk-go-v2 SSM client from the Config via the
+// shared loadAWS helper (root.go), mirroring DynamoClient. Region defaults
+// to "us-east-1" (the /kmv/secrets/use1/* params live in region use1) and
+// profile defaults to klanker-application — both overridable via
+// --region/--profile or their env vars — no EndpointURL override needed
+// (SSM has no local dev substitute like dynamodb-local).
 func (c *Config) SSMClient(ctx context.Context) (*ssm.Client, error) {
-	region := c.Region
-	if region == "" {
-		region = "us-east-1"
-	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	cfg, err := c.loadAWS(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+		return nil, err
 	}
 	return ssm.NewFromConfig(cfg), nil
 }
@@ -403,7 +399,7 @@ func NewTelephonyCmd(cfg *Config) *cobra.Command {
 			}
 
 			var inboundDIDs InboundDIDReport
-			if creds, err := voipmsCredsFromEnv(); err != nil {
+			if creds, err := cfg.resolveVoipmsCreds(c.Context()); err != nil {
 				inboundDIDs = readInboundDIDs(c.Context(), false, nil)
 			} else {
 				vc := newVoipmsClient(creds)
