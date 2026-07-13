@@ -65,6 +65,40 @@ describe("applyLoginIntentBridge (Pitfall 3 — the login->token bridge)", () =>
     expect(profile?.activeTierId).not.toBe("no-access");
   });
 
+  it("stamps activeCode from intent.code (LEDG-01) so the token claim resolves to a real value", async () => {
+    const { LoginIntent } = await import("../../entities/login-intent");
+    const { AccessCode } = await import("../../entities/access-code");
+    const { upsertAuthProfile, getAuthProfile } = await import(
+      "../../entities/auth-profile"
+    );
+    const { applyLoginIntentBridge } = await import("../login-intent-bridge");
+
+    const code = unique("ledgcode");
+    const email = `${unique("ledguser")}@example.com`;
+    const userId = unique("user");
+
+    await AccessCode.create({
+      code,
+      tierId: "demo-tier",
+      group: "conference",
+      maxRedemptions: 10,
+      redemptionCount: 0,
+    }).go();
+    await LoginIntent.upsert({
+      email,
+      code,
+      tierId: "demo-tier",
+      group: "conference",
+      expiresAt: Date.now() + 15 * 60 * 1000,
+    }).go();
+    await upsertAuthProfile(userId, "email", { email });
+
+    await applyLoginIntentBridge(userId, email);
+
+    const profile = await getAuthProfile(userId);
+    expect(profile?.activeCode).toBe(code);
+  });
+
   it("records the redemption and increments AccessCode.redemptionCount once", async () => {
     const { LoginIntent } = await import("../../entities/login-intent");
     const { AccessCode } = await import("../../entities/access-code");

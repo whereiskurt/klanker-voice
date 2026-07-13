@@ -39,7 +39,10 @@ export async function applyLoginIntentBridge(
     return;
   }
 
-  await setActiveTier(userId, intent.tierId, intent.group);
+  // intent.code (Phase 15 Plan 01, LEDG-01) is threaded into the same
+  // stamp as the tier/group — it's already read a few lines below for
+  // CodeRedemption.create, so no new lookup.
+  await setActiveTier(userId, intent.tierId, intent.group, intent.code);
 
   // Unique-user redemption count (D-06, T-03-06): only increment
   // AccessCode.redemptionCount when this (code, userId) redemption is
