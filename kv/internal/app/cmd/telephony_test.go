@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -351,5 +352,141 @@ func TestTelephonyRootRegistersCmd(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("kv root command tree is missing the telephony sub-command")
+	}
+}
+
+// --------------------------------------------------------------------------
+// readInboundDIDs — graceful degradation (no creds / lister error / success).
+
+func TestReadInboundDIDs_CredsAbsentNotesEnvVars(t *testing.T) {
+	report := readInboundDIDs(context.Background(), false, nil)
+	if len(report.Records) != 0 {
+		t.Errorf("Records = %+v, want empty", report.Records)
+	}
+	if !strings.Contains(report.Status, "VOIPMS_API_USERNAME") || !strings.Contains(report.Status, "VOIPMS_API_PASSWORD") {
+		t.Errorf("Status = %q, want it to mention VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD", report.Status)
+	}
+}
+
+func TestReadInboundDIDs_ListerErrorYieldsSafeShortNote(t *testing.T) {
+	const sentinelPassword = "s3cr3t-api-password-should-never-leak"
+	listerErr := errors.New("call voip.ms method getDIDsInfo: Get \"https://voip.ms/api/v1/rest.php?api_password=" + sentinelPassword + "&method=getDIDsInfo\": connection refused")
+	lister := func(ctx context.Context) ([]InboundDIDRecord, error) {
+		return nil, listerErr
+	}
+	report := readInboundDIDs(context.Background(), true, lister)
+	if len(report.Records) != 0 {
+		t.Errorf("Records = %+v, want empty", report.Records)
+	}
+	if report.Status == "" {
+		t.Fatal("Status is empty, want a short safe note")
+	}
+	if strings.Contains(report.Status, sentinelPassword) {
+		t.Errorf("Status leaked the password sentinel: %q", report.Status)
+	}
+	if strings.Contains(report.Status, "voip.ms/api") || strings.Contains(report.Status, "rest.php") {
+		t.Errorf("Status leaked the raw request URL: %q", report.Status)
+	}
+	if len(report.Status) > 120 {
+		t.Errorf("Status is %d chars, want a short note (<=120 chars): %q", len(report.Status), report.Status)
+	}
+}
+
+func TestReadInboundDIDs_ListerSuccessCarriesRecords(t *testing.T) {
+	want := []InboundDIDRecord{
+		{DID: "14165551234", Description: "Main line", Routing: "sip:klanker-pbx", POP: "Toronto"},
+	}
+	lister := func(ctx context.Context) ([]InboundDIDRecord, error) {
+		return want, nil
+	}
+	report := readInboundDIDs(context.Background(), true, lister)
+	if report.Status != "" {
+		t.Errorf("Status = %q, want empty on success", report.Status)
+	}
+	if len(report.Records) != 1 || report.Records[0] != want[0] {
+		t.Errorf("Records = %+v, want %+v", report.Records, want)
+	}
+}
+
+// --------------------------------------------------------------------------
+// printTelephony — Inbound DIDs section renders first, with graceful
+// degradation and --json inclusion.
+
+func TestPrintTelephony_InboundDIDsRendersBeforeMintMappings(t *testing.T) {
+	report := TelephonyListReport{
+		InboundDIDs: InboundDIDReport{
+			Records: []InboundDIDRecord{
+				{DID: "14165551234", Description: "Main line", Routing: "sip:klanker-pbx", POP: "Toronto"},
+			},
+		},
+		DIDs: []PhoneMappingRecord{
+			{Phone: "+14165551234", Code: "defcon34", TierID: "kph-tier", PhoneEnabled: true},
+		},
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := printTelephony(cmd, report, false); err != nil {
+		t.Fatalf("printTelephony() error: %v", err)
+	}
+	out := buf.String()
+	inboundIdx := strings.Index(out, "Inbound DIDs")
+	mintIdx := strings.Index(out, "Caller-ID mint mappings")
+	if inboundIdx < 0 {
+		t.Fatalf("output missing 'Inbound DIDs' section: %q", out)
+	}
+	if mintIdx < 0 {
+		t.Fatalf("output missing 'Caller-ID mint mappings' section: %q", out)
+	}
+	if inboundIdx >= mintIdx {
+		t.Errorf("'Inbound DIDs' (idx %d) does not appear before 'Caller-ID mint mappings' (idx %d): %q", inboundIdx, mintIdx, out)
+	}
+	for _, want := range []string{"DID", "DESCRIPTION", "ROUTING", "POP", "14165551234", "Main line"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q: %q", want, out)
+		}
+	}
+}
+
+func TestPrintTelephony_InboundDIDsStatusNoteWhenAbsent(t *testing.T) {
+	report := TelephonyListReport{
+		InboundDIDs: InboundDIDReport{Status: "not configured — set VOIPMS_API_USERNAME/PASSWORD to list inbound DIDs"},
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := printTelephony(cmd, report, false); err != nil {
+		t.Fatalf("printTelephony() error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "not configured") {
+		t.Errorf("output missing the not-configured status note: %q", out)
+	}
+}
+
+func TestPrintTelephony_JSONIncludesInboundDIDs(t *testing.T) {
+	report := TelephonyListReport{
+		InboundDIDs: InboundDIDReport{
+			Records: []InboundDIDRecord{
+				{DID: "14165551234", Description: "Main line", Routing: "sip:klanker-pbx", POP: "Toronto"},
+			},
+		},
+		GateConfig: GateConfigReport{Found: false},
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := printTelephony(cmd, report, true); err != nil {
+		t.Fatalf("printTelephony() error: %v", err)
+	}
+	var decoded TelephonyListReport
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(decoded.InboundDIDs.Records) != 1 || decoded.InboundDIDs.Records[0].DID != "14165551234" {
+		t.Errorf("decoded InboundDIDs.Records = %+v, want the seeded DID record", decoded.InboundDIDs.Records)
+	}
+	if !strings.Contains(buf.String(), "14165551234") {
+		t.Errorf("JSON output missing the inbound DID: %s", buf.String())
 	}
 }

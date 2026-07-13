@@ -57,6 +57,11 @@ const (
 	// VERIFIED: lists VoIP.ms POP/server info (used to source the SG
 	// allow-list IPs documented in the operator runbook).
 	voipmsMethodGetServersInfo = "getServersInfo"
+
+	// VERIFIED: lists the DIDs provisioned on the account — the actual
+	// numbers the public dials to reach the agent (§25 inbound surface).
+	// Params: none required for a full-account listing.
+	voipmsMethodGetDIDsInfo = "getDIDsInfo"
 )
 
 // --------------------------------------------------------------------------
@@ -242,6 +247,64 @@ func createVoipmsSubaccount(ctx context.Context, vc *voipmsClient, username, pas
 		return fmt.Errorf("create subaccount %s: %w", username, err)
 	}
 	return nil
+}
+
+// InboundDIDRecord is one VoIP.ms-provisioned inbound DID — the actual
+// number the public dials to reach the agent (distinct from the caller-ID
+// mint mappings in telephony.go's PhoneMappingRecord, which are keyed by the
+// CALLER's number, not the DID being called).
+type InboundDIDRecord struct {
+	DID         string `json:"did"`
+	Description string `json:"description"`
+	Routing     string `json:"routing"`
+	POP         string `json:"pop"`
+}
+
+// ListInboundDIDs lists the account's provisioned inbound DIDs via
+// voipmsMethodGetDIDsInfo. The response shape is defensively parsed: VoIP.ms
+// returns "dids" as a JSON array when there are 0 or 2+ DIDs, but collapses
+// it to a single bare object when there is exactly one (a documented
+// VoIP.ms API quirk) — both shapes are handled. Any other/missing shape
+// degrades to a non-nil empty slice rather than erroring or panicking.
+func ListInboundDIDs(ctx context.Context, vc *voipmsClient) ([]InboundDIDRecord, error) {
+	out, err := vc.do(ctx, voipmsMethodGetDIDsInfo, nil)
+	if err != nil {
+		return nil, err
+	}
+	records := []InboundDIDRecord{}
+	switch dids := out["dids"].(type) {
+	case []any:
+		for _, item := range dids {
+			if m, ok := item.(map[string]any); ok {
+				records = append(records, didRecordFromMap(m))
+			}
+		}
+	case map[string]any:
+		records = append(records, didRecordFromMap(dids))
+	}
+	return records, nil
+}
+
+// didRecordFromMap reads one DID record's fields from a decoded JSON map.
+// VoIP.ms returns strings for these fields, but fmt.Sprint is used as a
+// defensive fallback rather than assuming the type.
+func didRecordFromMap(m map[string]any) InboundDIDRecord {
+	field := func(key string) string {
+		v, ok := m[key]
+		if !ok || v == nil {
+			return ""
+		}
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return fmt.Sprint(v)
+	}
+	return InboundDIDRecord{
+		DID:         field("did"),
+		Description: field("description"),
+		Routing:     field("routing"),
+		POP:         field("pop"),
+	}
 }
 
 // --------------------------------------------------------------------------
