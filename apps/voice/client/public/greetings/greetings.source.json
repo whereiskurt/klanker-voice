@@ -1,7 +1,5 @@
 {
   "greetings": [
-    "Hey, how's it going — I'm KPH, Kurt's concierge. I can tell you about a bunch of his GitHub projects and DEF CON run. What do you wanna hear about?",
-    "Hey — KPH here, Kurt's concierge. I've got the rundown on his projects and DEF CON run. What's got your interest?",
-    "Hey there — I'm KPH, Kurt's concierge. Ask me about his GitHub work or DEF CON run. Where do you wanna start?"
+    "Hey! <break time=\"0.6s\" /> You've reached K P H. <break time=\"0.7s\" /> Kurt's virtual assistant. <break time=\"0.8s\" /> Ah — his Klanker! <break time=\"0.8s\" /> How can I help?"
   ]
 }
