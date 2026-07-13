@@ -539,22 +539,31 @@ class AsteriskCallController:
         self._tasks[sip_channel_id] = task
         task.add_done_callback(lambda _t, cid=sip_channel_id: self._tasks.pop(cid, None))
 
-    async def _mint_tier_from_caller_id(self, normalized_caller_id: str) -> str | None:
+    async def _mint_tier_from_caller_id(
+        self, normalized_caller_id: str
+    ) -> tuple[str | None, str | None]:
         """D-02: call the private ``/tel`` mint endpoint for
         ``normalized_caller_id`` and validate the returned token via the
         SAME offline auth path the browser uses
         (:func:`klanker_voice.auth.validate_access_token`) to obtain the
-        caller's entitled tier_id. Returns ``None`` on ANY failure -- no
-        caller ID, HTTP non-200/timeout/network error, a missing/invalid
-        token body, or token validation failure -- never raises (D-05:
-        every failure mode fails closed identically, mirroring the /tel
-        endpoint's own no-oracle contract, T-12-06-04).
+        caller's entitled tier_id. Returns ``(None, None)`` on ANY failure
+        -- no caller ID, HTTP non-200/timeout/network error, a
+        missing/invalid token body, or token validation failure -- never
+        raises (D-05: every failure mode fails closed identically,
+        mirroring the /tel endpoint's own no-oracle contract, T-12-06-04).
+
+        Phase 15 (LEDG-01): widened to ALSO return the validated token's
+        ``sub`` (``anon:<code>:<uuid>``, the same shape the browser bypass
+        `/join` path mints) alongside ``tier_id`` -- the ONLY place a PSTN
+        caller's raw access code is ever recoverable, so
+        :func:`~klanker_voice.call_runtime.create_call_session`'s ledger
+        tap can hash it (never logged, never stored raw -- T-15-03-03).
 
         The Bearer token is read from the env var NAMED by
         ``telephony_cfg.tel_mint_env_var`` at call time -- never a literal
         (T-12-06-03)."""
         if not normalized_caller_id:
-            return None
+            return None, None
         bearer = os.environ.get(self._telephony_cfg.tel_mint_env_var, "")
         headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
         url = (
@@ -563,13 +572,13 @@ class AsteriskCallController:
         )
         token = await _fetch_tel_token(url, headers)
         if not token:
-            return None
+            return None, None
         try:
             identity = validate_access_token(token)
         except AuthError:
             logger.warning("tel mint: minted token failed validation")
-            return None
-        return identity.tier_id
+            return None, None
+        return identity.tier_id, identity.sub
 
     async def _finish_stasis_start_gated(
         self,
@@ -614,8 +623,9 @@ class AsteriskCallController:
         normalized_caller_id = _normalize_e164(caller_id)
         mint_configured = bool(self._telephony_cfg.tel_mint_url)
         mint_failed = False
+        mint_sub: str | None = None
         if mint_configured:
-            entitled_tier_id = await self._mint_tier_from_caller_id(normalized_caller_id)
+            entitled_tier_id, mint_sub = await self._mint_tier_from_caller_id(normalized_caller_id)
             mint_failed = entitled_tier_id is None
             grant_tier_id = entitled_tier_id
         else:
@@ -626,6 +636,14 @@ class AsteriskCallController:
             tier_id=grant_tier_id,
             caller_id=normalized_caller_id or None,
             did=did or None,
+            # Phase 15 (LEDG-01): the mint token's own sub (anon:<code>:<uuid>)
+            # is the ONLY place this call's raw access code is recoverable --
+            # thread it straight into CallIdentity.code so the ledger tap can
+            # hash it (create_call_session prefers identity.code over trying
+            # to parse one out of `identity.subject`, which for telephony is
+            # `tel:<caller_id>` -- not a code-bearing shape). None when the
+            # mint is unconfigured or failed (no code, no code_hash).
+            code=mint_sub,
         )
 
         # A forward-reference container: GateProcessor's callbacks are
@@ -765,6 +783,21 @@ class AsteriskCallController:
         await active_call.call_session.lifecycle.upgrade_from_bypass(
             tier=gate_result.tier, session_id=gate_result.session_id, user_id=gate_identity.sub
         )
+        # Phase 15 (LEDG-01/T-15-03-01): the ledger writer was constructed
+        # DISABLED (create_call_session's `enabled=not gate_result.
+        # bypass_accounting`, since this call started on the zeroed §24
+        # bypass placeholder) -- flip it live at the SAME real-unlock
+        # boundary as the lifecycle promotion above, and correct its
+        # session_id/tier_id to the REAL granted values (the bypass
+        # placeholder carried a random uuid session id and the no-access
+        # placeholder tier). Nothing was ever captured while locked --
+        # belt-and-suspenders alongside the GateProcessor's own D-05e
+        # transcription-frame withholding.
+        writer = active_call.call_session.writer
+        if writer is not None:
+            writer.session_id = gate_result.session_id
+            writer.tier_id = gate_result.tier.tier_id
+            writer.enabled = True
         await greet_now(active_call.call_session.worker, active_call.call_session.context)
 
     async def _gate_fail_closed(self, active_call: ActiveCall, reason: str) -> None:

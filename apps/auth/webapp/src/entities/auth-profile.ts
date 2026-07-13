@@ -103,6 +103,15 @@ export const AuthProfile = new Entity(
       activeGroup: {
         type: "string",
       },
+      // Redeemed access code (Phase 15 Plan 01, LEDG-01). Stamped by the
+      // SAME LoginIntent bridge, on the SAME login, as activeTierId/
+      // activeGroup above — latest-wins, identical D-05 semantics. Feeds the
+      // `code` namespaced access-token claim so the voice service can
+      // compute a salted code_hash for the transcription ledger without a
+      // second DynamoDB round-trip.
+      activeCode: {
+        type: "string",
+      },
       // Timestamps
       createdAt: {
         type: "number",
@@ -183,13 +192,20 @@ export async function getAuthProfileByEmail(email: string) {
  * Stamp the resolved tier/group from a consumed LoginIntent onto a user's
  * AuthProfile (the login->token bridge, Phase 3 Plan 02 Task 3). Latest-wins
  * by design (D-05) — this OVERWRITES any prior activeTierId/activeGroup.
+ *
+ * `code` (Phase 15 Plan 01, LEDG-01) is a fourth, optional, additive
+ * parameter: the redeemed access code, stamped alongside the tier in the
+ * SAME patch. `undefined`/`null` leaves activeCode unset rather than
+ * overwriting it with an empty value — same `?? undefined` posture as
+ * `activeGroup`. Never logged (raw code — T-15-01-03).
  */
 export async function setActiveTier(
   userId: string,
   tierId: string,
-  group: string | null | undefined
+  group: string | null | undefined,
+  code?: string | null
 ): Promise<void> {
   await AuthProfile.patch({ userId })
-    .set({ activeTierId: tierId, activeGroup: group ?? undefined })
+    .set({ activeTierId: tierId, activeGroup: group ?? undefined, activeCode: code ?? undefined })
     .go();
 }

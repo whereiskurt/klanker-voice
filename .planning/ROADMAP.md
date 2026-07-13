@@ -321,6 +321,38 @@ Plans:
 
 - [ ] TBD (run /gsd-plan-phase 8 to break down)
 
+### Phase 15: Private transcription ledger — S3 batch + Athena + admin conversation view
+
+**Goal**: Every conversation turn (user STT text AND concierge replies) lands in a private, append-only S3 ledger, and the operator can read any session as a threaded chat — grouped by session, ordered by turn, alternating user/assistant bubbles — via Athena and the /admin report
+**Depends on**: Phase 4 (voice service + observers), Phase 05.1 (/admin panel), Phase 12 (telephony sessions must also be captured)
+**Requirements**: TBD (promotes todo `.planning/todos/pending/2026-07-06-private-transcription-ledger-s3-batch-athena.md`; reverses Phase 05.1's "no transcripts" deferral)
+**Success Criteria** (what must be TRUE):
+
+  1. Each turn is recorded with role, text, email (or PSTN caller identity for phone sessions), UTC timestamp, session_id, monotonic turn_seq, and a salted code_hash — never the raw access code
+  2. Voice service batches newline-JSON records to a private S3 bucket (SSE, no public access, date-partitioned) every ~2–5 min or on session end; an Athena table queries it
+  3. Operator reads any session as a threaded conversation (session-grouped, turn-ordered) — the acceptance bar from the 2026-07-06 decision
+  4. Client shows a visible "sessions may be recorded" notice (establishes the no-expectation-of-privacy posture)
+  5. Quota data stays in DynamoDB; transcripts live only in S3 — no co-mingling
+
+**Plans:** 6/6 plans complete
+
+**Requirements mapping (LEDG-01..05 ↔ the 5 Success Criteria):** LEDG-01 = SC1 (record shape: role/text/email-or-caller/ts/session_id/turn_seq/salted code_hash); LEDG-02 = SC2 (batched newline-JSON to private SSE date-partitioned S3 + Athena table); LEDG-03 = SC3 (operator threaded conversation view); LEDG-04 = SC4 ("sessions may be recorded" client notice); LEDG-05 = SC5 (quota in DynamoDB, transcripts only in S3 — no co-mingling).
+
+Plans:
+**Wave 1** *(parallel: no file overlap — auth claims, ledger core, infra, client notice)*
+
+- [x] 15-01-PLAN.md — Auth token claims: namespaced email + code claims via extraTokenClaims + activeCode stamp (LEDG-01)
+- [x] 15-02-PLAN.md — Ledger core module: LedgerWriter (buffer/flush/salted code_hash/registry) + auth.py claim read (LEDG-01, LEDG-05)
+- [x] 15-04-PLAN.md — Ledger terraform: private SSE bucket + Athena projection DDL + least-privilege IAM + SSM salt (operator apply — applied live 2026-07-13) (LEDG-02, LEDG-05)
+- [x] 15-06-PLAN.md — Client "sessions may be recorded" notice on the pre-connect screen (LEDG-04)
+
+**Wave 2** *(depends on 15-02 record shape)*
+
+- [x] 15-03-PLAN.md — Tap wiring in create_call_session (all 3 paths) + final flush + SIGTERM drain + PSTN capture (LEDG-01, LEDG-02)
+- [x] 15-05-PLAN.md — Minimal ADMIN_EMAILS-gated /admin + threaded transcript conversation view (direct S3 read) (LEDG-03)
+
+**Waves:** 1 → {15-01, 15-02, 15-04, 15-06}; 2 → {15-03, 15-05}
+
 ---
 
 ## Milestone v1.1: Telephony (VoIP.ms / Payphone)

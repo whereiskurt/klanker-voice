@@ -86,6 +86,18 @@ locals {
         variable = "aws:RequestedRegion"
         values   = ["us-east-1"]
       }
+    },
+    {
+      # Phase 15 (15-04, T-15-04-02): write-only ledger access — the batched
+      # LedgerWriter (ledger.py) PUTs newline-JSON records under ledger/ only.
+      # No s3:GetObject/ListBucket/DeleteObject — voice never reads or deletes
+      # its own transcripts (append-only posture, T-15-04-03). Wildcarded
+      # bucket-name prefix because the ledger module generates a random
+      # suffix at apply time (same convention as the release role's
+      # "${site.label}-*" S3 grant in site.hcl).
+      sid       = "LedgerPutOnly"
+      actions   = ["s3:PutObject"]
+      resources = ["arn:aws:s3:::kmv-ledger-*/ledger/*"]
     }
   ]
 
@@ -121,6 +133,13 @@ locals {
             name  = "VOICE_PUBLIC_URL"
             value = "https://voice.{{SITE_DOMAIN}}"
           }
+          # NOTE: KMV_LEDGER_BUCKET is NOT listed here — this file must stay
+          # pure data (see header), but the ledger bucket name is only known
+          # after terraform creates it (random-suffixed S3 bucket, Phase 15
+          # 15-04). It is injected at the region/us-east-1/ecs-task unit via
+          # a `dependency "ledger"` block reading the ledger unit's
+          # `bucket_name` output — mirrors the existing task_role_arn
+          # injection from the ecs_cluster dependency in that same file.
         ]
 
         # Phase 4 (04-03 deploy checkpoint): inject the pipeline provider keys and
@@ -145,6 +164,14 @@ locals {
           {
             name      = "KMV_SMOKE_SERVICE_TOKEN"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voice/smoke_token"
+          },
+          {
+            # Phase 15 (15-04, T-15-04-04): the code_hash HMAC salt — SOPS ->
+            # secrets module -> SSM SecureString -> valueFrom. Never in code
+            # or a TOML; the raw value lives ONLY in .secrets.sops.json
+            # (encrypted).
+            name      = "KMV_LEDGER_SALT"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ledger/code_hash_salt"
           }
         ]
 

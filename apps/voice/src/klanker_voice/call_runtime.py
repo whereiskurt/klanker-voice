@@ -45,7 +45,7 @@ from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.base_transport import BaseTransport
 from pipecat.workers.runner import WorkerRunner
 
-from klanker_voice import quota
+from klanker_voice import ledger, quota
 from klanker_voice.config import DuplexConfig, KnowledgeConfig, PipelineConfig, QuotaConfig
 from klanker_voice.observers import LatencyReportObserver
 from klanker_voice.pipeline import (
@@ -76,6 +76,15 @@ class CallIdentity:
     path (and for any telephony call where the caller-ID mint is
     unconfigured -- the legacy Phase-11 static-tier grant) -- the additive
     defaults keep every existing construction call site byte-unchanged.
+
+    Phase 15 (LEDG-01) adds two more additive, defaulted fields for the
+    transcription ledger: ``email`` (the webrtc magic-link token's email
+    claim -- ``None`` for anonymous/bypass and every PSTN call) and
+    ``code`` (the raw access code, when directly known -- e.g. the
+    telephony controller's §23 mint-token ``sub``; webrtc callers instead
+    let :func:`create_call_session` derive it from ``subject`` via
+    :func:`~klanker_voice.ledger.parse_code_from_sub`, so ``code`` usually
+    stays ``None`` here for that path).
     """
 
     subject: str
@@ -84,6 +93,8 @@ class CallIdentity:
     tier_id: str | None = None
     caller_id: str | None = None
     did: str | None = None
+    email: str | None = None
+    code: str | None = None
 
 
 @dataclass
@@ -106,6 +117,12 @@ class CallSession:
     #: module skips whenever a ``gate_processor`` is supplied — the greeting
     #: fires on unlock, not on answer).
     context: LLMContext
+    #: Phase 15 (LEDG-01/LEDG-02): the per-session transcription ledger
+    #: writer, always constructed by :func:`create_call_session` (never
+    #: ``None`` in practice today, but typed nullable for flexibility).
+    #: Constructed disabled (``enabled=False``) for bypass/smoke sessions
+    #: (T-15-03-02) so it buffers and flushes nothing.
+    writer: ledger.LedgerWriter | None
 
     async def run(self) -> None:
         """Start the lifecycle, run the pipeline to completion, then always
@@ -113,12 +130,16 @@ class CallSession:
         mirrors the old ``_start_and_run_tracked_session`` bracketing
         (QUOT-02/INFR-06): ``lifecycle.start()`` before, ``lifecycle.stop()``
         in a ``finally`` so the heartbeat lease + active-session slot are
-        always released."""
+        always released. The ledger writer's final flush (LEDG-02, Pitfall
+        3) rides the SAME ``finally`` bracket, after ``lifecycle.stop()`` —
+        it runs on success, error, AND cancellation."""
         await self.lifecycle.start()
         try:
             await self.runner.run()
         finally:
             await self.lifecycle.stop()
+            if self.writer is not None:
+                await self.writer.close()
 
     async def close(self, reason: str) -> None:
         """The single idempotent close path (D-05): delegates to
@@ -198,6 +219,46 @@ async def create_call_session(
         ],
     )
 
+    # Phase 15 (LEDG-01/LEDG-02, T-15-03-01/T-15-03-02): the ONE tap seam --
+    # every entry path (webrtc voice1/voice2, PSTN) constructs its session
+    # here. `enabled=not gate_result.bypass_accounting` keeps bypass/smoke
+    # sessions AND a still-locked §24 telephony placeholder from ledgering
+    # anything (the telephony controller flips this on at unlock, alongside
+    # `SessionLifecycle.upgrade_from_bypass`). `code` prefers an already-known
+    # raw code (telephony's §23 mint-token sub, threaded via
+    # `CallIdentity.code`) and otherwise tries to parse one out of the
+    # webrtc/bypass `subject` (`anon:<code>:<uuid>`) -- both paths degrade to
+    # `None` (no code, no code_hash) for opaque Auth.js/magic-link subjects.
+    writer = ledger.LedgerWriter(
+        session_id=gate_result.session_id,
+        email=identity.email,
+        code=identity.code or ledger.parse_code_from_sub(identity.subject),
+        caller_id=identity.caller_id,
+        did=identity.did,
+        tier_id=gate_result.tier.tier_id,
+        channel=channel,
+        enabled=not gate_result.bypass_accounting,
+    )
+
+    @built.user_aggregator.event_handler("on_user_turn_message_added")
+    async def _ledger_user(_agg, message):  # noqa: ANN001 — pipecat handler shape
+        # The finalized user STT turn, exactly as written to the LLM
+        # context (post-duplex-suppression, post-§24-gate) -- `content` is
+        # always populated per pipecat's own contract.
+        await writer.append(role="user", text=message.content)
+
+    @built.assistant_aggregator.event_handler("on_assistant_turn_stopped")
+    async def _ledger_assistant(_agg, message):  # noqa: ANN001 — pipecat handler shape
+        # The assistant aggregator sits AFTER transport.output() (pipeline.py)
+        # -- `content` is the actually-spoken, barge-in-truncated reply, and
+        # `interrupted` is True when a barge-in cut it off. Skip an empty
+        # content (e.g. a fully-interrupted-before-any-tokens turn) -- there
+        # is nothing to ledger.
+        if message.content:
+            await writer.append(
+                role="assistant", text=message.content, interrupted=message.interrupted
+            )
+
     # D-05c: with a §24 gate present, the greeting fires on UNLOCK (the
     # caller invokes pipeline.greet_now itself via CallSession.context), not
     # on answer/connect -- register_greet_first would greet a still-locked
@@ -241,4 +302,5 @@ async def create_call_session(
         lifecycle=lifecycle,
         runner=runner,
         context=built.context,
+        writer=writer,
     )

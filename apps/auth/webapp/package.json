@@ -18,6 +18,7 @@
   "dependencies": {
     "@auth/dynamodb-adapter": "2.11.1",
     "@aws-sdk/client-dynamodb": "^3.893.0",
+    "@aws-sdk/client-s3": "^3.1085.0",
     "@aws-sdk/client-ses": "^3.893.0",
     "@aws-sdk/client-sesv2": "^3.893.0",
     "@aws-sdk/credential-providers": "^3.1079.0",

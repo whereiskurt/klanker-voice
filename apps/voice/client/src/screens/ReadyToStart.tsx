@@ -17,6 +17,7 @@ export default function ReadyToStart({ onStart }: ReadyToStartProps) {
       <div className="ready-cta-wrap">
         <button type="button" className="ready-cta" onClick={onStart}>Let's start talking</button>
         <p className="ready-cta-sub">This taps the mic awake and pages KPH. Ready when you are.</p>
+        <p className="ready-recording-notice">Sessions may be recorded for quality and demo purposes.</p>
       </div>
     </div>
   );
