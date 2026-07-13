@@ -20,3 +20,4 @@
 .ready-cta:hover { transform: translateY(-1px); }
 .ready-cta:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 4px; }
 .ready-cta-sub { margin-top: var(--md); font-size: var(--sz-label); color: var(--text-secondary); }
+.ready-recording-notice { margin-top: var(--xs); font-size: var(--sz-label); color: var(--text-secondary); }
