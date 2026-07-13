@@ -150,3 +150,7 @@ None - no external service configuration required. (Local dynamodb-local table p
 ---
 *Phase: 15-private-transcription-ledger-s3-batch-athena-admin-conversat*
 *Completed: 2026-07-13*
+
+## Self-Check: PASSED
+
+All 7 declared files confirmed present on disk; all 3 commit hashes (`6cc3c45`, `537bf1b`, plan-summary commit) confirmed present in `git log --oneline --all`.
