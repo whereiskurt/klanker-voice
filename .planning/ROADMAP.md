@@ -343,7 +343,7 @@ Plans:
 
 - [x] 15-01-PLAN.md — Auth token claims: namespaced email + code claims via extraTokenClaims + activeCode stamp (LEDG-01)
 - [x] 15-02-PLAN.md — Ledger core module: LedgerWriter (buffer/flush/salted code_hash/registry) + auth.py claim read (LEDG-01, LEDG-05)
-- [ ] 15-04-PLAN.md — Ledger terraform: private SSE bucket + Athena projection DDL + least-privilege IAM + SSM salt (operator apply) (LEDG-02, LEDG-05)
+- [x] 15-04-PLAN.md — Ledger terraform: private SSE bucket + Athena projection DDL + least-privilege IAM + SSM salt (operator apply — applied live 2026-07-13) (LEDG-02, LEDG-05)
 - [x] 15-06-PLAN.md — Client "sessions may be recorded" notice on the pre-connect screen (LEDG-04)
 
 **Wave 2** *(depends on 15-02 record shape)*

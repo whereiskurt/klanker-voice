@@ -64,6 +64,7 @@
 ### Private Transcription Ledger
 
 - [x] **LEDG-01**: Access token carries namespaced email + code claims (magic-link) so the voice service can build a complete ledger record from the validated token alone
+- [x] **LEDG-02**: A private, append-only, Athena-queryable S3 ledger store exists — SSE bucket + PAB (no public access) + partition-projection Glue table + least-privilege task-role IAM (voice write-only, auth read-only, no delete) + SOPS-sourced SSM salt
 - [x] **LEDG-03**: The operator reads any session as a threaded conversation (session-grouped, turn-ordered, alternating user/assistant bubbles) via a gated /admin report
 - [x] **LEDG-04**: The pre-connect screen shows a visible "sessions may be recorded" notice, establishing the no-expectation-of-privacy posture before the mic-start gesture
 - [x] **LEDG-05**: The transcript ledger writer touches only S3 — never DynamoDB — so transcripts never co-mingle with quota bookkeeping
@@ -132,6 +133,7 @@ Coverage: 38/38 v1 requirements mapped (PIPE-10 promoted from v2-deferred in Pha
 | KV-04 | Phase 4 | Complete |
 | KV-05 | Phase 4 | Complete |
 | LEDG-01 | Phase 15 | Complete |
+| LEDG-02 | Phase 15 | Complete |
 | LEDG-03 | Phase 15 | Complete |
 | LEDG-04 | Phase 15 | Complete |
 | LEDG-05 | Phase 15 | Complete |
