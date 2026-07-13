@@ -22,6 +22,8 @@ Run with::
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,7 +43,7 @@ from pipecat.transports.smallwebrtc.request_handler import (
 )
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
-from klanker_voice import quota, session, variants
+from klanker_voice import ledger, quota, session, variants
 from klanker_voice import version as server_version
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
 from klanker_voice.call_runtime import CallIdentity, create_call_session
@@ -61,7 +63,24 @@ from klanker_voice.webrtc import (
 
 load_dotenv(override=True)
 
-app = FastAPI(title="klanker-voice")
+#: Phase 15 (LEDG-02, Pitfall 3): bounded well under ECS's default 30s
+#: SIGTERM->SIGKILL window -- a hung writer's flush must never block
+#: shutdown past this.
+LEDGER_DRAIN_TIMEOUT_SECONDS = 10.0
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """FastAPI shutdown drain (LEDG-02): on SIGTERM, uvicorn's graceful
+    shutdown fires this lifespan's post-``yield`` half, draining every live
+    session's buffered ledger records before the container's own
+    ``stopTimeout``/ECS default 30s SIGKILL. Startup does nothing (the
+    ``yield`` itself is the whole running lifetime)."""
+    yield
+    await ledger.flush_all(timeout=LEDGER_DRAIN_TIMEOUT_SECONDS)
+
+
+app = FastAPI(title="klanker-voice", lifespan=_lifespan)
 
 
 @dataclass
@@ -241,7 +260,15 @@ async def _negotiate_webrtc(
 
         call_session = await create_call_session(
             transport=transport,
-            identity=CallIdentity(subject=identity.sub, authenticated=True),
+            identity=CallIdentity(
+                subject=identity.sub,
+                authenticated=True,
+                # Phase 15 (LEDG-01): threaded from the validated SessionIdentity
+                # so the ledger tap can carry the caller's email/code (caller_id/
+                # did stay None for webrtc -- only telephony populates those).
+                email=identity.email,
+                code=identity.code,
+            ),
             gate_result=gate_result,
             cfg=cfg,
             knowledge_cfg=knowledge_cfg,

@@ -8,13 +8,15 @@ auth/start_gate seam (T-04-01), per the plan's explicit instruction.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 import server
-from klanker_voice import variants
+from klanker_voice import ledger, variants
 from klanker_voice.auth import AuthError, SessionIdentity
 from klanker_voice.webrtc import PublicCandidates
 
@@ -165,6 +167,114 @@ async def test_negotiate_webrtc_sets_variant_label(monkeypatch):
         {"sdp": "v=0...", "type": "offer"}, VALID_IDENTITY, gate_result, "voice2"
     )
     assert answer_v2["variant_label"] == "KPH(v2)"
+
+
+# --- Phase 15 (LEDG-01/LEDG-02): identity threading + shutdown drain ------
+
+
+async def test_negotiate_webrtc_threads_email_and_code_into_call_identity(monkeypatch):
+    """The WebRTC CallIdentity build now carries email/code from the
+    validated SessionIdentity through to create_call_session (LEDG-01)."""
+    captured: dict = {}
+
+    class _FakeCallSession:
+        def __init__(self) -> None:
+            self.lifecycle = object()
+
+        async def run(self) -> None:
+            return None
+
+    async def _fake_create_call_session(**kwargs):
+        captured.update(kwargs)
+        return _FakeCallSession()
+
+    monkeypatch.setattr(server, "create_call_session", _fake_create_call_session)
+    monkeypatch.setattr(server, "build_ambience_mixer", lambda cfg: None)
+    # Bypass the real aiortc-backed transport entirely -- create_call_session
+    # is mocked out above and never inspects it; only `identity` matters here.
+    monkeypatch.setattr(server, "SmallWebRTCTransport", lambda **kwargs: object())
+    monkeypatch.setattr(server, "_wire_connection_teardown", lambda connection, lifecycle: None)
+
+    class _FakeConnection:
+        pc_id = "pc-ledger-identity-test"
+
+    async def _invoke_callback(webrtc_request, connection_callback):
+        await connection_callback(_FakeConnection())
+        return {"sdp": "v=0...", "type": "answer", "pc_id": "pc-ledger-identity-test"}
+
+    monkeypatch.setattr(server._webrtc_handler, "handle_web_request", _invoke_callback)
+    monkeypatch.setattr(
+        server, "gather_public_candidates", lambda: PublicCandidates(public_ip=None)
+    )
+
+    identity_with_claims = SessionIdentity(
+        sub="user-abc",
+        tier_id="premium",
+        group=None,
+        bypass_accounting=False,
+        email="dad@example.com",
+        code="kphdemo123",
+    )
+    gate_result = server.quota.GateResult(
+        session_id="sess-1",
+        tier=server.quota.Tier(
+            tier_id="t", session_max_seconds=120, period_max_seconds=600, max_concurrent=2
+        ),
+        session_max_seconds=120,
+        remaining_daily_seconds=600,
+        bypass_accounting=False,
+    )
+
+    try:
+        await server._negotiate_webrtc(
+            {"sdp": "v=0...", "type": "offer"}, identity_with_claims, gate_result, "voice1"
+        )
+        call_identity = captured["identity"]
+        assert call_identity.email == "dad@example.com"
+        assert call_identity.code == "kphdemo123"
+        assert call_identity.caller_id is None  # webrtc never carries caller_id/did
+        assert call_identity.did is None
+    finally:
+        server.SESSIONS.pop("pc-ledger-identity-test", None)
+        server.SESSION_TASKS.pop("pc-ledger-identity-test", None)
+
+
+def test_shutdown_drain_calls_flush_all_with_configured_timeout(monkeypatch):
+    """The FastAPI lifespan's shutdown half awaits ledger.flush_all with the
+    module's bounded timeout (LEDG-02)."""
+    flush_calls: list[float] = []
+
+    async def _fake_flush_all(timeout: float = 10.0) -> None:
+        flush_calls.append(timeout)
+
+    monkeypatch.setattr(server.ledger, "flush_all", _fake_flush_all)
+
+    with TestClient(server.app):
+        pass  # entering/exiting the context runs the real lifespan startup/shutdown
+
+    assert flush_calls == [server.LEDGER_DRAIN_TIMEOUT_SECONDS]
+
+
+def test_shutdown_drain_is_bounded_when_a_writer_hangs(monkeypatch):
+    """A genuinely hanging writer.close() must not block shutdown past the
+    configured bound -- exercises the REAL ledger.flush_all (its own
+    asyncio.wait_for is what enforces the bound, Plan 15-02), proving the
+    server-level wiring round-trips correctly."""
+    monkeypatch.setattr(server, "LEDGER_DRAIN_TIMEOUT_SECONDS", 0.05)
+    writer = ledger.LedgerWriter(session_id="hang-test-session")
+
+    async def _hang_close() -> None:
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(writer, "close", _hang_close)
+    try:
+        start = time.monotonic()
+        with TestClient(server.app):
+            pass
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0  # well under the real 10s default; bounded by the 0.05s patch
+    finally:
+        ledger._ACTIVE_WRITERS.discard(writer)
 
 
 def test_extract_bearer_token_prefers_authorization_header():
