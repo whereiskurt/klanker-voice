@@ -99,6 +99,19 @@ locals {
       actions   = ["ecs:UpdateTaskProtection", "ecs:DescribeTasks"]
       resources = ["arn:aws:ecs:*:*:task/app-use1-kmv/*"]
     },
+    {
+      # Phase 15: write-only ledger access for the in-container LedgerWriter —
+      # PSTN transcripts run through the SAME create_call_session tap as the
+      # voice service, so the edge PUTs newline-JSON records under ledger/ too.
+      # Mirrors voice service.hcl's LedgerPutOnly (append-only posture: no
+      # GetObject/ListBucket/DeleteObject). Wildcarded bucket-name prefix
+      # because the ledger module random-suffixes the bucket at apply time.
+      # Without this the PUT would AccessDenied even once KMV_LEDGER_BUCKET is
+      # injected (the env fix alone is necessary but not sufficient).
+      sid       = "LedgerPutOnly"
+      actions   = ["s3:PutObject"]
+      resources = ["arn:aws:s3:::kmv-ledger-*/ledger/*"]
+    },
   ]
 
   task = {
@@ -148,6 +161,11 @@ locals {
             name  = "KLANKER_PIPELINE_CONFIG"
             value = "configs/telephony.toml"
           }
+          # NOTE: KMV_LEDGER_BUCKET is NOT listed here — this file must stay
+          # pure data (see header), and the ledger bucket name is only known
+          # after terraform creates it (random-suffixed S3 bucket, Phase 15
+          # 15-04). It is injected at the region/us-east-1/ecs-task unit via
+          # the `dependency "ledger"` block (same as voice's KMV_LEDGER_BUCKET).
         ]
 
         # D-04: every VoIP.ms/Asterisk/telephony secret reaches the
@@ -205,6 +223,15 @@ locals {
           {
             name      = "ELEVENLABS_API_KEY"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/elevenlabs/api_key"
+          },
+          {
+            # Phase 15: the code_hash HMAC salt for the in-container ledger
+            # writer — same SSM SecureString the voice service consumes
+            # (service.hcl KMV_LEDGER_SALT). Needed so a PSTN caller who
+            # unlocks with an access code gets a correctly-salted code_hash
+            # in the ledger, matching WebRTC rows. Never in code or a TOML.
+            name      = "KMV_LEDGER_SALT"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ledger/code_hash_salt"
           }
         ]
 
