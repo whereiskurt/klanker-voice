@@ -9,10 +9,11 @@ on:
         options:
           - voice
           - auth
+          - telephony-edge
           - all
         default: all
 
-  # Called by build-voice.yml / build-auth.yml after an image push
+  # Called by build-voice.yml / build-auth.yml / build-telephony-edge.yml after an image push
   workflow_call:
     inputs:
       service:
@@ -77,14 +78,19 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # De-couple the shared ecs-task/ecs-service units: the service being deployed
-      # gets the freshly-built :sha image; the OTHER service keeps its currently-
-      # running tag (queried from ECS) so applying the shared unit is a no-op for it.
-      # First-deploy fallbacks: voice 0.1.0, auth 0.0.0 (service.hcl get_env defaults).
+      # gets the freshly-built :sha image; the OTHER services keep their currently-
+      # running tag (queried from ECS) so applying the shared unit is a no-op for them.
+      # This MUST cover telephony-edge too — the shared ecs-service unit includes it,
+      # so without pinning its current tag here a voice/auth deploy silently reverts
+      # the running telephony-edge image to service.hcl's hardcoded default.
+      # First-deploy fallbacks mirror service.hcl get_env defaults: voice 0.1.0,
+      # auth 0.0.0, telephony-edge the pinned RTP-pacing build.
       - name: Resolve per-service image tags (decouple shared ecs units)
         run: |
           CLUSTER="app-use1-${{ vars.SITE_LABEL }}"
           SHA="${{ github.sha }}"
           SVC="${{ inputs.service }}"
+          TELE_DEFAULT="9c99a6ae14dfe99b37ec25d8c65543a292aac7fb"
           current_tag() {
             local td img
             td=$(aws ecs describe-services --cluster "$CLUSTER" --services "$1" \
@@ -96,14 +102,17 @@ jobs:
           }
           VOICE_CUR="$(current_tag voice-use1)"
           AUTH_CUR="$(current_tag auth-use1)"
+          TELE_CUR="$(current_tag telephony-edge-use1)"
           case "$SVC" in
-            voice) VTAG="$SHA"; ATAG="${AUTH_CUR:-0.0.0}";;
-            auth)  ATAG="$SHA"; VTAG="${VOICE_CUR:-0.1.0}";;
-            *)     VTAG="$SHA"; ATAG="$SHA";;
+            voice)          VTAG="$SHA"; ATAG="${AUTH_CUR:-0.0.0}"; TTAG="${TELE_CUR:-$TELE_DEFAULT}";;
+            auth)           ATAG="$SHA"; VTAG="${VOICE_CUR:-0.1.0}"; TTAG="${TELE_CUR:-$TELE_DEFAULT}";;
+            telephony-edge) TTAG="$SHA"; VTAG="${VOICE_CUR:-0.1.0}"; ATAG="${AUTH_CUR:-0.0.0}";;
+            *)              VTAG="$SHA"; ATAG="$SHA"; TTAG="$SHA";;
           esac
           echo "TF_VAR_VOICE_IMAGE_TAG=$VTAG" >> "$GITHUB_ENV"
           echo "TF_VAR_AUTH_IMAGE_TAG=$ATAG" >> "$GITHUB_ENV"
-          echo "Resolved image tags — voice:$VTAG  auth:$ATAG  (deploying: $SVC)"
+          echo "TF_VAR_TELEPHONY_EDGE_IMAGE_TAG=$TTAG" >> "$GITHUB_ENV"
+          echo "Resolved image tags — voice:$VTAG  auth:$ATAG  telephony-edge:$TTAG  (deploying: $SVC)"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

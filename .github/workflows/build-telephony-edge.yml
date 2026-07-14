@@ -1,0 +1,84 @@
+name: "Build: Telephony Edge"
+
+on:
+  # The telephony-edge image bundles the whole klanker_voice package (Asterisk
+  # + `python -m klanker_voice.telephony`, apps/voice/asterisk/Dockerfile), so
+  # ANY apps/voice/** change on main must rebuild + deploy it — the same trigger
+  # as build-voice.yml. Without this workflow the shared ecs-service apply falls
+  # back to service.hcl's hardcoded TF_VAR_TELEPHONY_EDGE_IMAGE_TAG default and
+  # silently reverts the running telephony image on every voice/auth deploy.
+  push:
+    branches: [main]
+    paths:
+      - 'apps/voice/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and Push Telephony-Edge Image
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      has_dockerfile: ${{ steps.guard.outputs.has_dockerfile }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for Dockerfile
+        id: guard
+        run: |
+          if [ -f apps/voice/asterisk/Dockerfile ]; then
+            echo "has_dockerfile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_dockerfile=false" >> "$GITHUB_OUTPUT"
+            echo "## Telephony-Edge Build Skipped" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No Dockerfile at \`apps/voice/asterisk/Dockerfile\`." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Configure AWS Credentials
+        if: steps.guard.outputs.has_dockerfile == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/kmv-github-release
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        if: steps.guard.outputs.has_dockerfile == 'true'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Image
+        if: steps.guard.outputs.has_dockerfile == 'true'
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.SITE_LABEL }}-telephony-edge:${{ github.sha }}
+        run: |
+          # Build context is apps/voice; the Dockerfile lives in asterisk/ and
+          # COPYs the whole klanker_voice package (matches the manual invocation
+          # documented in apps/voice/asterisk/Dockerfile).
+          docker build \
+            -f apps/voice/asterisk/Dockerfile \
+            -t "$IMAGE" \
+            apps/voice
+          docker push "$IMAGE"
+          echo "## Telephony-Edge Image Pushed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`$IMAGE\`" >> $GITHUB_STEP_SUMMARY
+
+  deploy:
+    name: Deploy Telephony Edge
+    needs: build
+    if: needs.build.outputs.has_dockerfile == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      service: telephony-edge
