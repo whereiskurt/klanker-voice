@@ -102,8 +102,10 @@ describe("/admin/transcripts/[sessionId] — threaded chat detail (LEDG-03 accep
     });
     const html = renderToStaticMarkup(jsx as any);
 
-    expect(html).toContain("flex-end"); // user bubble
-    expect(html).toContain("flex-start"); // assistant bubble
+    expect(html).toContain("tx-turn--user"); // user side
+    expect(html).toContain("tx-turn--agent"); // assistant side
+    expect(html).toContain("Caller"); // user role label
+    expect(html).toContain("KPH"); // assistant role label
   });
 
   it("marks an interrupted assistant turn visibly", async () => {
@@ -176,6 +178,50 @@ describe("/admin/transcripts list page", () => {
     const jsx = await ListPage({ searchParams: Promise.resolve({ dt: "2026-07-13" }) });
     const html = renderToStaticMarkup(jsx as any);
 
-    expect(html).toContain("No sessions for 2026-07-13");
+    expect(html).toContain("No conversations recorded on 2026-07-13");
+  });
+
+  it("labels a PSTN session with a phone channel badge, a web session with a web badge", async () => {
+    listSessionsMock.mockResolvedValue([
+      { sessionId: "sess-pstn", day: "2026-07-13", firstSeenHms: "130000", objectCount: 1 },
+      { sessionId: "sess-web", day: "2026-07-13", firstSeenHms: "140000", objectCount: 1 },
+    ]);
+    readSessionMock.mockImplementation(async (sessionId: string) => {
+      if (sessionId === "sess-pstn") {
+        return [record({ session_id: "sess-pstn", turn_seq: 1, caller_id: "+16135551234", channel: "telephony" })];
+      }
+      return [record({ session_id: "sess-web", turn_seq: 1, email: "dad@example.com" })];
+    });
+
+    const jsx = await ListPage({ searchParams: Promise.resolve({ dt: "2026-07-13" }) });
+    const html = renderToStaticMarkup(jsx as any);
+
+    expect(html).toContain("tx-badge--pstn");
+    expect(html).toContain("tx-badge--web");
+  });
+
+  it("cross-turn search filters to sessions with a matching turn and highlights the hit", async () => {
+    listSessionsMock.mockResolvedValue([
+      { sessionId: "sess-hit", day: "2026-07-13", firstSeenHms: "120000", objectCount: 1 },
+      { sessionId: "sess-miss", day: "2026-07-13", firstSeenHms: "130000", objectCount: 1 },
+    ]);
+    readSessionMock.mockImplementation(async (sessionId: string) => {
+      if (sessionId === "sess-hit") {
+        return [
+          record({ session_id: "sess-hit", turn_seq: 1, email: "dad@example.com", text: "tell me about defcon" }),
+          record({ session_id: "sess-hit", turn_seq: 2, role: "assistant", text: "reply" }),
+        ];
+      }
+      return [record({ session_id: "sess-miss", turn_seq: 1, email: "other@example.com", text: "nothing relevant" })];
+    });
+
+    const jsx = await ListPage({
+      searchParams: Promise.resolve({ dt: "2026-07-13", q: "defcon" }),
+    });
+    const html = renderToStaticMarkup(jsx as any);
+
+    expect(html).toContain("/admin/transcripts/sess-hit");
+    expect(html).not.toContain("/admin/transcripts/sess-miss");
+    expect(html).toContain("<mark>defcon</mark>");
   });
 });

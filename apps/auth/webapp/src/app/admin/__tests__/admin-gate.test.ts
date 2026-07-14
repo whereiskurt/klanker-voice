@@ -19,6 +19,13 @@ const notFoundMock = vi.fn(() => {
 
 vi.mock("@/config/auth", () => ({ auth: authMock }));
 vi.mock("next/navigation", () => ({ notFound: notFoundMock }));
+// The layout applies the app's next/font variables to <html>; next/font/google
+// can't run under vitest, so stub the font module (the gate is font-agnostic).
+vi.mock("@/config/fonts", () => ({
+  fontSans: { variable: "--font-sans" },
+  fontMono: { variable: "--font-mono" },
+  fontMuseo: { variable: "--font-museo" },
+}));
 
 let AdminLayout: typeof import("../layout").default;
 
