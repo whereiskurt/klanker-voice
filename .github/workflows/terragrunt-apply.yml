@@ -110,14 +110,25 @@ jobs:
         run: |
           MODULES="${{ inputs.modules }}"
 
-          # If specific modules requested, apply each module directory (single region: us-east-1)
+          # If specific modules requested, apply each module directory.
+          # A bare name (e.g. "ecs-task") resolves under region/us-east-1/ as
+          # before; a name containing a slash (e.g. "global/github-oidc") is
+          # treated as a path relative to this working-directory (live/site),
+          # so non-regional units — the github-oidc CI-role unit especially —
+          # can be applied targeted, without the "apply all" path that would
+          # revert per-service image tags to service.hcl's get_env defaults.
           if [[ -n "$MODULES" ]]; then
-            echo "Applying modules [$MODULES] in us-east-1..."
+            echo "Applying modules [$MODULES]..."
             IFS=',' read -ra MODULE_LIST <<< "$MODULES"
             for MODULE in "${MODULE_LIST[@]}"; do
               MODULE=$(echo "$MODULE" | xargs)  # trim whitespace
-              echo "=== Applying $MODULE ==="
-              (cd "region/us-east-1/$MODULE" && terragrunt apply --no-color --non-interactive -auto-approve) 2>&1 | tee -a apply_output.txt
+              if [[ "$MODULE" == */* ]]; then
+                MODULE_DIR="$MODULE"                      # explicit path under live/site
+              else
+                MODULE_DIR="region/us-east-1/$MODULE"     # bare name → us-east-1 region
+              fi
+              echo "=== Applying $MODULE ($MODULE_DIR) ==="
+              (cd "$MODULE_DIR" && terragrunt apply --no-color --non-interactive -auto-approve) 2>&1 | tee -a apply_output.txt
             done
           # Otherwise apply everything (global + us-east-1)
           else
