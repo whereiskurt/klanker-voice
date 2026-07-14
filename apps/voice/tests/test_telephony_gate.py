@@ -23,6 +23,7 @@ from pipecat.frames.frames import (
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
 )
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.tests.utils import run_test
 
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf, match_passphrase
@@ -307,3 +308,108 @@ async def test_unlock_and_fail_closed_never_log_secrets_or_transcript(loguru_cap
     # fail-closed marker with method + call_id.
     assert "unlocked{method" in loguru_caplog.text
     assert "gate fail-closed call_id" in loguru_caplog.text
+
+
+# --- gate_debug_log_heard: opt-in fail-path heard-words logging (260714) -----
+#
+# Deliberate, operator-accepted relaxation of D-05e for the FAIL path only: with
+# the opt-in flag on, a failed (window-expiry) attempt logs the caller's number +
+# the tokens STT heard, so an accent/STT mismatch can be debugged. Never on
+# success, never the configured secret/PIN, off by default.
+
+
+async def test_fail_closed_debug_log_off_by_default_emits_no_heard_line(loguru_caplog):
+    """Default posture (flag off) is byte-identical to D-05e: even after the
+    caller has spoken non-matching words, the fail-closed path emits only the
+    plain ``gate fail-closed call_id`` marker -- never a ``gate_fail_heard`` line."""
+    gate, _, fail_closed_calls = _gate(gate_window_seconds=0.05)
+
+    await gate.process_frame(
+        TranscriptionFrame(text="the weather is nice today", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    gate.start_timer()
+    await asyncio.sleep(0.15)
+
+    assert fail_closed_calls == ["fail_closed"]
+    assert "gate_fail_heard" not in loguru_caplog.text
+    assert "gate fail-closed call_id" in loguru_caplog.text
+
+
+async def test_fail_closed_debug_log_on_emits_heard_tokens_and_caller(loguru_caplog):
+    """With ``debug_log_heard=True``, a failed attempt emits one
+    ``gate_fail_heard`` line carrying the caller_id, call_id, the heard tokens,
+    and the token count -- exactly what the operator needs to see WHY an
+    accent-mismatched utterance missed the passphrase."""
+    gate, _, fail_closed_calls = _gate(
+        gate_window_seconds=0.05,
+        call_id="chan-99",
+        caller_id="+15551234567",
+        debug_log_heard=True,
+    )
+
+    await gate.process_frame(
+        TranscriptionFrame(text="the weather is nice today", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    gate.start_timer()
+    await asyncio.sleep(0.15)
+
+    assert fail_closed_calls == ["fail_closed"]
+    text = loguru_caplog.text
+    assert "gate_fail_heard" in text
+    assert "+15551234567" in text
+    assert "chan-99" in text
+    # every heard token is present, and the count is reported
+    for token in ("the", "weather", "is", "nice", "today"):
+        assert token in text
+    assert "token_count: 5" in text
+    assert "window_expired: true" in text
+
+
+async def test_debug_log_on_never_emits_on_success_path(loguru_caplog):
+    """Even with the flag on, the SUCCESS (unlock) path emits NO
+    ``gate_fail_heard`` line -- unlock cancels the timer, and heard-words
+    logging is strictly fail-path only (a success ~ the secret)."""
+    gate, unlock_calls, fail_closed_calls = _gate(
+        gate_window_seconds=0.05, debug_log_heard=True
+    )
+
+    frames = [
+        TranscriptionFrame(
+            text="purple falcon midnight compass", user_id="", timestamp=""
+        ),
+    ]
+    await run_test(gate, frames_to_send=frames)
+    await asyncio.sleep(0.15)
+
+    assert unlock_calls == ["unlocked"]
+    assert fail_closed_calls == []
+    assert "gate_fail_heard" not in loguru_caplog.text
+
+
+async def test_debug_log_on_never_reconstructs_unspoken_secret_words(loguru_caplog):
+    """With the flag on, only what the caller ACTUALLY said is logged. A secret
+    word the caller never spoke does not appear -- the operator cannot
+    reconstruct the passphrase from a failed attempt's log."""
+    gate, _, _ = _gate(
+        gate_window_seconds=0.05,
+        passphrase_words={"purple", "falcon", "midnight", "compass"},
+        caller_id="+15550001111",
+        debug_log_heard=True,
+    )
+
+    # Caller says only ONE of the four secret words, plus filler.
+    await gate.process_frame(
+        TranscriptionFrame(text="was it purple something", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    gate.start_timer()
+    await asyncio.sleep(0.15)
+
+    text = loguru_caplog.text.lower()
+    assert "gate_fail_heard" in text
+    assert "purple" in text  # the caller genuinely said this -> logged
+    # the three secret words the caller never uttered are absent
+    for unspoken in ("falcon", "midnight", "compass"):
+        assert unspoken not in text
