@@ -74,6 +74,23 @@ def test_valid_telephony_table_parses(make_config_file):
     )
 
 
+def test_gate_debug_log_heard_defaults_off(make_config_file):
+    """The opt-in fail-path heard-words debug flag defaults False -- a
+    [telephony] table without it keeps the D-05e posture byte-identical."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.gate_debug_log_heard is False
+
+
+def test_gate_debug_log_heard_parses_true_when_set(make_config_file):
+    """When the operator flips gate_debug_log_heard = true, it parses through."""
+    path = make_config_file(
+        append=VALID_TELEPHONY_TOML + "gate_debug_log_heard = true\n"
+    )
+    cfg = load_telephony_config(path)
+    assert cfg.gate_debug_log_heard is True
+
+
 def test_telephony_table_without_tel_mint_defaults_to_unconfigured(make_config_file):
     """Phase 12 Plan 06 (D-02/D-04): a [telephony] table with no tel_mint_*
     fields at all -- e.g. every existing Phase-11 fixture/checked-in TOML --
