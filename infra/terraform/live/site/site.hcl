@@ -951,6 +951,32 @@ locals {
                     "arn:aws:iam::*:role/*-${local.site.label}-*",
                     "arn:aws:iam::*:role/${local.site.label}-*"
                   ]
+                },
+                {
+                  # The ecs-task module manages each task's least-privilege
+                  # INLINE policy (aws_iam_role_policy on the *-task-role /
+                  # *-execution-role it owns). When a service.hcl change
+                  # adds or edits a task-role statement — e.g. the Phase-15
+                  # telephony-edge `LedgerPutOnly` grant — a `terragrunt apply`
+                  # on the ecs-task unit must call iam:PutRolePolicy. Without
+                  # this the deploy role could apply task-DEFINITION/service
+                  # changes but any IAM-bearing task-role change failed with
+                  # AccessDenied (PutRolePolicy), forcing those through the
+                  # operator/terragrunt role. Scoped to EXACTLY the two role
+                  # families the ecs-task module owns (same pattern as the
+                  # PassTaskRole statement above) — never arbitrary roles, and
+                  # deliberately NOT iam:CreateRole/DeleteRole/AttachRolePolicy
+                  # (role lifecycle stays operator-only).
+                  Sid    = "IAMWriteTaskRoleInlinePolicies"
+                  Effect = "Allow"
+                  Action = [
+                    "iam:PutRolePolicy",
+                    "iam:DeleteRolePolicy"
+                  ]
+                  Resource = [
+                    "arn:aws:iam::*:role/*-${local.site.label}-task-role",
+                    "arn:aws:iam::*:role/*-${local.site.label}-execution-role"
+                  ]
                 }
               ]
             })
