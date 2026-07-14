@@ -68,10 +68,24 @@ inputs = merge(
         task_role_arn = try(dependency.ecs_cluster.outputs.task_role_arns[task.cluster_name], task.task_role_arn)
         # Phase 15 (15-04): inject the ledger bucket name — not known until
         # the ledger unit applies (random-suffixed S3 bucket name) — onto the
-        # voice (KMV_LEDGER_BUCKET, write path) and auth (LEDGER_BUCKET, read
-        # path / admin report) task containers.
+        # voice (KMV_LEDGER_BUCKET, write path), telephony-edge (KMV_LEDGER_BUCKET,
+        # PSTN write path — the in-container call_runtime runs the same ledger
+        # writer as voice) and auth (LEDGER_BUCKET, read path / admin report)
+        # task containers. Without the telephony-edge branch the edge's
+        # _bucket() resolves to "" and every PSTN ledger PUT failed boto3
+        # parameter validation, silently dropping phone-call transcripts.
         containers = (
           task.name == "voice" ? [
+            for container in task.containers :
+            merge(container, {
+              environment = concat(container.environment, [
+                {
+                  name  = "KMV_LEDGER_BUCKET"
+                  value = dependency.ledger.outputs.bucket_name
+                }
+              ])
+            })
+            ] : task.name == "telephony-edge" ? [
             for container in task.containers :
             merge(container, {
               environment = concat(container.environment, [
