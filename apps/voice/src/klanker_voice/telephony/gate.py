@@ -63,6 +63,18 @@ reach any LLM request, persona/system prompt, or transcript ledger — they
 live only in this processor's in-memory accumulated-token set for the
 duration of the (short) gate window.
 
+**Opt-in fail-path debug logging (260714, relaxes D-05e for the FAIL path
+only).** When ``telephony.gate_debug_log_heard=true`` (default False), the
+fail-closed path additionally logs one ``gate_fail_heard{call_id, caller_id,
+heard_tokens, token_count, window_expired}`` line -- the caller's number plus
+the tokens STT actually heard -- so an accent/STT mismatch on the passphrase
+can be debugged. Operator-accepted and safe: a failed attempt's heard words are
+by definition NOT the passphrase, so no secret leaks; it never runs on the
+success/unlock path; it never logs ``self._secret_words`` or any PIN (the DTMF
+PIN never reaches this processor); it stays in the telephony-edge CloudWatch
+log, never the ledger/LLM/router. With the flag off the redaction posture above
+is byte-identical.
+
 **Distinct from the ``greenhouse`` router keyword (D-05f).** This module is a
 standalone security/access layer, wired into ``pipeline.build_pipeline`` via
 an additive ``gate_processor`` parameter, entirely separate from
@@ -171,6 +183,8 @@ class GateProcessor(FrameProcessor):
         gate_window_seconds: float,
         on_unlock: UnlockCallback,
         on_fail_closed: FailClosedCallback,
+        caller_id: str | None = None,
+        debug_log_heard: bool = False,
         name: str | None = None,
     ) -> None:
         if name is not None:
@@ -178,6 +192,11 @@ class GateProcessor(FrameProcessor):
         else:
             super().__init__()
         self._call_id = call_id
+        self._caller_id = caller_id
+        #: Opt-in (``telephony.gate_debug_log_heard``): when True, the
+        #: fail-closed path logs the caller_id + the heard tokens for accent/STT
+        #: debugging. Default False keeps the D-05e posture byte-identical.
+        self._debug_log_heard = debug_log_heard
         self._secret_words: set[str] = {
             w.strip().lower() for w in passphrase_words if w and w.strip()
         }
@@ -218,6 +237,20 @@ class GateProcessor(FrameProcessor):
             return
         self._resolved = True
         logger.info(f"gate fail-closed call_id={self._call_id!r}")
+        # Opt-in D-05e relaxation, FAIL PATH ONLY (telephony.gate_debug_log_heard):
+        # log the caller_id + the tokens STT actually heard so an accent/STT
+        # mismatch on the passphrase can be debugged. Safe because a failed
+        # attempt's heard words are BY DEFINITION not the passphrase, so this
+        # leaks no secret. NEVER logs self._secret_words / any PIN; NEVER runs on
+        # the success path (unlock). Operator-CloudWatch only. Default off keeps
+        # the redaction posture byte-identical.
+        if self._debug_log_heard:
+            heard = sorted(self._accumulated_tokens)
+            logger.info(
+                f"gate_fail_heard{{call_id: {self._call_id!r}, "
+                f"caller_id: {self._caller_id!r}, heard_tokens: {heard!r}, "
+                f"token_count: {len(heard)}, window_expired: true}}"
+            )
         await self._on_fail_closed()
 
     async def unlock(self, method: str) -> None:

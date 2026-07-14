@@ -103,6 +103,12 @@ class TelephonyConfig:
     gate_mode: str = "either"
     gate_window_seconds: int = 10
     unlock_tier_id: str = "kph-tier"
+    #: Opt-in (default False): on a fail-closed (gate-window expiry, no unlock),
+    #: log the caller_id + the heard STT tokens for accent/STT debugging. A
+    #: deliberate, operator-accepted relaxation of D-05e for the FAIL path only
+    #: -- never logs the passphrase/PIN, never runs on the success path. Off =
+    #: byte-identical D-05e posture.
+    gate_debug_log_heard: bool = False
     # --- §23 caller-ID mint (Phase 12, D-02/D-04/D-05) ---
     tel_mint_url: str = ""
     tel_mint_env_var: str = "TELEPHONY_ENDPOINT_AUTH_TOKEN"
@@ -150,6 +156,7 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         gate_mode=gate_mode,
         gate_window_seconds=int(table.get("gate_window_seconds", 10)),
         unlock_tier_id=str(table.get("unlock_tier_id", "kph-tier")),
+        gate_debug_log_heard=bool(table.get("gate_debug_log_heard", False)),
         tel_mint_url=str(table.get("tel_mint_url", "")),
         tel_mint_env_var=str(table.get("tel_mint_env_var", "TELEPHONY_ENDPOINT_AUTH_TOKEN")),
     )

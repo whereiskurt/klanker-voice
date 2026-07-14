@@ -176,3 +176,47 @@ Access check performed against BOTH the IaC and the live account:
   `kmv-auth-electro` item (`defcon34`'s `phone` attribute / byPhone GSI keys)
   and this SSM parameter. It is never committed to git — this doc and all
   history use the `<ADMIN_PHONE_E164>` placeholder.
+
+---
+
+## Task 3 — Seed `pstn-public-tier` (public from-anywhere 3-min / 4-concurrent caller tier)
+
+**Added 2026-07-14** by quick task `260714-hhj` (telephony public-call tuning). This is a
+later, standalone addition to the seed record — it does **not** modify the Phase-12 Task-1/
+Task-2 rows above (`kph-tier`, `pstn-baseline-tier`, `defcon34` stay untouched).
+
+**Why:** the §24 gate's `unlock_tier_id` was repointed from `kph-tier` (Kurt's own 24 h tier)
+to a new dedicated **`pstn-public-tier`** so an un-entitled from-anywhere caller who unlocks
+the gate gets a bounded public session — **3 minutes** and **4 concurrent** — instead of
+inheriting the 24 h/5-concurrent kph-tier. (Entitled callers still resolve to their own tier
+via the caller-ID→code mint; this tier is only the fallback.) The config change lives in
+`apps/voice/configs/telephony.toml` (`unlock_tier_id = "pstn-public-tier"`); this DynamoDB row
+is the live half.
+
+> ⚠️ **ORDERING (important):** the deployed `telephony.toml` `unlock_tier_id = "pstn-public-tier"`
+> resolves this tier's limits at unlock via `quota.read_tier`. An **absent** tier fails **closed**
+> (session_max=0 / no-access). Therefore **run this `kv tier define` command BEFORE the
+> telephony-edge deploy** that ships the repointed `unlock_tier_id`. Thin-token tier rows are
+> live-editable with no redeploy, so this can (and should) be seeded first.
+
+**Pre-check** (confirm it doesn't already exist, no clobber): `kv tier list --json | grep pstn-public-tier`
+
+**Operator command — run by a HUMAN against live AWS (profile `klanker-application`, account
+`052251888500`, region `us-east-1`). NOT run by the executor/automation:**
+
+```bash
+kv tier define pstn-public-tier --group pstn \
+  --session-max 180 --period-max 900 --max-concurrent 4
+```
+
+**Expected post-write live values** (confirm via `kv tier list`):
+
+| Item | Live values |
+|------|-------------|
+| `pstn-public-tier` | `sessionMaxSeconds=180`, `periodMaxSeconds=900`, `maxConcurrent=4`, `group=pstn` |
+
+**Capacity caveat:** this tier + `telephony.toml` `max_concurrent_calls=4` only *permit* 4
+concurrent public calls at the software layer. The single telephony-edge Fargate task
+(`task_cpu=2048`/2 vCPU, `desired_count=1`) is sized for **one** call — truthful 4-concurrent
+capacity still requires the deferred capacity slice (service.hcl vCPU/memory bump + a real
+4-call load test; brief Part B / D2–D4).
