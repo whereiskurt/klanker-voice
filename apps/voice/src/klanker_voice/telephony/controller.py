@@ -710,6 +710,11 @@ class AsteriskCallController:
             gate_window_seconds=self._telephony_cfg.gate_window_seconds,
             on_unlock=_on_unlock,
             on_fail_closed=_on_fail_closed,
+            # Opt-in fail-path debug logging (D-05e relaxation, default off):
+            # the gate logs caller_id + heard tokens on fail-closed only when
+            # telephony.gate_debug_log_heard is true.
+            caller_id=caller_id,
+            debug_log_heard=self._telephony_cfg.gate_debug_log_heard,
         )
 
         call_session = await create_call_session(
