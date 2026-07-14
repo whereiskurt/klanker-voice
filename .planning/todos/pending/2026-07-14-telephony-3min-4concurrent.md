@@ -1,7 +1,17 @@
 # Telephony tuning — 3-min public call cap + 4 concurrent calls
 
 **Captured:** 2026-07-14 (from KPH, end of the telephony-ledger + admin-redesign session)
-**Status:** SPEC / brief — ready to turn into a `/gsd-quick` (tier + config) + a `/gsd-plan-phase` slice (capacity), pending the decisions below.
+**Status:** PARTIALLY SHIPPED — config slice done (quick `260714-hhj`, commit `be58c68`,
+branch `spec/telephony-3min-4concurrent`). STILL OPEN (kept in pending): (1) operator runs
+`kv tier define pstn-public-tier --group pstn --session-max 180 --period-max 900 --max-concurrent 4`
+against live AWS **before** the telephony-edge deploy (absent tier fails closed); (2) telephony-edge
+deploy; (3) **Part B capacity** — service.hcl vCPU/mem bump + a real 4-call load test (D2) and the
+external VoIP.ms trunk concurrency check (D3) / Asterisk per-endpoint cap check (D4). The config
+knobs (D1 = new `pstn-public-tier`; `unlock_tier_id` + `max_concurrent_calls=4`) are DECIDED + LANDED.
+
+---
+
+*(original brief below — decisions D2–D4 in Part B are the remaining open work)*
 
 ## Goal (operator's words)
 
