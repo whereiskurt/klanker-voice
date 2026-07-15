@@ -96,3 +96,14 @@ unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (m
 # Secrets (ARI creds, PIN, passphrase words) live in env/SSM, NEVER here (D-09):
 # ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
 # TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.
+
+# CTF phone-OTP announcement DID (quick task 260715-oq0, design doc
+# docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md).
+# A call to this DID skips the §24 gate entirely -- answer, fetch the current
+# OTP, speak it, hang up. otp_env_var carries only the NAME of the bearer env
+# var; the CTF_OTP_AUTH_TOKEN VALUE is env/SSM-only, never here (D-09).
+[[telephony.announcement]]
+did = "7254043234"                     # Las Vegas DID; matches the normalized dialplan exten
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
+otp_env_var = "CTF_OTP_AUTH_TOKEN"     # NAME only; token VALUE from env/SSM at call time (D-09)
+line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."

@@ -28,6 +28,51 @@ ALLOWED_GATE_MODES = frozenset({"dtmf", "passphrase", "either"})
 
 
 @dataclass(frozen=True)
+class AnnouncementEntry:
+    """One ``[[telephony.announcement]]`` table (quick task 260715-oq0, the
+    CTF phone-OTP announcement DID -- design doc
+    docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md).
+
+    A caller whose normalized DID matches ``did`` is routed to the
+    ``AsteriskCallController._run_announcement`` branch BEFORE the §24 gate:
+    no mint, no quota, no STT/LLM/conversation pipeline -- just fetch the
+    current OTP from ``otp_url`` and speak ``line_template`` (digit-spaced,
+    twice) over the existing RTP path, then hang up.
+
+    Attributes:
+        did: Compared against the normalized dialplan ``exten`` in
+            ``on_stasis_start`` (exact string match on the raw digits, NOT
+            the +E.164 form).
+        otp_url: The auth app's internal-only ``/ctf/otp`` issuer URL. A
+            NON-secret plain URL, like ``tel_mint_url``.
+        otp_env_var: The NAME of the environment variable holding the
+            optional shared bearer token for the ``/ctf/otp`` call -- the
+            token VALUE is read from env/SSM by the controller at call time,
+            never stored here (mirrors ``tel_mint_env_var``). Defaults to
+            ``""`` (unconfigured -- no Authorization header is sent).
+
+            CRITICAL naming deviation from the design doc's proposed
+            ``otp_auth_env_var``: this module's shared
+            ``_reject_credential_fields`` gate refuses ANY TOML key
+            containing ``_auth_`` (``_CREDENTIAL_FIELD_RE`` in
+            ``klanker_voice.config``), so ``otp_auth_env_var`` would be
+            rejected before parsing even though it only ever holds an env-var
+            NAME, never a secret value. ``otp_env_var`` is clean of every
+            credential token and exactly mirrors the working
+            ``tel_mint_env_var`` precedent.
+        line_template: Spoken text with a ``{code}`` placeholder, substituted
+            (digit-spaced) for every occurrence -- the template speaks the
+            code twice for clarity. Validated at load time to contain at
+            least one ``{code}`` occurrence.
+    """
+
+    did: str
+    otp_url: str
+    otp_env_var: str = ""
+    line_template: str = ""
+
+
+@dataclass(frozen=True)
 class TelephonyConfig:
     """The ``[telephony]`` table (Phase 11, D-09): media + §24 gate knobs only.
 
@@ -112,6 +157,8 @@ class TelephonyConfig:
     # --- §23 caller-ID mint (Phase 12, D-02/D-04/D-05) ---
     tel_mint_url: str = ""
     tel_mint_env_var: str = "TELEPHONY_ENDPOINT_AUTH_TOKEN"
+    # --- CTF phone-OTP announcement DID(s) (quick task 260715-oq0) ---
+    announcements: tuple[AnnouncementEntry, ...] = ()
 
 
 def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
@@ -142,6 +189,8 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
             f"telephony.gate_mode {gate_mode!r} must be one of {sorted(ALLOWED_GATE_MODES)}"
         )
 
+    announcements = _parse_announcements(table.get("announcement"))
+
     return TelephonyConfig(
         enabled=bool(table.get("enabled", False)),
         provider=str(table.get("provider", "voipms")),
@@ -159,4 +208,56 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         gate_debug_log_heard=bool(table.get("gate_debug_log_heard", False)),
         tel_mint_url=str(table.get("tel_mint_url", "")),
         tel_mint_env_var=str(table.get("tel_mint_env_var", "TELEPHONY_ENDPOINT_AUTH_TOKEN")),
+        announcements=announcements,
     )
+
+
+def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
+    """Parse ``[[telephony.announcement]]`` (a TOML array-of-tables -> a list
+    of dicts) into a frozen tuple of :class:`AnnouncementEntry`. Absent
+    (``None``) -> an empty tuple, byte-identical to every pre-260715-oq0
+    config. Reuses this module's existing ``ConfigError`` style; the shared
+    credential gate (``_load_toml_data`` -> ``_reject_credential_fields``)
+    has already run over the WHOLE file before this function is ever called,
+    so a credential-looking key anywhere inside an announcement table is
+    refused before parsing reaches here."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError("telephony.announcement must be an array of tables ([[telephony.announcement]])")
+
+    entries: list[AnnouncementEntry] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ConfigError(f"telephony.announcement[{i}] must be a table")
+
+        did = str(item.get("did", "")).strip()
+        if not did:
+            raise ConfigError(f"telephony.announcement[{i}].did must be a non-empty string")
+
+        otp_url = item.get("otp_url")
+        if not otp_url or not isinstance(otp_url, str):
+            raise ConfigError(f"telephony.announcement[{i}].otp_url must be a non-empty string")
+
+        line_template = item.get("line_template")
+        if not line_template or not isinstance(line_template, str):
+            raise ConfigError(
+                f"telephony.announcement[{i}].line_template must be a non-empty string"
+            )
+        if "{code}" not in line_template:
+            raise ConfigError(
+                f"telephony.announcement[{i}].line_template must contain a {{code}} placeholder"
+            )
+
+        otp_env_var = str(item.get("otp_env_var", ""))
+
+        entries.append(
+            AnnouncementEntry(
+                did=did,
+                otp_url=otp_url,
+                otp_env_var=otp_env_var,
+                line_template=line_template,
+            )
+        )
+
+    return tuple(entries)
