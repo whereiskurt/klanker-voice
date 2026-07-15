@@ -98,7 +98,7 @@ extends to more than one announcement line later):
 
 ```toml
 [[telephony.announcement]]
-did = "3474803715"                       # matches the normalized dialplan exten
+did = "7254043234"                       # Las Vegas, NV DID; matches the normalized dialplan exten
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
 otp_auth_env_var = "CTF_OTP_AUTH_TOKEN"  # NAME only; value from env/SSM
 line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
