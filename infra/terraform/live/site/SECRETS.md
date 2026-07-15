@@ -59,9 +59,23 @@ sops edit .secrets.sops.json
   "jwt":        { "secret": "...", "internal_secret": "..." },
   "oidc":       { "cookie_keys": "..." },
   "altcha":     { "secret": "..." },
-  "ledger":     { "code_hash_salt": "..." }
+  "ledger":     { "code_hash_salt": "..." },
+  "ctf":        { "otp_secret": "...", "auth_token": "..." }
 }
 ```
+
+## Operator note: the CTF phone-OTP secrets (quick 260715-oq0)
+
+`ctf.otp_secret` is the **base32** TOTP shared secret (HMAC-SHA1 / 6 digits /
+120s) — generate with `openssl rand 20 | base32`. The auth `/ctf/otp` route
+computes the current code from it; the **meshtk** verifier must hold the SAME
+value to check the code a player reports back (±1 step skew, verifier-side
+only). `ctf.auth_token` is the optional shared bearer for the internal-only
+`/ctf/otp` route (`openssl rand -hex 32`) — auth enforces it as
+`CTF_OTP_AUTH_TOKEN`, telephony-edge sends the same value. Both follow the
+standard SOPS → secrets module → SSM SecureString → container `valueFrom` flow;
+add them with `sops edit .secrets.sops.json` and apply the secrets unit BEFORE
+the ecs-task unit references the new `/kmv/secrets/use1/ctf/*` parameters.
 
 ## Operator note: the ledger salt (Phase 15)
 

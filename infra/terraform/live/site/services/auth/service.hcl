@@ -162,7 +162,14 @@ locals {
           { name = "AUTH_JWT_SECRET", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/jwt/secret" },
           { name = "OIDC_COOKIE_KEYS", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/cookie_keys" },
           { name = "OIDC_JWKS", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/oidc/jwks" },
-          { name = "ALTCHA_HMAC_KEY", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/altcha/secret" }
+          { name = "ALTCHA_HMAC_KEY", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/altcha/secret" },
+          # CTF phone-OTP announcement DID (quick 260715-oq0): the internal-only
+          # /ctf/otp route computes the current TOTP from CTF_OTP_SECRET (required —
+          # absent/empty => uniform 404) and, when CTF_OTP_AUTH_TOKEN is set, enforces
+          # a shared bearer (telephony-edge sends the same token). Both are SSM
+          # SecureString, never in git/TOML.
+          { name = "CTF_OTP_SECRET", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret" },
+          { name = "CTF_OTP_AUTH_TOKEN", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/auth_token" }
           # NOTE: magic-link email is sent via the SESv2 SDK (nodemailer SES transport),
           # NOT SMTP — so NO AUTH_SES_ACCESS_KEY_ID/SECRET here (SMTP creds are invalid as
           # API creds). The SESv2 client uses the task role (ses:SendEmail below).

@@ -216,6 +216,10 @@ locals {
         description = "Transcription ledger code_hash salt (Phase 15) — HMAC salt for hashing access codes into non-reversible record identifiers; never stored in plaintext outside SOPS"
         keys        = ["code_hash_salt"]
       }
+      ctf = {
+        description = "CTF phone-OTP announcement DID (quick 260715-oq0). otp_secret = base32 TOTP shared secret (HMAC-SHA1 / 6 digits / 120s) the auth /ctf/otp issuer computes from and the meshtk verifier checks against; auth_token = optional shared bearer for the internal-only /ctf/otp route (consumed by auth as CTF_OTP_AUTH_TOKEN and sent by telephony-edge)"
+        keys        = ["otp_secret", "auth_token"]
+      }
     }
   }
 
