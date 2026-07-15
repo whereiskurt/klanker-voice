@@ -1,0 +1,19 @@
+# Golden fixture for studio_files_test.go — mirrors the real
+# apps/voice/configs/studio/dids.yaml shape (header comment, a `dids:` list
+# of `- did:` maps with label/region/default_rule/greeting fields) with two
+# pre-existing rows, so DID metadata upsert/preservation edge cases are
+# exercised against a non-empty starting file. Test-only fixture data; the
+# real repo file ships empty (see 16-03-PLAN.md's prohibition on inventing
+# fake DIDs).
+
+dids:
+  - did: "+16135550100"
+    label: "Ottawa main line"
+    region: "CA-ON"
+    default_rule: "kph-tier-code"
+    greeting: "Hey, thanks for calling the Ottawa line."
+  - did: "+13475550199"
+    label: "NYC line"
+    region: "US-NY"
+    default_rule: "greenhouse-code"
+    greeting: "Hi, you've reached the NYC number."

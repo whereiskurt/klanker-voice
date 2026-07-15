@@ -6,6 +6,10 @@ on:
     branches: [main]
     paths:
       - 'apps/voice/**'
+      # kv studio operator-tool config (dids/rule-order/sops) lives under
+      # apps/voice/configs/studio/ but is NOT part of the voice image — editing
+      # it must never rebuild/redeploy voice (which would revert telephony-edge).
+      - '!apps/voice/configs/studio/**'
   workflow_dispatch:
 
 concurrency:

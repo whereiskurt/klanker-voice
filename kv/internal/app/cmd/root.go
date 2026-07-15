@@ -150,6 +150,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(NewKnowledgeCmd(cfg))
 	root.AddCommand(NewVoipmsCmd(cfg))
 	root.AddCommand(NewTelephonyCmd(cfg))
+	root.AddCommand(NewStudioCmd(cfg))
 
 	return root
 }

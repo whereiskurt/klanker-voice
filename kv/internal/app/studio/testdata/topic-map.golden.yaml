@@ -1,0 +1,47 @@
+# Golden fixture for repofile_writer_test.go — mirrors the real
+# apps/voice/knowledge/router/topic-map.yaml shape (leading file comment,
+# hook: >- block scalars, an inline-comment quoted keyword term, and a
+# hidden/sticky topic) so WriteTopicMapKeyword's line-splice is exercised
+# against every edge case the real file has. Tests read this file, apply an
+# edit, and assert the resulting bytes differ from THIS file by exactly the
+# intended lines.
+
+version: 1
+confidence_floor: 2
+
+topics:
+  - id: klanker-maker
+    spoken_name: "klanker-maker"
+    hook: >-
+      Kurt's AI-agent runtime -- a Go CLI called km that turns a YAML file
+      into a locked-down AWS sandbox, with kernel-level network filtering.
+    keywords:
+      - term: "klanker maker"
+        weight: 3
+      - term: "clanker maker"        # common ASR mis-hearing of "klanker"
+        weight: 3
+      - term: "klanker"
+        weight: 2
+
+  - id: tiogo
+    spoken_name: "tiogo, Kurt's Tenable tool"
+    hook: >-
+      Kurt's open-source Go command-line tool for Tenable dot I O.
+    keywords:
+      - term: "tiogo"
+        weight: 3
+      - term: "tenable"
+        weight: 3
+
+  # HIDDEN easter-egg: only the exact magic word unlocks it -- no
+  # recruiting synonyms (a deliberate easter egg, not a discoverable
+  # intent).
+  - id: greenhouse
+    spoken_name: "Kurt's background"
+    hidden: true
+    sticky: true
+    hook: >-
+      (hidden) Kurt's professional background -- recruiting mode.
+    keywords:
+      - term: "greenhouse"
+        weight: 3

@@ -1,0 +1,54 @@
+# Golden fixture for repofile_writer_test.go — mirrors the real
+# apps/voice/knowledge/manifest.yaml shape (leading file comment,
+# tour_priority list, note: >- block scalars, single-line and multi-line
+# notes, a trailing file comment after the last topic) so
+# WriteManifestSource's line-splice is exercised against every edge case the
+# real file has. Tests read this file, apply an edit, and assert the
+# resulting bytes differ from THIS file by exactly the intended lines.
+
+version: 1
+
+tour_priority:
+  - klanker-maker
+  - meshtk
+
+topics:
+  - id: klanker-maker
+    spoken_name: "klanker-maker"
+    pack: klanker-maker.md
+    sources:
+      - path: /Users/khundeck/working/klankrmkr/docs
+        kind: docs
+        public: true
+        skip_if_missing: true
+        note: >-
+          km's own docs/ tree (~1,950 md files repo-wide); primary,
+          high-signal source for the deep pack (Amendment 5).
+      - path: apps/voice/knowledge/diagrams/km-sandbox-aws.md
+        kind: diagram
+        public: true
+        note: km sandbox AWS architecture, ingested as text (Amendment 3-D).
+
+  - id: meshtk
+    spoken_name: "mesh T K, the meshtastic toolkit"
+    pack: meshtk.md
+    sources:
+      - path: /Users/khundeck/working/meshtk/README.md
+        kind: docs
+        public: true
+        skip_if_missing: true
+        note: "README primary source (Amendment 5)."
+
+  # HIDDEN easter-egg (2026-07-10, SCAFFOLD): last topic in the file --
+  # exercises appending immediately before the trailing file comment.
+  - id: greenhouse
+    spoken_name: "Kurt's background"
+    pack: greenhouse.md
+    sources:
+      - path: apps/voice/knowledge/corpus/kurt-resume.md
+        kind: docs
+        public: true
+
+# Any further topics: append the same shape here (+ a matching
+# router/topic-map.yaml entry) -- this file's shape does not change, only
+# APPEND.
