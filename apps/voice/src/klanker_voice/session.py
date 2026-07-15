@@ -32,7 +32,12 @@ from urllib.error import URLError
 import boto3
 from loguru import logger
 
-from pipecat.frames.frames import ErrorFrame, UserStartedSpeakingFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    ErrorFrame,
+    UserStartedSpeakingFrame,
+)
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.processors.frame_processor import FrameDirection
 
@@ -523,6 +528,13 @@ class TeardownObserver(BaseObserver):
     async def on_push_frame(self, data: FramePushed) -> None:
         frame = data.frame
         if isinstance(frame, UserStartedSpeakingFrame) and data.direction == FrameDirection.DOWNSTREAM:
+            await self._lifecycle.on_user_speech()
+        elif isinstance(frame, (BotStartedSpeakingFrame, BotStoppedSpeakingFrame)):
+            # A caller listening to the bot is NOT idle. Reset the silence
+            # watchdog on bot speech (start AND stop) so a long bot turn (e.g.
+            # the greeting) never counts as user silence — the window restarts
+            # when the bot finishes, giving the caller the full timeout to reply.
+            # Any direction: these frames only originate from the bot's output.
             await self._lifecycle.on_user_speech()
         elif isinstance(frame, ErrorFrame) and frame.fatal:
             await self._lifecycle.on_pipeline_stall()

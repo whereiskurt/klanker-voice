@@ -222,6 +222,39 @@ async def test_teardown_observer_routes_user_started_speaking_to_on_user_speech(
     await lifecycle.release()
 
 
+async def test_teardown_observer_bot_speech_resets_the_silence_watchdog(fake_aws):
+    """A caller listening to the bot is NOT idle. Bot speech — start AND stop —
+    must reset the D-06 user-silence watchdog, so a long bot turn (e.g. the
+    greeting) never counts as user silence and hangs up on a caller who is just
+    listening (telephony-experience: 'if the bot is talking I'm not talking and
+    it shouldn't count against me')."""
+    from pipecat.frames.frames import BotStartedSpeakingFrame, BotStoppedSpeakingFrame
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.processors.frame_processor import FrameDirection
+
+    lifecycle = _lifecycle(fake_aws, quota_config=_quota_config(user_silence_timeout=100))
+    await lifecycle.start()
+    observer = session.TeardownObserver(lifecycle)
+
+    for frame in (BotStartedSpeakingFrame(), BotStoppedSpeakingFrame()):
+        before = lifecycle._watchdog_task
+        await observer.on_push_frame(
+            FramePushed(
+                source=None,
+                destination=None,
+                frame=frame,
+                direction=FrameDirection.DOWNSTREAM,
+                timestamp=0,
+            )
+        )
+        # A FRESH watchdog was armed by the bot-speech event — proving the
+        # window restarts each time the bot speaks, not just on user speech.
+        assert lifecycle._watchdog_task is not None
+        assert lifecycle._watchdog_task is not before
+
+    await lifecycle.release()
+
+
 async def test_teardown_observer_routes_fatal_error_frame_to_release(fake_aws):
     from pipecat.frames.frames import ErrorFrame
     from pipecat.observers.base_observer import FramePushed
