@@ -180,6 +180,52 @@ async def test_passphrase_split_across_two_frames_in_any_order_unlocks():
     assert isinstance(down[0], TTSSpeakFrame)
 
 
+async def test_post_unlock_swallows_the_unlocking_utterance_tail_until_new_turn():
+    """After unlock the gate must swallow the TAIL of the utterance that was in
+    flight at unlock — the passphrase keeps transcribing for a beat after the
+    gate opens. If that tail passes through it becomes the first user turn:
+    it leaks the passphrase into the LLM/ledger AND triggers a second self-intro
+    on top of greet_now's greeting (the live 'double greeting' bug). Speech
+    frames are suppressed until a genuinely NEW user turn (next
+    UserStartedSpeakingFrame); a TTS/control frame in between still flows."""
+    # Direct process_frame + a captured push_frame: run_test manages its own
+    # speaking-state frames and won't forward an injected UserStartedSpeakingFrame
+    # to the processor, so drive the gate directly to control the turn boundary.
+    gate, unlock_calls, _ = _gate()
+    pushed: list = []
+
+    async def _capture(frame, direction=FrameDirection.DOWNSTREAM):
+        pushed.append(frame)
+
+    gate.push_frame = _capture  # type: ignore[method-assign]
+    D = FrameDirection.DOWNSTREAM
+
+    # the passphrase (all 4 words) unlocks — this frame is swallowed by the match:
+    await gate.process_frame(
+        TranscriptionFrame(text="purple falcon midnight compass", user_id="", timestamp=""), D
+    )
+    assert unlock_calls == ["unlocked"]
+    # tail of the SAME utterance keeps transcribing AFTER unlock -> swallowed:
+    await gate.process_frame(
+        TranscriptionFrame(text="purple falcon midnight compass again", user_id="", timestamp=""), D
+    )
+    await gate.process_frame(UserStoppedSpeakingFrame(), D)
+    # greet_now's greeting (a non-speech frame) flows through while suppressing:
+    await gate.process_frame(TTSSpeakFrame(text="greeting", append_to_context=False), D)
+    # a genuinely NEW user turn ends suppression; its transcription flows:
+    await gate.process_frame(UserStartedSpeakingFrame(), D)
+    await gate.process_frame(
+        TranscriptionFrame(text="tell me about kurt", user_id="", timestamp=""), D
+    )
+
+    assert any(isinstance(f, TTSSpeakFrame) for f in pushed)  # greeting flowed
+    # ONLY the new turn's transcription flowed — the post-unlock passphrase tail
+    # was swallowed (no leak into the LLM/ledger, no re-greet trigger).
+    fwd_texts = [f.text for f in pushed if isinstance(f, TranscriptionFrame)]
+    assert fwd_texts == ["tell me about kurt"]
+    assert all("compass" not in t for t in fwd_texts)
+
+
 async def test_three_of_four_words_does_not_unlock():
     gate, unlock_calls, _ = _gate()
 

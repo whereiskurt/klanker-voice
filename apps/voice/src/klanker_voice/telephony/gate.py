@@ -209,6 +209,13 @@ class GateProcessor(FrameProcessor):
         #: paths so exactly one of them ever runs, and the timer never fires
         #: after an unlock (or vice versa).
         self._resolved = False
+        #: Set on unlock: swallow the TAIL of the utterance that was in flight
+        #: when the gate opened (the passphrase keeps transcribing for a beat
+        #: after unlock) until a genuinely NEW user turn begins. Without this,
+        #: that trailing transcription passes through as the first user turn --
+        #: leaking the passphrase into the LLM/ledger AND triggering a second
+        #: self-intro on top of greet_now's greeting (the "double greeting").
+        self._suppress_speech_until_new_turn = False
         self._accumulated_tokens: set[str] = set()
         self._timer_task: asyncio.Task | None = None
 
@@ -264,6 +271,7 @@ class GateProcessor(FrameProcessor):
             return
         self._resolved = True
         self._unlocked = True
+        self._suppress_speech_until_new_turn = True
         if self._timer_task is not None:
             self._timer_task.cancel()
         # D-05e: log ONLY the method + call_id -- never the transcript, the
@@ -278,6 +286,25 @@ class GateProcessor(FrameProcessor):
             self.start_timer()
 
         if self._unlocked:
+            # Post-unlock tail suppression (double-greeting / passphrase-leak
+            # fix): swallow the trailing speech frames of the utterance that was
+            # in flight at unlock, until a genuinely NEW user turn starts. A
+            # ``UserStartedSpeakingFrame`` ends the suppression (and itself flows
+            # through, along with everything after). Non-speech frames (audio,
+            # the greeting's TTS, control/system) always flow -- only the
+            # unlocking utterance's speech tail is eaten.
+            if self._suppress_speech_until_new_turn:
+                if isinstance(frame, UserStartedSpeakingFrame):
+                    self._suppress_speech_until_new_turn = False
+                elif isinstance(
+                    frame,
+                    (
+                        TranscriptionFrame,
+                        InterimTranscriptionFrame,
+                        UserStoppedSpeakingFrame,
+                    ),
+                ):
+                    return
             await self.push_frame(frame, direction)
             return
 

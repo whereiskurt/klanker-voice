@@ -66,11 +66,15 @@ from klanker_voice.knowledge.retrieval import RetrievalIndex
 #: "let me think about it" beat that masks the pack-swap + BM25 retrieval feels
 #: human instead of a canned repeat. Every variant ends on ``{spoken_name}`` (or
 #: leads into a beat) so the retrieval stays masked behind the spoken ack.
+#: 260714 live-tuning: dialed the enthusiasm back — the ack is a latency-mask
+#: beat, not a hype line. Dropped the gushy openers ("Ooh… good one", "Love that
+#: one", "Here's the deal") for calm, measured transitions that still end on the
+#: topic name / lead into a thinking beat so retrieval stays masked.
 DEFAULT_ACK_TEMPLATES: list[str] = [
-    "Ooh, {spoken_name} — good one. Let me get into it.",
-    "Okay, let's dig into {spoken_name}.",
-    "Right — {spoken_name}. Here's the deal.",
-    "Love that one. So, {spoken_name}…",
+    "Okay — {spoken_name}. Let me get into it.",
+    "Sure, let's get into {spoken_name}.",
+    "Right, {spoken_name}. So.",
+    "{spoken_name} — okay, let me think.",
 ]
 
 FallbackClassifier = Callable[..., Awaitable["str | None"]]
