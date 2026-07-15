@@ -277,9 +277,33 @@ async def create_call_session(
     async def _on_stop() -> None:
         # D-04/D-05: the deterministic goodbye bypasses the LLM, gets up to
         # goodbye_grace_seconds to finish, then a hard close.
-        await speak_goodbye(worker, quota_cfg.goodbye_copy)
-        await asyncio.sleep(quota_cfg.goodbye_grace_seconds)
-        await runner.cancel("session wind-down complete")
+        #
+        # telephony-cap-no-hangup: the goodbye leg (speak_goodbye's
+        # queue_frames, the grace sleep) is BEST-EFFORT courtesy — the
+        # load-bearing teardown is ``runner.cancel``, which unblocks
+        # ``CallSession.run`` -> its ``finally`` -> ``lifecycle.release()`` ->
+        # ``on_released`` (on the telephony path, the ONLY hook that ARI-hangs-up
+        # the PSTN channel). If the goodbye leg RAISES (a worker in a bad state
+        # at session_max, a transport hiccup) it must NEVER strand the hard
+        # close: the exception would otherwise propagate out of ``_fire_wind_down``
+        # (which has already set ``_wind_down_fired=True``) and out of
+        # ``_service_timer`` (which catches only ``CancelledError``), killing the
+        # timer task before ``runner.cancel`` ever runs — the call then runs on
+        # with the SIP line silently open past session_max ("warns at 2:30 but
+        # never hangs up at 3:00"). Run ``runner.cancel`` in a ``finally`` so it
+        # ALWAYS fires.
+        try:
+            await speak_goodbye(worker, quota_cfg.goodbye_copy)
+            await asyncio.sleep(quota_cfg.goodbye_grace_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — goodbye is courtesy; never gate the hard close on it
+            logger.warning(
+                f"wind-down goodbye leg failed (best-effort); forcing hard close: {exc}"
+            )
+        finally:
+            logger.info("wind-down: cancelling runner (hard close)")
+            await runner.cancel("session wind-down complete")
 
     lifecycle.on_warning = _on_warning
     lifecycle.on_stop = _on_stop

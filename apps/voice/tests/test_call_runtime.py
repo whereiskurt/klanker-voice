@@ -223,6 +223,48 @@ async def test_release_fires_once_on_worker_termination(make_config_file, stub_p
     assert release_count == 1
 
 
+async def test_on_stop_hard_close_fires_even_if_goodbye_raises(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """telephony-cap-no-hangup regression (root cause): the wind-down
+    ``on_stop`` must run the load-bearing ``runner.cancel`` (which drives
+    ``CallSession.run``'s finally -> ``release`` -> ``on_released`` -> the PSTN
+    ARI hangup) EVEN IF the best-effort spoken-goodbye leg raises.
+
+    Before the fix, a raise in ``speak_goodbye`` propagated straight out of
+    ``on_stop`` -> ``_fire_wind_down`` (having already set
+    ``_wind_down_fired=True``) -> ``_service_timer`` (which catches only
+    ``CancelledError``), killing the timer task before ``runner.cancel`` ever
+    ran — so the session was never hard-closed and (on telephony) the SIP line
+    stayed open past session_max: "warns at 2:30 but never hangs up at 3:00".
+    ``on_stop`` now cancels the runner in a ``finally``."""
+
+    async def _boom_goodbye(worker, copy):
+        raise RuntimeError("speak_goodbye queue_frames failed at session_max")
+
+    monkeypatch.setattr("klanker_voice.call_runtime.speak_goodbye", _boom_goodbye)
+
+    call_session = await _build_call_session(make_config_file)
+
+    cancel_reasons: list[str | None] = []
+    real_cancel = call_session.runner.cancel
+
+    async def _spy_cancel(reason: str | None = None) -> None:
+        cancel_reasons.append(reason)
+        await real_cancel(reason)
+
+    monkeypatch.setattr(call_session.runner, "cancel", _spy_cancel)
+
+    # Drive the wind-down exactly as the D-02 service timer would.
+    await call_session.lifecycle._fire_wind_down()
+
+    assert cancel_reasons, (
+        "on_stop swallowed the goodbye failure but never reached runner.cancel — "
+        "the hard close was stranded (the telephony-cap-no-hangup bug)."
+    )
+    assert call_session.runner._shutdown_event.is_set()
+
+
 async def test_transport_termination_triggers_single_release(make_config_file, stub_provider_keys, fake_aws):
     """A transport disconnect (D-06 layer 1, reconnect-grace scheduled) racing
     an explicit close() — the WebRTC analog is server.py's
