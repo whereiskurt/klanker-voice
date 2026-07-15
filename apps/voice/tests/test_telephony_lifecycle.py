@@ -382,6 +382,101 @@ async def test_hard_timeout_hangs_up_sip_channel(
     assert controller.calls == {}
 
 
+async def test_session_max_hard_stop_hangs_up_even_if_heartbeat_release_fails(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """telephony-cap-no-hangup: the §24 session cap must HANG UP at session_max,
+    not merely warn. This drives the REAL ``SessionLifecycle._service_timer``
+    to a tiny session_max through the whole live wind-down chain
+    (``_fire_wind_down`` -> ``_on_stop`` -> ``runner.cancel`` ->
+    ``CallSession.run`` finally -> ``lifecycle.release()`` -> composed
+    ``on_released`` -> ARI hangup) -- with the best-effort
+    ``quota.release_heartbeat`` RAISING (models the live telephony-edge failure
+    mode: a scoped task-role IAM gap on the usage table, or a transient
+    DynamoDB error). Before the fix, that raise aborted ``release()`` before
+    ``on_released``, so the PSTN line was never hung up and the pipeline ran on
+    -- exactly the reported "warns at 2:30 but never hangs up at 3:00" bug.
+
+    Overrides the module-level ``stub_call_session_run`` with a FAITHFUL
+    ``CallSession.run`` bracket (start -> block until the runner is cancelled ->
+    ``finally: stop()``), so the real ``on_stop -> release -> on_released`` link
+    is exercised offline without a live provider round trip.
+    """
+
+    async def _faithful_run(self: CallSession) -> None:
+        await self.lifecycle.start()
+        try:
+            await self.runner._shutdown_event.wait()
+        finally:
+            await self.lifecycle.stop()
+
+    monkeypatch.setattr(CallSession, "run", _faithful_run)
+
+    # Neutralize TTS/greet frame emission (no live pipeline is running here).
+    async def _noop(*_a, **_k):
+        return None
+
+    monkeypatch.setattr("klanker_voice.call_runtime.speak_goodbye", _noop)
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _noop)
+    monkeypatch.setattr(
+        "klanker_voice.session.quota.record_tick",
+        lambda **_k: quota.TickResult(False, False),
+    )
+
+    # THE failure mode under test: the best-effort heartbeat release raises.
+    def _boom(*_a, **_k):
+        raise RuntimeError("dynamodb release_heartbeat failed (best-effort)")
+
+    monkeypatch.setattr("klanker_voice.session.quota.release_heartbeat", _boom)
+
+    tiny_tier = quota.Tier(
+        tier_id="pstn-public-tier",
+        session_max_seconds=0.12,
+        period_max_seconds=600,
+        max_concurrent=5,
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.quota.start_gate",
+        lambda identity, **kwargs: _gate_result(
+            tier=tiny_tier, session_max_seconds=0.12, bypass_accounting=False
+        ),
+    )
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        quota_cfg=_quota_config(
+            winddown_warning_seconds=0.05,
+            goodbye_grace_seconds=0.01,
+            user_silence_timeout=300.0,
+            reconnect_grace_seconds=300.0,
+            heartbeat_renew_interval=300.0,
+        ),
+        access_pin="4242",
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+
+    # Unlock (DTMF) -> upgrade_from_bypass starts the REAL service timer.
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+    assert active_call.gate.unlocked is True
+
+    # Let the real timer fire the warning (~0.05s) then the hard stop (~0.12s),
+    # and the whole wind-down chain settle.
+    await asyncio.sleep(1.0)
+
+    assert ari.count("hangup", arg="chan-1") == 1, (
+        f"session-max hard stop never hung up the SIP channel (best-effort "
+        f"heartbeat-release failure stranded the teardown). ARI calls: {ari.names()}"
+    )
+    assert ari.count("destroy_bridge", arg="bridge-1") == 1
+    assert controller.calls == {}
+
+
 # --- (e) Quota-denied leaves no bridge (Task 2) ---------------------------
 
 

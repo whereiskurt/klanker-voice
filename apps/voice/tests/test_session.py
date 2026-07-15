@@ -201,6 +201,47 @@ async def test_hard_stop_fires_at_session_max(fake_aws, monkeypatch):
     assert stopped.is_set()
 
 
+async def test_release_still_fires_on_released_when_heartbeat_release_raises(fake_aws, monkeypatch):
+    """telephony-cap-no-hangup regression: ``release()``'s best-effort
+    ``quota.release_heartbeat`` (a DynamoDB UpdateItem) must NEVER be able to
+    strand the hard teardown. On the telephony path ``on_released`` is the ONLY
+    hook that cancels the pipeline runner AND ARI-hangs-up the PSTN channel; if
+    a scoped task-role IAM gap (or a transient DynamoDB error) makes the
+    heartbeat release raise, the call would otherwise run on with the line
+    silently open past session_max ("warns but never hangs up"). The heartbeat
+    release is documented best-effort (TTL is the backstop) — so its failure is
+    swallowed and ``on_released`` still runs."""
+    monkeypatch.setattr(quota, "record_tick", lambda **kw: quota.TickResult(False, False))
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("dynamodb release_heartbeat failed (best-effort)")
+
+    monkeypatch.setattr(session.quota, "release_heartbeat", _boom)
+
+    released = asyncio.Event()
+
+    async def on_released():
+        released.set()
+
+    lifecycle = session.SessionLifecycle(
+        user_id="tel:+15551234567",
+        session_id="s1",
+        tier=_tier(session_max=5),
+        quota_config=_quota_config(),
+        on_released=on_released,
+    )
+    await lifecycle.start()
+    # release() is the single idempotent teardown every trigger funnels through
+    # (the D-02 wall-clock hard stop and every D-06 idle layer).
+    await lifecycle.release()
+
+    assert released.is_set(), (
+        "on_released (PSTN ARI hangup + runner cancel) was skipped because the "
+        "best-effort heartbeat release raised — the call would run on, line open."
+    )
+    assert lifecycle._stopped is True
+
+
 async def test_daily_exhaustion_mid_session_invokes_wind_down_hook(fake_aws, monkeypatch):
     monkeypatch.setattr(quota, "record_tick", lambda **kw: quota.TickResult(daily_exhausted=True, site_paused=False))
     exhausted = asyncio.Event()

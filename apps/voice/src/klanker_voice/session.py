@@ -265,7 +265,26 @@ class SessionLifecycle:
                 task.cancel()
         _decrement()
         if not self.bypass_accounting:
-            await asyncio.to_thread(quota.release_heartbeat, self.user_id, self.session_id)
+            # Best-effort heartbeat release (documented: TTL cleanup is the
+            # backstop). A failure here — a scoped telephony-edge task-role IAM
+            # gap on the usage table's UpdateItem, or any transient DynamoDB
+            # throttle/error — must NEVER abort the rest of teardown. Unguarded,
+            # an exception propagated out of release() BEFORE the two lines
+            # below, skipping both the scale-in-protection reconcile (a stranded
+            # protected task blocks the next rolling deploy → black screen) AND
+            # ``on_released``. On the telephony path ``on_released`` is the ONLY
+            # hook that cancels the pipeline runner AND ARI-hangs-up the PSTN
+            # channel, so that raise left the runner generating turns and the
+            # SIP line silently open past session_max — the telephony-cap-no-
+            # hangup "warns but never hangs up" bug. (The WebRTC path never
+            # surfaced it: the browser tearing down the transport is an
+            # independent teardown backstop; the PSTN line has none.)
+            try:
+                await asyncio.to_thread(quota.release_heartbeat, self.user_id, self.session_id)
+            except Exception as exc:  # noqa: BLE001 — best-effort; never gate teardown on it
+                logger.warning(
+                    f"release_heartbeat failed (best-effort); continuing teardown: {exc}"
+                )
         await asyncio.to_thread(self._emit_metric)
         # Reconcile against the live count: clears protection once this was the
         # last session (count -> 0), leaves it ON while others are still active.
