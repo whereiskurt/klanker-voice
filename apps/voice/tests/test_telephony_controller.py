@@ -22,7 +22,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+
 from klanker_voice.auth import AuthError, SessionIdentity
+from klanker_voice.telephony.config import AnnouncementEntry
+from klanker_voice.telephony.controller import _build_announcement_line
 
 from tests.test_call_runtime import _gate_result, _quota_config, fake_aws, reset_active_count  # noqa: F401
 from tests.test_telephony_lifecycle import (  # noqa: F401 -- stub_call_session_run is an autouse fixture
@@ -276,3 +281,186 @@ def test_bearer_token_read_from_configured_env_var_never_a_literal():
     # interpolation like f"Bearer {bearer}" contains braces and never
     # matches this pattern).
     assert not re.search(r'"Bearer [^"{}]+"', text)
+
+
+# --- Quick task 260715-oq0: CTF phone-OTP announcement DID -----------------
+
+ANNOUNCEMENT_DID = "7254043234"
+
+
+def _announcement_entry(**overrides) -> AnnouncementEntry:
+    base = dict(
+        did=ANNOUNCEMENT_DID,
+        otp_url="https://auth.klankermaker.ai/use1/ctf/otp",
+        otp_env_var="CTF_OTP_AUTH_TOKEN",
+        line_template="Hey! O T P. {code}. That's {code}. Bye.",
+    )
+    base.update(overrides)
+    return AnnouncementEntry(**base)
+
+
+class _FakeTtsSynthSpy(FrameProcessor):
+    """A minimal passthrough FrameProcessor standing in for
+    ``factories.build_tts`` -- records every ``TTSSpeakFrame.text`` it sees
+    (and, when given a shared ``order`` list, appends "tts_synth" to it) so
+    tests can assert playback fired without a real ElevenLabs/network call."""
+
+    def __init__(self, calls: list[str], order: list[str] | None = None) -> None:
+        super().__init__()
+        self._calls = calls
+        self._order = order
+
+    async def process_frame(self, frame, direction: FrameDirection) -> None:  # noqa: ANN001
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TTSSpeakFrame):
+            self._calls.append(frame.text)
+            if self._order is not None:
+                self._order.append("tts_synth")
+        await self.push_frame(frame, direction)
+
+
+def test_build_announcement_line_spaces_digits_and_substitutes_both_occurrences():
+    line = _build_announcement_line("A {code}. That's {code}.", "123456")
+    assert line == "A 1 2 3 4 5 6. That's 1 2 3 4 5 6."
+
+
+async def test_announcement_did_dispatches_before_gate_no_quota_no_pipeline(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A matched announcement DID invokes _run_announcement and returns
+    BEFORE the §24 gate -- quota.start_gate is never called, no ActiveCall
+    is registered, and no CallSession/pipeline is ever constructed for this
+    channel."""
+    start_gate_calls: list[Any] = []
+
+    def _spy_start_gate(identity, **kwargs):
+        start_gate_calls.append(identity)
+        raise AssertionError("quota.start_gate must never be called for an announcement DID")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.quota.start_gate", _spy_start_gate)
+
+    run_announcement_calls: list[dict[str, Any]] = []
+
+    async def _spy_run_announcement(self, **kwargs):
+        run_announcement_calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._run_announcement",
+        _spy_run_announcement,
+    )
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(announcements=(_announcement_entry(),)),
+    )
+
+    await controller.on_stasis_start(_stasis_event(exten=ANNOUNCEMENT_DID))
+
+    assert start_gate_calls == []
+    assert len(run_announcement_calls) == 1
+    call_kwargs = run_announcement_calls[0]
+    assert call_kwargs["sip_channel_id"] == "chan-1"
+    assert call_kwargs["entry"].did == ANNOUNCEMENT_DID
+    assert call_kwargs["bridge_id"] == "bridge-1"
+    assert call_kwargs["external_media_channel_id"] == "ext-media-1"
+    # No ActiveCall was ever registered for this channel (the whole point of
+    # bypassing the gate -- announcement calls are never in self.calls).
+    assert controller.calls == {}
+
+
+async def test_non_announcement_did_still_enters_gated_path(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A DID that does NOT match any configured announcement entry is
+    completely unaffected -- the existing gated flow (§24) runs exactly as
+    before, byte-unchanged."""
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(announcements=(_announcement_entry(),)),
+    )
+
+    # _stasis_event()'s default exten ("1000") does not match ANNOUNCEMENT_DID.
+    await controller.on_stasis_start(_stasis_event())
+
+    active_call = controller.calls["chan-1"]
+    assert active_call.gate is not None
+    assert active_call.gate.unlocked is False
+
+
+async def test_announcement_otp_fetch_failure_tears_down_no_tts(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """OTP fetch returning None (uniform 404/timeout/error) tears the call
+    down immediately -- no TTS synthesis, no spoken line."""
+
+    async def _fake_fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
+        return None
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._fetch_ctf_otp", _fake_fetch_ctf_otp
+    )
+
+    def _fail_if_tts_built(cfg):
+        raise AssertionError("build_tts must never be called when the OTP fetch fails")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.build_tts", _fail_if_tts_built)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(announcements=(_announcement_entry(),)),
+    )
+
+    await controller.on_stasis_start(_stasis_event(exten=ANNOUNCEMENT_DID))
+
+    assert ari.count("hangup", arg="chan-1") == 1
+    assert ari.count("destroy_bridge", arg="bridge-1") == 1
+    assert ari.count("hangup", arg="ext-media-1") == 1
+    assert sessions[0].closed is True
+    assert controller.calls == {}
+
+
+async def test_announcement_success_speaks_line_then_hangs_up_after_playback(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """On a successful OTP fetch, the built (digit-spaced, twice-substituted)
+    line is synthesized over the existing transport, and the SIP channel is
+    hung up only AFTER the TTS synth fires -- never before."""
+    order: list[str] = []
+
+    async def _fake_fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
+        assert url == "https://auth.klankermaker.ai/use1/ctf/otp"
+        return "123456"
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._fetch_ctf_otp", _fake_fetch_ctf_otp
+    )
+
+    tts_calls: list[str] = []
+
+    def _fake_build_tts(cfg):
+        return _FakeTtsSynthSpy(tts_calls, order)
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.build_tts", _fake_build_tts)
+    # Keep the test fast -- the bounded grace period is a fixed sleep, not an
+    # event, so shrink it rather than actually waiting ~12s.
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS", 0.05
+    )
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        order=order,
+        telephony_cfg=_gated_cfg(announcements=(_announcement_entry(),)),
+    )
+
+    await controller.on_stasis_start(_stasis_event(exten=ANNOUNCEMENT_DID))
+
+    assert tts_calls == ["Hey! O T P. 1 2 3 4 5 6. That's 1 2 3 4 5 6. Bye."]
+    assert ari.count("hangup", arg="chan-1") == 1
+    assert ari.count("destroy_bridge", arg="bridge-1") == 1
+    assert sessions[0].closed is True
+    assert controller.calls == {}
+
+    # Hangup follows playback -- the TTS synth spy fired before the SIP
+    # channel hangup was issued.
+    assert order.index("tts_synth") < order.index("hangup")
