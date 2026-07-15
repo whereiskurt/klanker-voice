@@ -42,9 +42,21 @@ if the bot is talking for many seconds I'm not talking and it shouldn't count ag
 ## Deploy
 `apps/voice/**` → build-telephony-edge.yml → deploy.yml. Human deploy after merge.
 
+## 3. Double greeting + passphrase leak on unlock (added to this task)
+- **Root cause (confirmed live):** the passphrase keeps transcribing for a beat AFTER the gate
+  opens (caller still speaking at unlock — spoke 03:28:01→04, unlock 03:28:02). The
+  GateProcessor went full pass-through immediately, so that trailing transcription passed
+  through as the first user turn. Prod LLM context proved it:
+  `{'text': 'Start by concisely introducing yourself.'}, {'text': 'Hack the planet.'}` — the
+  passphrase leaked into the LLM (and ledger) AND triggered a SECOND self-intro on top of
+  greet_now's greeting.
+- **Fix (this task):** after unlock, GateProcessor swallows speech frames (Transcription/
+  Interim/UserStopped) until a genuinely NEW user turn (next UserStartedSpeakingFrame);
+  non-speech frames (the greeting TTS, audio, control) still flow. Bonus: keeps the passphrase
+  out of the LLM/ledger — better D-05e hygiene. TDD:
+  `test_post_unlock_swallows_the_unlocking_utterance_tail_until_new_turn` (RED→GREEN verified
+  via temporary neuter). Telephony sweep 64 passed.
+
 ## Still open (flagged, NOT in this task)
-- **Double greeting** on the telephony unlock path (self-intro generated twice, ~7s apart —
-  seen live at 03:28:03 and 03:28:10). Unrelated to the hangup/silence fixes; the watchdog fix
-  softens its impact but the greet-path double-fire itself needs its own investigation.
 - **3-min cap still unconfirmed live** — the last call ended on silence before reaching 180s;
   needs a talk-through call held past 3:00 (the PR #49 fix + instrumentation are deployed).
