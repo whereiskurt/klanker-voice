@@ -1,0 +1,991 @@
+<title>kv studio — voice routing console</title>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    /* neutrals — deliberate cool blue-slate bias toward the amber accent */
+    --bg:        #0e1319;
+    --surface:   #151c24;
+    --surface-2: #1b2530;
+    --surface-3: #212d3a;
+    --line:      #27323f;
+    --line-soft: #1e2733;
+    --ink:       #e6edf3;
+    --ink-dim:   #93a1b0;
+    --ink-faint: #61707e;
+
+    /* accent — switchboard-lamp amber (interactive, nav-active, signal lines) */
+    --signal:      #f0a830;
+    --signal-ink:  #1a1305;
+    --signal-glow: rgba(240,168,48,.14);
+    --signal-line: rgba(240,168,48,.42);
+
+    /* status lamps — a separate family from the accent */
+    --live:    #43b95a;
+    --live-bg: rgba(67,185,90,.13);
+    --gated:   #e0952c;
+    --gated-bg:rgba(224,149,44,.14);
+    --block:   #e5594e;
+    --block-bg:rgba(229,89,78,.13);
+    --draft:   #6b7887;
+    --draft-bg:rgba(107,120,135,.14);
+
+    /* backing-store tag hues */
+    --tag-dynamo: #f0a830;
+    --tag-yaml:   #58c37a;
+    --tag-toml:   #5aa2e8;
+    --tag-ssm:    #e5594e;
+    --tag-git:    #9aa7b4;
+
+    --radius: 9px;
+    --radius-sm: 6px;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --shadow: 0 18px 44px -20px rgba(0,0,0,.7);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:        #eef1f5;
+      --surface:   #ffffff;
+      --surface-2: #f5f7fa;
+      --surface-3: #eaeef3;
+      --line:      #d9e0e8;
+      --line-soft: #e6ebf1;
+      --ink:       #1a222c;
+      --ink-dim:   #55636f;
+      --ink-faint: #8996a3;
+      --signal:      #b9730a;
+      --signal-ink:  #fff6e6;
+      --signal-glow: rgba(185,115,10,.10);
+      --signal-line: rgba(185,115,10,.34);
+      --live:    #1f9e42;
+      --live-bg: rgba(31,158,66,.11);
+      --gated:   #b5760f;
+      --gated-bg:rgba(181,118,15,.12);
+      --block:   #cf3c31;
+      --block-bg:rgba(207,60,49,.10);
+      --draft:   #7a8794;
+      --draft-bg:rgba(122,135,148,.13);
+      --tag-dynamo:#a86e08; --tag-yaml:#2f9457; --tag-toml:#2f74b8; --tag-ssm:#cf3c31; --tag-git:#6b7885;
+      --shadow: 0 18px 40px -22px rgba(31,46,66,.34);
+    }
+  }
+  /* explicit toggle wins over the media query in both directions */
+  :root[data-theme="dark"] {
+    --bg:#0e1319; --surface:#151c24; --surface-2:#1b2530; --surface-3:#212d3a;
+    --line:#27323f; --line-soft:#1e2733; --ink:#e6edf3; --ink-dim:#93a1b0; --ink-faint:#61707e;
+    --signal:#f0a830; --signal-ink:#1a1305; --signal-glow:rgba(240,168,48,.14); --signal-line:rgba(240,168,48,.42);
+    --live:#43b95a; --live-bg:rgba(67,185,90,.13); --gated:#e0952c; --gated-bg:rgba(224,149,44,.14);
+    --block:#e5594e; --block-bg:rgba(229,89,78,.13); --draft:#6b7887; --draft-bg:rgba(107,120,135,.14);
+    --tag-dynamo:#f0a830; --tag-yaml:#58c37a; --tag-toml:#5aa2e8; --tag-ssm:#e5594e; --tag-git:#9aa7b4;
+    --shadow:0 18px 44px -20px rgba(0,0,0,.7);
+  }
+  :root[data-theme="light"] {
+    --bg:#eef1f5; --surface:#ffffff; --surface-2:#f5f7fa; --surface-3:#eaeef3;
+    --line:#d9e0e8; --line-soft:#e6ebf1; --ink:#1a222c; --ink-dim:#55636f; --ink-faint:#8996a3;
+    --signal:#b9730a; --signal-ink:#fff6e6; --signal-glow:rgba(185,115,10,.10); --signal-line:rgba(185,115,10,.34);
+    --live:#1f9e42; --live-bg:rgba(31,158,66,.11); --gated:#b5760f; --gated-bg:rgba(181,118,15,.12);
+    --block:#cf3c31; --block-bg:rgba(207,60,49,.10); --draft:#7a8794; --draft-bg:rgba(122,135,148,.13);
+    --tag-dynamo:#a86e08; --tag-yaml:#2f9457; --tag-toml:#2f74b8; --tag-ssm:#cf3c31; --tag-git:#6b7885;
+    --shadow:0 18px 40px -22px rgba(31,46,66,.34);
+  }
+
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--signal-line); color: var(--ink); }
+
+  /* eyebrow / labels */
+  .eyebrow {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ------- app shell ------- */
+  .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+
+  /* ------- left operator rail ------- */
+  .rail {
+    background: var(--surface); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+  }
+  .brand { padding: 18px 18px 16px; border-bottom: 1px solid var(--line-soft); }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.01em; display: flex; align-items: center; gap: 9px; }
+  .brand .knob {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 32%, var(--signal), #9a6410);
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--line), 0 0 12px var(--signal-glow);
+    position: relative; flex: none;
+  }
+  .brand .knob::after { content:""; position:absolute; top:3px; left:50%; width:2px; height:6px; background:var(--signal-ink); border-radius:2px; transform:translateX(-50%); opacity:.7; }
+  .brand .sub { margin-top: 4px; }
+
+  nav { padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .navitem {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 9px 11px; border: 0; border-radius: var(--radius-sm);
+    background: transparent; color: var(--ink-dim); cursor: pointer;
+    font-family: var(--sans); font-size: 13.5px; text-align: left;
+    transition: background .13s, color .13s;
+  }
+  .navitem:hover { background: var(--surface-2); color: var(--ink); }
+  .navitem.active { background: var(--signal-glow); color: var(--ink); }
+  .navitem.active .nk { color: var(--signal); }
+  .navitem .nk { width: 17px; text-align: center; color: var(--ink-faint); font-family: var(--mono); font-size: 14px; flex: none; }
+  .navitem .count {
+    margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 20px; padding: 1px 7px;
+  }
+  .navitem.active .count { color: var(--signal); border-color: var(--signal-line); }
+
+  .rail-spacer { flex: 1; }
+
+  .sopcard { margin: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+  .sopcard .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sopcard .name { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+  .sopcard .meta { margin-top: 3px; font-size: 11px; color: var(--ink-faint); }
+  .pending {
+    margin-top: 10px; display: flex; align-items: center; gap: 7px;
+    font-size: 11.5px; color: var(--gated);
+  }
+  .pending .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gated); box-shadow: 0 0 8px var(--gated); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  .railfoot { padding: 11px 14px; border-top: 1px solid var(--line-soft); display: flex; align-items: center; justify-content: space-between; }
+  .stamp { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+  .themebtn {
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-dim);
+    border-radius: var(--radius-sm); width: 30px; height: 26px; cursor: pointer; font-size: 13px;
+    display: grid; place-items: center;
+  }
+  .themebtn:hover { color: var(--ink); border-color: var(--signal-line); }
+
+  /* ------- main ------- */
+  main { min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    display: flex; align-items: center; gap: 18px; padding: 16px 26px;
+    border-bottom: 1px solid var(--line); background: linear-gradient(var(--surface), var(--bg));
+    position: sticky; top: 0; z-index: 5;
+  }
+  .topbar .title { min-width: 0; }
+  .topbar h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+  .topbar .desc { margin-top: 2px; color: var(--ink-dim); font-size: 12.5px; }
+  .topbar-actions { margin-left: auto; display: flex; gap: 9px; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 8px 14px; border-radius: var(--radius-sm); border: 1px solid var(--line);
+    background: var(--surface-2); color: var(--ink); cursor: pointer;
+    font-family: var(--sans); font-size: 13px; font-weight: 500; white-space: nowrap;
+    transition: border-color .13s, background .13s, transform .05s;
+  }
+  .btn:hover { border-color: var(--ink-faint); background: var(--surface-3); }
+  .btn:active { transform: translateY(1px); }
+  .btn .k { font-family: var(--mono); font-size: 14px; line-height: 1; }
+  .btn.primary { background: var(--signal); color: var(--signal-ink); border-color: var(--signal); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.06); background: var(--signal); }
+  .btn.ghost { background: transparent; }
+  .btn:focus-visible, .navitem:focus-visible, .themebtn:focus-visible, .rulerow:focus-visible, .chip:focus-visible {
+    outline: 2px solid var(--signal); outline-offset: 2px;
+  }
+
+  .content { padding: 22px 26px 60px; max-width: 1180px; }
+
+  /* summary strip */
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
+  .stat { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 14px 15px; }
+  .stat .k { font-size: 25px; font-weight: 680; font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .stat .l { margin-top: 3px; }
+  .stat .sub { margin-top: 6px; font-size: 11.5px; color: var(--ink-dim); display: flex; align-items: center; gap: 6px; }
+  .stat.accent .k { color: var(--signal); }
+
+  /* ------- rules table ------- */
+  .tablewrap { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  .tablescroll { overflow-x: auto; }
+  table.rules { width: 100%; border-collapse: collapse; min-width: 780px; }
+  table.rules th {
+    text-align: left; padding: 10px 14px; background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+  }
+  table.rules td { padding: 13px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+  .rulerow { cursor: pointer; transition: background .12s; }
+  .rulerow:last-child td { border-bottom: 0; }
+  .rulerow:hover { background: var(--surface-2); }
+  .rulerow.sel { background: var(--signal-glow); box-shadow: inset 3px 0 0 var(--signal); }
+
+  .ord { display: flex; align-items: center; gap: 10px; color: var(--ink-faint); }
+  .ord .grip { color: var(--ink-faint); opacity: .5; font-size: 13px; cursor: grab; line-height: 1; }
+  .ord .n { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+
+  .who { display: flex; align-items: center; gap: 9px; }
+  .who .ic {
+    width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; flex: none;
+    font-family: var(--mono); font-size: 13px; border: 1px solid var(--line);
+  }
+  .who .ic.num { color: var(--signal); background: var(--signal-glow); border-color: var(--signal-line); }
+  .who .ic.any { color: var(--ink-dim); background: var(--surface-2); }
+  .who .ic.block { color: var(--block); background: var(--block-bg); border-color: var(--block); }
+  .who .lbl { font-family: var(--mono); font-size: 13px; }
+  .who .lbl small { display: block; font-family: var(--sans); font-size: 11px; color: var(--ink-faint); }
+
+  .secret { font-family: var(--mono); font-size: 12.5px; }
+  .secret .q { color: var(--signal); }
+  .secret .none { color: var(--ink-faint); font-style: italic; }
+  .secret small { display: block; font-family: var(--sans); font-size: 10.5px; color: var(--ink-faint); margin-top: 2px; }
+
+  .arrow { color: var(--signal-line); font-size: 15px; text-align: center; }
+
+  .grant { display: flex; flex-direction: column; gap: 5px; }
+  .time { font-family: var(--mono); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .packs { display: flex; flex-wrap: wrap; gap: 4px; }
+  .pchip {
+    font-family: var(--mono); font-size: 10.5px; padding: 1px 7px; border-radius: 5px;
+    background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-dim); white-space: nowrap;
+  }
+  .pchip.hidden-pack { color: var(--gated); border-color: var(--gated-bg); }
+
+  .persona { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
+
+  .lamp { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 600; padding: 3px 9px 3px 8px; border-radius: 20px; white-space: nowrap; }
+  .lamp .d { width: 7px; height: 7px; border-radius: 50%; }
+  .lamp.live { color: var(--live); background: var(--live-bg); } .lamp.live .d { background: var(--live); box-shadow: 0 0 7px var(--live); }
+  .lamp.gated{ color: var(--gated);background: var(--gated-bg);} .lamp.gated .d{ background: var(--gated); box-shadow: 0 0 7px var(--gated); }
+  .lamp.block{ color: var(--block);background: var(--block-bg);} .lamp.block .d{ background: var(--block); }
+  .lamp.draft{ color: var(--draft);background: var(--draft-bg);} .lamp.draft .d{ background: var(--draft); }
+
+  .unlockrow td { padding: 0 14px 12px 52px; border-bottom: 1px solid var(--line-soft); }
+  .unlockrow.last td { border-bottom: 0; }
+  .unlock {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink-dim);
+    background: var(--surface-2); border: 1px dashed var(--line); border-radius: 20px; padding: 4px 11px;
+  }
+  .unlock .mono { color: var(--signal); }
+
+  /* ------- generic panel / cards for other tabs ------- */
+  .panel { display: none; }
+  .panel.active { display: block; animation: fade .18s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 13px; }
+  .card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 15px 16px; }
+  .card h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 9px; }
+  .card .kind { margin-left: auto; }
+  .card .body { margin-top: 11px; color: var(--ink-dim); font-size: 12.5px; }
+  .card .srcs { margin-top: 11px; display: flex; flex-direction: column; gap: 5px; }
+  .src { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+  .card .foot { margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--line-soft); display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--ink-faint); }
+
+  .kindtag { font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--line); color: var(--ink-dim); }
+  .kindtag.docs { color: var(--tag-toml); border-color: color-mix(in srgb, var(--tag-toml) 40%, transparent); }
+  .kindtag.code { color: var(--tag-yaml); border-color: color-mix(in srgb, var(--tag-yaml) 40%, transparent); }
+  .kindtag.transcript { color: var(--signal); border-color: var(--signal-line); }
+
+  /* store tag chips (compiles-to) */
+  .store { font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+  .store.dynamo { color: var(--tag-dynamo); background: color-mix(in srgb, var(--tag-dynamo) 15%, transparent); }
+  .store.yaml   { color: var(--tag-yaml);   background: color-mix(in srgb, var(--tag-yaml) 15%, transparent); }
+  .store.toml   { color: var(--tag-toml);   background: color-mix(in srgb, var(--tag-toml) 15%, transparent); }
+  .store.ssm    { color: var(--tag-ssm);    background: color-mix(in srgb, var(--tag-ssm) 15%, transparent); }
+  .store.git    { color: var(--tag-git);    background: color-mix(in srgb, var(--tag-git) 16%, transparent); }
+  .badge-new { font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .06em; color: var(--signal); border: 1px solid var(--signal-line); border-radius: 4px; padding: 1px 5px; text-transform: uppercase; }
+
+  /* keys tab rows */
+  .keyrow { display: flex; align-items: center; gap: 14px; padding: 13px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .keyrow + .keyrow { margin-top: 9px; }
+  .keyrow .kname { font-family: var(--mono); font-size: 13px; }
+  .keyrow .kname small { display: block; font-family: var(--sans); font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
+  .keyval { font-family: var(--mono); font-size: 12.5px; color: var(--ink-dim); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 11px; letter-spacing: .06em; }
+  .keyrow .kact { margin-left: auto; display: flex; gap: 7px; }
+  .lockpill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-family: var(--mono); color: var(--tag-ssm); }
+
+  /* deploy tab */
+  .deploy-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+  .changeset { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+  .changeset .ch-head { padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--surface-2); display: flex; align-items: center; gap: 10px; }
+  .diff { font-family: var(--mono); font-size: 12px; }
+  .diff .line { display: flex; gap: 10px; padding: 7px 16px; border-bottom: 1px solid var(--line-soft); align-items: center; }
+  .diff .line:last-child { border-bottom: 0; }
+  .diff .sign { width: 13px; text-align: center; font-weight: 700; flex: none; }
+  .diff .add .sign { color: var(--live); } .diff .add { background: color-mix(in srgb, var(--live) 6%, transparent); }
+  .diff .mod .sign { color: var(--gated); } .diff .mod { background: color-mix(in srgb, var(--gated) 6%, transparent); }
+  .diff .path { color: var(--ink-dim); }
+  .diff .what { margin-left: auto; color: var(--ink-faint); font-size: 11px; }
+
+  .steps { display: flex; flex-direction: column; gap: 0; }
+  .step { display: flex; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line-soft); }
+  .step:last-child { border-bottom: 0; }
+  .step .num { font-family: var(--mono); width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; font-size: 11px; color: var(--ink-dim); flex: none; }
+  .step.done .num { color: var(--live); border-color: var(--live); }
+  .step .st-b h4 { margin: 0 0 2px; font-size: 13px; }
+  .step .st-b p { margin: 0; font-size: 12px; color: var(--ink-dim); }
+
+  .note { display: flex; gap: 10px; padding: 12px 14px; border: 1px solid var(--signal-line); background: var(--signal-glow); border-radius: var(--radius); font-size: 12.5px; color: var(--ink); margin-bottom: 20px; }
+  .note .i { color: var(--signal); font-family: var(--mono); }
+
+  /* ------- editor drawer ------- */
+  .scrim { position: fixed; inset: 0; background: rgba(6,9,13,.5); backdrop-filter: blur(2px); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
+  .scrim.open { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; top: 0; right: 0; height: 100vh; width: min(560px, 94vw);
+    background: var(--surface); border-left: 1px solid var(--line); box-shadow: var(--shadow);
+    transform: translateX(100%); transition: transform .24s cubic-bezier(.4,0,.2,1); z-index: 21;
+    display: flex; flex-direction: column;
+  }
+  .drawer.open { transform: none; }
+  .dr-head { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
+  .dr-head .x { margin-left: auto; }
+  .iconbtn { border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-dim); border-radius: var(--radius-sm); width: 30px; height: 30px; cursor: pointer; font-size: 15px; display: grid; place-items: center; }
+  .iconbtn:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .dr-body { padding: 6px 20px 20px; overflow-y: auto; flex: 1; }
+  .dr-foot { padding: 14px 20px; border-top: 1px solid var(--line); display: flex; gap: 9px; align-items: center; }
+
+  .flowstep { padding: 18px 0; border-bottom: 1px solid var(--line-soft); }
+  .flowstep:last-of-type { border-bottom: 0; }
+  .flowstep .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .flowstep .head .fx { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-family: var(--mono); font-size: 11px; background: var(--signal-glow); color: var(--signal); border: 1px solid var(--signal-line); }
+  .flowstep .head h4 { margin: 0; font-size: 13px; letter-spacing: -.01em; }
+  .flowstep .head .compiles { margin-left: auto; }
+
+  .field { display: flex; flex-direction: column; gap: 7px; }
+  .field + .field { margin-top: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-2); width: fit-content; }
+  .seg button { border: 0; background: transparent; color: var(--ink-dim); padding: 7px 13px; cursor: pointer; font-family: var(--sans); font-size: 12.5px; border-right: 1px solid var(--line); }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--signal); color: var(--signal-ink); font-weight: 600; }
+  .input, .selectish {
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    color: var(--ink); padding: 9px 12px; font-family: var(--mono); font-size: 13px; width: 100%;
+  }
+  .input:focus, .selectish:focus { outline: 2px solid var(--signal); outline-offset: 1px; border-color: transparent; }
+  .grantgrid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+  .grantgrid .field + .field { margin-top: 0; }
+  .flab { font-size: 11px; color: var(--ink-faint); font-family: var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; padding: 6px 11px; border-radius: 20px;
+    background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-dim); cursor: pointer;
+    transition: all .12s; user-select: none;
+  }
+  .chip:hover { border-color: var(--ink-faint); color: var(--ink); }
+  .chip.on { background: var(--signal-glow); border-color: var(--signal-line); color: var(--signal); }
+  .chip.on::before { content: "✓ "; }
+  .chip.hidden-pack.on { color: var(--gated); border-color: var(--gated); background: var(--gated-bg); }
+
+  .compiles-panel { margin-top: 4px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .compiles-panel .cp-head { padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 11px; }
+  .cp-line { display: flex; align-items: center; gap: 9px; padding: 8px 14px; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 11.5px; }
+  .cp-line:last-child { border-bottom: 0; }
+  .cp-line .cp-path { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cp-line .cp-tail { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+  .toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--surface-3); border: 1px solid var(--signal-line); color: var(--ink);
+    padding: 11px 18px; border-radius: var(--radius); box-shadow: var(--shadow);
+    display: flex; align-items: center; gap: 10px; font-size: 13px; opacity: 0; pointer-events: none;
+    transition: opacity .2s, transform .2s; z-index: 40;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast .i { color: var(--signal); font-family: var(--mono); }
+
+  .hint { color: var(--ink-faint); font-size: 11.5px; }
+  .addcard { border: 1px dashed var(--line); background: transparent; display: grid; place-items: center; min-height: 130px; cursor: pointer; color: var(--ink-dim); }
+  .addcard:hover { border-color: var(--signal-line); color: var(--signal); }
+  .addcard .plus { font-size: 24px; font-family: var(--mono); }
+
+  /* clickable stat (DID manager) */
+  .stat.clickable { cursor: pointer; transition: border-color .13s, transform .05s; }
+  .stat.clickable:hover { border-color: var(--signal-line); }
+  .stat.clickable:active { transform: translateY(1px); }
+  .stat.clickable:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  .stat .go { font-family: var(--mono); font-size: 15px; color: var(--ink-faint); float: right; }
+  .stat.clickable:hover .go { color: var(--signal); }
+
+  /* ------- modal (DID manager) ------- */
+  .modal {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -46%);
+    width: min(640px, 94vw); max-height: 86vh; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+    z-index: 31; display: flex; flex-direction: column;
+    opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s;
+  }
+  .modal.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+  .modal .m-head { padding: 15px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 11px; }
+  .modal .m-head h3 { margin: 0; font-size: 15px; }
+  .modal .m-body { padding: 13px 18px 18px; overflow-y: auto; }
+  .m-foot { padding: 13px 18px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 11px; }
+  .searchbox { display: flex; align-items: center; gap: 9px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 13px; }
+  .searchbox input { border: 0; background: transparent; color: var(--ink); font-family: var(--sans); font-size: 13px; width: 100%; outline: none; }
+  .searchbox:focus-within { border-color: var(--signal-line); }
+  .searchbox .mag { color: var(--ink-faint); font-family: var(--mono); font-size: 14px; }
+  .didrow { display: flex; align-items: center; gap: 13px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+  .didrow + .didrow { margin-top: 8px; }
+  .didrow .num { font-family: var(--mono); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  .didrow .dl { color: var(--ink-dim); font-size: 11.5px; margin-top: 2px; }
+  .didrow .da { margin-left: auto; display: flex; align-items: center; gap: 9px; }
+  .didrow .region { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); }
+  .talklamp { padding: 1px 7px !important; font-size: 10px !important; }
+  .didmeta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 5px; }
+  .didmeta span { font-size: 11px; color: var(--ink-faint); display: inline-flex; align-items: center; gap: 5px; }
+  .didmeta .val { font-family: var(--mono); color: var(--ink-dim); }
+  .didmeta .rulechip { font-family: var(--mono); color: var(--signal); border: 1px solid var(--signal-line); border-radius: 5px; padding: 0 6px; }
+  .ptags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 11px; }
+  .ptag { font-family: var(--mono); font-size: 10px; padding: 2px 8px; border-radius: 20px; background: var(--signal-glow); border: 1px solid var(--signal-line); color: var(--signal); }
+
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; }
+    .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
+    nav { flex-direction: row; flex-wrap: wrap; flex: 1; }
+    .rail-spacer { display: none; } .sopcard { display: none; }
+    .summary { grid-template-columns: repeat(2,1fr); } .deploy-grid { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="app">
+  <!-- ============ LEFT OPERATOR RAIL ============ -->
+  <aside class="rail">
+    <div class="brand">
+      <h1><span class="knob"></span> kv&nbsp;studio</h1>
+      <div class="sub eyebrow">voice routing console</div>
+    </div>
+
+    <nav id="nav">
+      <button class="navitem active" data-tab="rules"><span class="nk">⇉</span> Routing rules <span class="count">5</span></button>
+      <button class="navitem" data-tab="knowledge"><span class="nk">◆</span> Knowledge <span class="count">7</span></button>
+      <button class="navitem" data-tab="keys"><span class="nk">⚿</span> Keys &amp; secrets <span class="count">4</span></button>
+      <button class="navitem" data-tab="deploy"><span class="nk">▲</span> Save &amp; deploy</button>
+    </nav>
+
+    <div class="rail-spacer"></div>
+
+    <div class="sopcard">
+      <div class="row">
+        <span class="eyebrow">Active SOP</span>
+        <span class="lamp live"><span class="d"></span>live</span>
+      </div>
+      <div class="name" style="margin-top:8px">conference-2026</div>
+      <div class="meta">use1 · 4 DIDs · synced 6m ago</div>
+      <div class="pending"><span class="dot"></span> 3 uncommitted changes</div>
+    </div>
+
+    <div class="railfoot">
+      <span class="stamp" title="git SHA of this console build">build 5bb5185</span>
+      <button class="themebtn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main>
+    <div class="topbar">
+      <div class="title">
+        <h2 id="tabTitle">Routing rules</h2>
+        <div class="desc" id="tabDesc">First match wins, top to bottom. Each rule maps a caller + secret to time, knowledge and a persona.</div>
+      </div>
+      <div class="topbar-actions" id="tabActions">
+        <button class="btn ghost"><span class="k">⤓</span> Import from live</button>
+        <button class="btn primary"><span class="k">+</span> New rule</button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ---------- RULES TAB ---------- -->
+      <section class="panel active" id="panel-rules">
+        <div class="summary">
+          <div class="stat clickable" id="didStat" role="button" tabindex="0" aria-label="Manage inbound DIDs">
+            <div class="k">4 <span class="go">↗</span></div><div class="l eyebrow">DIDs mapped</div>
+            <div class="sub"><span class="lamp live" style="padding:1px 7px"><span class="d"></span></span> 613 · 725 · 986 · 347 · <span style="color:var(--signal)">manage</span></div>
+          </div>
+          <div class="stat accent">
+            <div class="k">5</div><div class="l eyebrow">Routing rules</div>
+            <div class="sub">2 gated · 2 open · 1 blocked</div>
+          </div>
+          <div class="stat">
+            <div class="k">7</div><div class="l eyebrow">Knowledge packs</div>
+            <div class="sub">6 public · 1 hidden</div>
+          </div>
+          <div class="stat">
+            <div class="k">4</div><div class="l eyebrow">Max concurrent</div>
+            <div class="sub">pstn-public-tier ceiling</div>
+          </div>
+        </div>
+
+        <div class="tablewrap">
+          <div class="tablescroll">
+            <table class="rules">
+              <thead>
+                <tr>
+                  <th style="width:70px">Order</th>
+                  <th style="width:190px">Who calls</th>
+                  <th style="width:170px">Secret</th>
+                  <th style="width:26px"></th>
+                  <th>Grant</th>
+                  <th style="width:110px">Persona</th>
+                  <th style="width:96px">Status</th>
+                </tr>
+              </thead>
+              <tbody id="ruleBody"><!-- rendered by JS --></tbody>
+            </table>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:12px">Drag <span class="mono">⣿</span> to reorder precedence · click any rule to open the editor · a blocked rule drops the call before it reaches the agent.</p>
+      </section>
+
+      <!-- ---------- KNOWLEDGE TAB ---------- -->
+      <section class="panel" id="panel-knowledge">
+        <div class="note"><span class="i">◆</span> <div>Packs are the allow-list a rule can draw from. A rule grants a <em>subset</em> of these; the runtime router still picks the active topic per utterance. Rebuild after editing a source — that runs the do-not-say scrubber and the token-cache floor.</div></div>
+        <div class="cards" id="packCards"><!-- rendered by JS --></div>
+      </section>
+
+      <!-- ---------- KEYS TAB ---------- -->
+      <section class="panel" id="panel-keys">
+        <div class="note"><span class="i">⚿</span> <div>Secrets never live in the SOP or in git — the console stores only a <em>reference</em> to the encrypted value. Editing here writes to SSM SecureString / SOPS and rotates the referenced parameter.</div></div>
+        <div id="keyList"><!-- rendered by JS --></div>
+      </section>
+
+      <!-- ---------- DEPLOY TAB ---------- -->
+      <section class="panel" id="panel-deploy">
+        <div class="note"><span class="i">▲</span> <div>A <strong>SOP</strong> is a named, versioned snapshot of every rule, knowledge binding and secret reference. <em>Save</em> commits it to GitHub as a reviewable diff; <em>Deploy</em> applies the changeset to DynamoDB and pushes the YAML/TOML.</div></div>
+        <div class="deploy-grid">
+          <div>
+            <div class="eyebrow" style="margin-bottom:10px">Pending changeset · conference-2026</div>
+            <div class="changeset">
+              <div class="ch-head"><span class="lamp gated"><span class="d"></span>3 changes</span> <span class="hint">since last deploy · 6m ago</span></div>
+              <div class="diff">
+                <div class="line mod"><span class="sign">~</span><span class="path">Tier · recruiting-30 · sessionMaxSeconds</span><span class="what">1800 → 1200</span></div>
+                <div class="line add"><span class="sign">+</span><span class="path">AccessCode · phone 613-555-0134 → greenhouse</span><span class="what">new mapping</span></div>
+                <div class="line mod"><span class="sign">~</span><span class="path">router/topic-map.yaml · greenhouse.keywords</span><span class="what">+2 terms</span></div>
+              </div>
+            </div>
+            <div style="display:flex; gap:9px; margin-top:16px">
+              <button class="btn" id="saveSop"><span class="k">⎘</span> Save as SOP</button>
+              <button class="btn primary" id="deployBtn"><span class="k">▲</span> Deploy to use1</button>
+            </div>
+          </div>
+          <div>
+            <div class="eyebrow" style="margin-bottom:10px">On deploy</div>
+            <div class="card">
+              <div class="steps">
+                <div class="step done"><div class="num">✓</div><div class="st-b"><h4>Validate SOP</h4><p>Schema, secret refs resolve, no orphan packs.</p></div></div>
+                <div class="step"><div class="num">1</div><div class="st-b"><h4>Write DynamoDB</h4><p>Codes, tiers, phone mappings via kv key templates.</p></div></div>
+                <div class="step"><div class="num">2</div><div class="st-b"><h4>Commit YAML / TOML</h4><p>manifest, topic-map, gate config → PR on main.</p></div></div>
+                <div class="step"><div class="num">3</div><div class="st-b"><h4>Refresh knowledge</h4><p>refresh_knowledge.py if any pack source changed.</p></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- ============ EDITOR DRAWER ============ -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="dr-head">
+    <span class="lamp" id="drStatus"><span class="d"></span><span></span></span>
+    <div><div class="eyebrow">Editing rule</div><div class="mono" id="drTitle" style="font-size:14px; margin-top:2px"></div></div>
+    <button class="iconbtn x" id="drClose" aria-label="Close editor">✕</button>
+  </div>
+  <div class="dr-body" id="drBody"><!-- rendered by JS --></div>
+  <div class="dr-foot">
+    <button class="btn ghost" id="drCancel">Cancel</button>
+    <span style="flex:1"></span>
+    <button class="btn"><span class="k">↻</span> Test call</button>
+    <button class="btn primary" id="drSave"><span class="k">✓</span> Stage change</button>
+  </div>
+</aside>
+
+<!-- ============ DID MANAGER MODAL ============ -->
+<div class="scrim" id="didScrim"></div>
+<div class="modal" id="didModal" role="dialog" aria-modal="true" aria-label="Manage inbound DIDs">
+  <div class="m-head">
+    <h3>Inbound DIDs</h3>
+    <span class="hint">numbers people dial to reach the agent</span>
+    <button class="iconbtn" id="didClose" aria-label="Close" style="margin-left:auto">✕</button>
+  </div>
+  <div class="m-body">
+    <div class="searchbox"><span class="mag">⌕</span><input id="didSearch" placeholder="Search by number, city, or label…" aria-label="Search DIDs"></div>
+    <div id="didList"></div>
+  </div>
+  <div class="m-foot">
+    <button class="btn primary" id="didAdd"><span class="k">+</span> Add DID</button>
+    <span class="hint">provisioned via VoIP.ms · caller-id then routes through the rules above</span>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="i">✓</span><span id="toastMsg"></span></div>
+
+<script>
+/* ---------------- fake data (klanker-voice shaped) ---------------- */
+const PACKS = [
+  { id:"klanker-maker", name:"klanker-maker", kind:"docs", public:true,  tokens:"5.1k", updated:"2d ago", body:"The km platform — agents, sandboxes, sidecar orchestration.", srcs:[["docs","km/README.md"],["code","km/internal/"]] },
+  { id:"defcon-run-34", name:"defcon.run.34", kind:"docs", public:true,  tokens:"6.8k", updated:"2d ago", body:"DEF CON Run — AgentX-founded event, DC34 “Agency” theme.", srcs:[["docs","defcon.run/docs/"],["diagram","arch.excalidraw"]] },
+  { id:"meshtk",        name:"meshtk",        kind:"code", public:true,  tokens:"3.4k", updated:"9d ago", body:"Mesh toolkit — networking + node fabric utilities.", srcs:[["code","meshtk/"]] },
+  { id:"tiogo",         name:"tiogo",         kind:"code", public:true,  tokens:"2.9k", updated:"9d ago", body:"Tenable.io Go client and CLI.", srcs:[["code","tiogo/"]] },
+  { id:"kvmlab",        name:"kvmlab",        kind:"docs", public:true,  tokens:"4.2k", updated:"5d ago", body:"Homelab KVM / virtualization notes and provisioning.", srcs:[["docs","kvmlab/notes/"]] },
+  { id:"klanker-voice", name:"klanker-voice", kind:"docs", public:true,  tokens:"5.6k", updated:"1d ago", body:"This project — the cascaded voice pipeline itself.", srcs:[["docs","apps/voice/docs/"]] },
+  { id:"greenhouse",    name:"greenhouse", kind:"transcript", public:false, tokens:"7.9k", updated:"3d ago", body:"Hidden résumé pack — KPH background for recruiting mode. The transcripts do double duty: facts about Kurt, and the style layer that shapes how he speaks.", srcs:[["transcript","14 clips · 82 min · nova-3"],["docs","kph-resume.md"]], tags:["style layer","sticky topic","recruiting"] },
+];
+const PACK_LABEL = Object.fromEntries(PACKS.map(p => [p.id, p.name]));
+
+const PERSONAS = ["Concierge (KPH)", "Recruiting (KPH)"];
+
+const RULES = [
+  { id:"r1", status:"live",
+    who:{type:"number", numbers:["613-555-0134"], label:"613-555-0134", note:"Kurt's cell"},
+    secret:{mode:"passphrase", value:"greenhouse"},
+    unlocks:[], grant:{minutes:30, period:60, concurrency:1, tier:"recruiting-30"},
+    knowledge:["greenhouse"], persona:"Recruiting (KPH)" },
+  { id:"r2", status:"live",
+    who:{type:"number", numbers:["613-555-0134"], label:"613-555-0134", note:"Kurt's cell"},
+    secret:{mode:"none"},
+    unlocks:[], grant:{minutes:10, period:60, concurrency:1, tier:"known-10"},
+    knowledge:["klanker-maker","defcon-run-34","klanker-voice"], persona:"Concierge (KPH)" },
+  { id:"r3", status:"gated",
+    who:{type:"any", label:"unknown caller", note:"any DID not mapped above"},
+    secret:{mode:"passphrase", value:"skunkworks"},
+    unlocks:[{phrase:"open the lab", add:["kvmlab"]}],
+    grant:{minutes:5, period:30, concurrency:2, tier:"invited-5"},
+    knowledge:["kvmlab","tiogo","meshtk"], persona:"Concierge (KPH)" },
+  { id:"r4", status:"live",
+    who:{type:"any", label:"anyone", note:"public fallback"},
+    secret:{mode:"none"},
+    unlocks:[], grant:{minutes:3, period:15, concurrency:4, tier:"pstn-public-tier"},
+    knowledge:["klanker-maker"], persona:"Concierge (KPH)" },
+  { id:"r5", status:"block",
+    who:{type:"block", numbers:["+1 255-000-1191"], label:"+1 255-000-1191", note:"repeat abuse"},
+    secret:{mode:"none"},
+    unlocks:[], grant:{minutes:0, period:0, concurrency:0, tier:"—"},
+    knowledge:[], persona:"—" },
+];
+
+const SECRETS = [
+  { name:"TELEPHONY_PASSPHRASE_WORDS", note:"spoken gate · rules 1,3", store:"SSM",
+    masked:"••••••••••• · •••••••••• · •••••••••", plain:"“hack the planet” · “greenhouse” · “skunkworks”" },
+  { name:"TELEPHONY_ACCESS_PIN", note:"DTMF gate fallback", store:"SSM",
+    masked:"•••• (4-digit)", plain:"4471" },
+  { name:"TELEPHONY_ENDPOINT_AUTH_TOKEN", note:"voice ↔ auth /tel mint", store:"SSM",
+    masked:"••••••••••••••••••••", plain:"kmv_tel_8f3a91c0…d21b" },
+  { name:"elevenlabs / deepgram / anthropic", note:"pipeline API keys", store:"SOPS",
+    masked:"3 keys · sealed", plain:"elevenlabs · deepgram · anthropic (3 SOPS-sealed keys)" },
+];
+
+const DIDS = [
+  { num:"+1 613-555-0142", label:"Ottawa · primary",     region:"Ottawa, ON",   note:"main conference line",     status:"live", rule:"04 · public", greeting:"standard concierge open" },
+  { num:"+1 725-555-0108", label:"Las Vegas · DEF CON",  region:"Las Vegas, NV", note:"DC34 handout number",      status:"live", rule:"03 · invited", greeting:"“DEF CON — say the word.”" },
+  { num:"+1 986-555-0170", label:"US · spare",           region:"United States",note:"overflow / spare",         status:"live", rule:"04 · public", greeting:"standard concierge open" },
+  { num:"+1 347-555-0199", label:"New York",             region:"New York, NY", note:"east-coast payphone route", status:"live", rule:"04 · public", greeting:"standard concierge open" },
+];
+
+/* ---------------- helpers ---------------- */
+const $ = s => document.querySelector(s);
+const el = (t, c, h) => { const n = document.createElement(t); if (c) n.className = c; if (h != null) n.innerHTML = h; return n; };
+const statusLabel = { live:"live", gated:"gated", block:"blocked", draft:"draft" };
+function fmtTime(m){ return m === 0 ? "—" : m + "m"; }
+
+/* ---------------- render rules table ---------------- */
+function whoIconClass(t){ return t === "number" ? "num" : t === "block" ? "block" : "any"; }
+function whoGlyph(t){ return t === "number" ? "☎" : t === "block" ? "⦸" : "✱"; }
+
+function renderRules(){
+  const body = $("#ruleBody"); body.innerHTML = "";
+  RULES.forEach((r, i) => {
+    const tr = el("tr", "rulerow"); tr.tabIndex = 0; tr.dataset.id = r.id;
+    const secretHtml = r.secret.mode === "none"
+      ? `<span class="none">no secret</span>`
+      : `<span class="q">“</span>${r.secret.value}<span class="q">”</span><small>${r.secret.mode === "passphrase" ? "spoken passphrase" : "DTMF pin"}</small>`;
+    const packsHtml = r.knowledge.length
+      ? r.knowledge.map(k => `<span class="pchip ${k==='greenhouse'?'hidden-pack':''}">${PACK_LABEL[k]}</span>`).join("")
+      : `<span class="pchip" style="opacity:.5">none</span>`;
+    tr.innerHTML = `
+      <td><div class="ord"><span class="grip" title="drag to reorder">⣿</span><span class="n">${String(i+1).padStart(2,"0")}</span></div></td>
+      <td><div class="who">
+        <span class="ic ${whoIconClass(r.who.type)}">${whoGlyph(r.who.type)}</span>
+        <span class="lbl">${r.who.label}<small>${r.who.note}</small></span>
+      </div></td>
+      <td><div class="secret">${secretHtml}</div></td>
+      <td class="arrow">→</td>
+      <td><div class="grant">
+        <span class="time">${fmtTime(r.grant.minutes)}${r.grant.minutes?` · ${r.grant.tier}`:""}</span>
+        <span class="packs">${packsHtml}</span>
+      </div></td>
+      <td><span class="persona">${r.persona}</span></td>
+      <td><span class="lamp ${r.status}"><span class="d"></span>${statusLabel[r.status]}</span></td>`;
+    tr.addEventListener("click", () => openDrawer(r.id));
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDrawer(r.id); } });
+    body.appendChild(tr);
+
+    if (r.unlocks.length){
+      const ur = el("tr", "unlockrow" + (i === RULES.length-1 ? " last" : ""));
+      ur.innerHTML = `<td colspan="7"><span class="unlock">⤷ mid-call, caller says <span class="mono">“${r.unlocks[0].phrase}”</span> → unlock <span class="mono">+${r.unlocks[0].add.map(a=>PACK_LABEL[a]).join(", ")}</span></span></td>`;
+      body.appendChild(ur);
+    }
+  });
+}
+
+/* ---------------- render knowledge ---------------- */
+function packUsage(id){
+  let n = 0;
+  RULES.forEach(r => { if (r.knowledge.includes(id)) n++; r.unlocks.forEach(u => { if (u.add.includes(id)) n++; }); });
+  return n;
+}
+function renderPacks(){
+  const wrap = $("#packCards"); wrap.innerHTML = "";
+  PACKS.forEach(p => {
+    const c = el("div", "card");
+    const uses = packUsage(p.id);
+    const talk = p.public
+      ? `<span class="lamp live talklamp"><span class="d"></span>talkable</span>`
+      : `<span class="lamp gated talklamp">hidden</span>`;
+    c.innerHTML = `
+      <h3>${p.name} ${talk}
+        <span class="kind"><span class="kindtag ${p.kind}">${p.kind}</span></span></h3>
+      <div class="body">${p.body}</div>
+      <div class="srcs">${p.srcs.map(s => `<div class="src"><span class="kindtag ${s[0]}" style="font-size:9px">${s[0]}</span> ${s[1]}</div>`).join("")}</div>
+      ${p.tags ? `<div class="ptags">${p.tags.map(t => `<span class="ptag">${t}</span>`).join("")}</div>` : ""}
+      <div class="foot"><span>${p.tokens} tokens · used by ${uses} rule${uses===1?"":"s"}</span><span class="store yaml">manifest.yaml</span></div>`;
+    wrap.appendChild(c);
+  });
+  const add = el("div", "card addcard");
+  add.innerHTML = `<div style="text-align:center"><div class="plus">+</div><div style="font-size:12.5px; margin-top:4px">Add knowledge source</div><div class="hint" style="margin-top:3px">path · docs / code / transcript</div></div>`;
+  add.addEventListener("click", () => toast("New-source form would open (path + kind + public flag)"));
+  wrap.appendChild(add);
+}
+
+/* ---------------- render keys ---------------- */
+function renderKeys(){
+  const list = $("#keyList"); list.innerHTML = "";
+  SECRETS.forEach(s => {
+    const row = el("div", "keyrow");
+    row.innerHTML = `
+      <div class="kname">${s.name}<small>${s.note}</small></div>
+      <span class="keyval">${s.masked}</span>
+      <div class="kact">
+        <button class="btn ghost btnreveal" aria-pressed="false">Reveal</button>
+        <span class="lockpill">⚿ ${s.store}</span>
+        <button class="btn ghost btnrotate"><span class="k">↻</span> Rotate</button>
+      </div>`;
+    const val = row.querySelector(".keyval");
+    const rev = row.querySelector(".btnreveal");
+    let shown = false;
+    rev.addEventListener("click", () => {
+      shown = !shown;
+      val.textContent = shown ? s.plain : s.masked;
+      val.classList.toggle("revealed", shown);
+      rev.textContent = shown ? "Hide" : "Reveal";
+      rev.setAttribute("aria-pressed", String(shown));
+    });
+    row.querySelector(".btnrotate").addEventListener("click", () => toast(`Rotating ${s.name.split(" ")[0]} in ${s.store}…`));
+    list.appendChild(row);
+  });
+}
+
+/* ---------------- DID manager ---------------- */
+function renderDids(q = ""){
+  const list = $("#didList"); list.innerHTML = "";
+  const ql = q.trim().toLowerCase();
+  const rows = DIDS.filter(d => !ql || (d.num + d.label + d.region + d.note).toLowerCase().includes(ql));
+  if (!rows.length){ list.appendChild(el("div", "hint", `No DIDs match “${q}”.`)); return; }
+  rows.forEach(d => {
+    const row = el("div", "didrow");
+    row.innerHTML = `
+      <span class="ic num" style="width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-family:var(--mono);border:1px solid var(--signal-line);color:var(--signal);background:var(--signal-glow);flex:none">☎</span>
+      <div style="min-width:0">
+        <div class="num">${d.num}</div>
+        <div class="dl">${d.label} · ${d.note}</div>
+        <div class="didmeta">
+          <span>opens with <span class="val">${d.greeting}</span></span>
+          <span>default → <span class="rulechip">${d.rule}</span></span>
+        </div>
+      </div>
+      <div class="da">
+        <span class="region">${d.region}</span>
+        <span class="lamp ${d.status}"><span class="d"></span>${statusLabel[d.status]}</span>
+        <button class="btn ghost btnedit"><span class="k">✎</span> Edit</button>
+      </div>`;
+    row.querySelector(".btnedit").addEventListener("click", () => toast(`Edit ${d.num} — route, greeting, provider`));
+    list.appendChild(row);
+  });
+}
+function openDids(){
+  renderDids(""); $("#didSearch").value = "";
+  $("#didScrim").classList.add("open"); $("#didModal").classList.add("open");
+  setTimeout(() => $("#didSearch").focus(), 60);
+}
+function closeDids(){ $("#didScrim").classList.remove("open"); $("#didModal").classList.remove("open"); }
+
+/* ---------------- editor drawer ---------------- */
+const storeTag = (cls, path) => `<span class="store ${cls}">${path}</span>`;
+function openDrawer(id){
+  const r = RULES.find(x => x.id === id);
+  document.querySelectorAll(".rulerow").forEach(x => x.classList.toggle("sel", x.dataset.id === id));
+  const st = $("#drStatus"); st.className = "lamp " + r.status;
+  st.innerHTML = `<span class="d"></span><span>${statusLabel[r.status]}</span>`;
+  $("#drTitle").textContent = `${r.who.label}  ·  ${r.secret.mode==="none" ? "no secret" : "“"+r.secret.value+"”"}`;
+
+  const isBlock = r.who.type === "block";
+  const body = $("#drBody");
+  body.innerHTML = `
+    <!-- WHO -->
+    <div class="flowstep">
+      <div class="head"><span class="fx">1</span><h4>Who calls</h4>
+        <span class="compiles">${storeTag("dynamo","DynamoDB · AccessCode.phone")}</span></div>
+      <div class="field">
+        <div class="seg" data-seg="who">
+          <button class="${r.who.type==='number'?'on':''}">Known number</button>
+          <button class="${r.who.type==='any'?'on':''}">Unknown / any</button>
+          <button class="${r.who.type==='block'?'on':''}">Block</button>
+        </div>
+      </div>
+      <div class="field"><span class="flab">E.164 numbers</span>
+        <input class="input" value="${(r.who.numbers||[]).join(', ') || 'any caller-id'}" ${r.who.type==='any'?'disabled':''}>
+        <span class="hint">Resolved against the sparse byPhone index at call time.</span>
+      </div>
+    </div>
+
+    <!-- SECRET -->
+    <div class="flowstep">
+      <div class="head"><span class="fx">2</span><h4>Secret</h4>
+        <span class="compiles">${storeTag("ssm","SSM")} ${storeTag("toml","gate_mode")}</span></div>
+      <div class="field">
+        <div class="seg" data-seg="secret">
+          <button class="${r.secret.mode==='passphrase'?'on':''}">Spoken phrase</button>
+          <button class="${r.secret.mode==='dtmf'?'on':''}">DTMF pin</button>
+          <button class="${r.secret.mode==='none'?'on':''}">None</button>
+        </div>
+      </div>
+      ${r.secret.mode!=='none' ? `<div class="field"><span class="flab">${r.secret.mode==='passphrase'?'passphrase words':'pin'}</span>
+        <input class="input" value="${r.secret.value||''}"></div>` : `<span class="hint">Open route — no gate. Anyone matching “who” connects.</span>`}
+      <div class="field"><span class="flab">Mid-call spoken unlocks</span>
+        ${r.unlocks.length ? r.unlocks.map(u=>`<input class="input" value="say “${u.phrase}” → + ${u.add.map(a=>PACK_LABEL[a]).join(', ')}">`).join('') : `<span class="hint">None. Add a phrase to grant extra packs during the call →  ${storeTag("yaml","topic-map.yaml")}</span>`}
+      </div>
+    </div>
+
+    <!-- GRANT -->
+    <div class="flowstep">
+      <div class="head"><span class="fx">3</span><h4>Grant · time</h4>
+        <span class="compiles">${storeTag("dynamo","DynamoDB · Tier")}</span></div>
+      <div class="grantgrid">
+        <div class="field"><span class="flab">Session</span><input class="input" value="${r.grant.minutes} min" ${isBlock?'disabled':''}></div>
+        <div class="field"><span class="flab">Period cap</span><input class="input" value="${r.grant.period} min" ${isBlock?'disabled':''}></div>
+        <div class="field"><span class="flab">Concurrent</span><input class="input" value="${r.grant.concurrency}" ${isBlock?'disabled':''}></div>
+      </div>
+      <div class="field" style="margin-top:10px"><span class="flab">Tier id</span><input class="input" value="${r.grant.tier}" ${isBlock?'disabled':''}></div>
+    </div>
+
+    <!-- KNOWLEDGE -->
+    <div class="flowstep">
+      <div class="head"><span class="fx">4</span><h4>Knowledge scope</h4>
+        <span class="compiles">${storeTag("yaml","manifest.yaml")} <span class="badge-new">new binding</span></span></div>
+      <div class="field"><span class="flab">Allowed packs — subset of the library</span>
+        <div class="chips" id="drChips">
+          ${PACKS.map(p=>`<span class="chip ${r.knowledge.includes(p.id)?'on':''} ${p.public?'':'hidden-pack'}" data-pack="${p.id}" tabindex="0">${p.name}</span>`).join('')}
+        </div>
+        <span class="hint">The runtime router still chooses the active topic per utterance — this bounds what it may reach.</span>
+      </div>
+    </div>
+
+    <!-- PERSONA -->
+    <div class="flowstep">
+      <div class="head"><span class="fx">5</span><h4>Persona</h4>
+        <span class="compiles">${storeTag("git","prompts/")} <span class="badge-new">new binding</span></span></div>
+      <div class="field">
+        <div class="seg" data-seg="persona">
+          ${PERSONAS.map(p=>`<button class="${r.persona===p?'on':''}">${p}</button>`).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- compiles-to summary -->
+    <div class="compiles-panel">
+      <div class="cp-head eyebrow">This rule compiles to</div>
+      <div class="cp-line"><span class="store dynamo">dynamo</span><span class="cp-path">AccessCode + Tier + byPhone GSI</span><span class="cp-tail">${r.status==='block'?'blocklist':'2 writes'}</span></div>
+      <div class="cp-line"><span class="store ssm">ssm</span><span class="cp-path">/kmv/secrets/use1/telephony/…</span><span class="cp-tail">${r.secret.mode==='none'?'unused':'ref'}</span></div>
+      <div class="cp-line"><span class="store yaml">yaml</span><span class="cp-path">manifest.yaml · topic-map.yaml</span><span class="cp-tail">${r.knowledge.length} packs</span></div>
+      <div class="cp-line"><span class="store toml">toml</span><span class="cp-path">telephony.toml · gate_mode</span><span class="cp-tail">${r.secret.mode==='none'?'open':r.secret.mode}</span></div>
+    </div>`;
+
+  // wire segmented controls (visual)
+  body.querySelectorAll(".seg").forEach(seg => seg.querySelectorAll("button").forEach(b =>
+    b.addEventListener("click", () => { seg.querySelectorAll("button").forEach(x=>x.classList.remove("on")); b.classList.add("on"); })));
+  // wire knowledge chips (toggle)
+  body.querySelectorAll("#drChips .chip").forEach(ch => {
+    const tog = () => ch.classList.toggle("on");
+    ch.addEventListener("click", tog);
+    ch.addEventListener("keydown", e => { if (e.key==="Enter"||e.key===" ") { e.preventDefault(); tog(); } });
+  });
+
+  $("#scrim").classList.add("open");
+  $("#drawer").classList.add("open");
+  $("#drawer").setAttribute("aria-hidden","false");
+}
+function closeDrawer(){
+  $("#scrim").classList.remove("open");
+  $("#drawer").classList.remove("open");
+  $("#drawer").setAttribute("aria-hidden","true");
+  document.querySelectorAll(".rulerow").forEach(x => x.classList.remove("sel"));
+}
+
+/* ---------------- tabs ---------------- */
+const TAB_META = {
+  rules:{ t:"Routing rules", d:"First match wins, top to bottom. Each rule maps a caller + secret to time, knowledge and a persona.",
+    a:`<button class="btn ghost"><span class="k">⤓</span> Import from live</button><button class="btn primary"><span class="k">+</span> New rule</button>` },
+  knowledge:{ t:"Knowledge", d:"The pack library every rule draws from. Add sources, mark public, rebuild.",
+    a:`<button class="btn"><span class="k">↻</span> Rebuild all</button><button class="btn primary"><span class="k">+</span> Add source</button>` },
+  keys:{ t:"Keys & secrets", d:"Encrypted references only — provision and rotate gate secrets and API keys.",
+    a:`<button class="btn primary"><span class="k">+</span> Provision secret</button>` },
+  deploy:{ t:"Save & deploy", d:"Snapshot the whole config as an SOP, review the diff, then apply it live.",
+    a:`` },
+};
+function switchTab(tab){
+  document.querySelectorAll(".navitem").forEach(n => n.classList.toggle("active", n.dataset.tab === tab));
+  document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-"+tab));
+  $("#tabTitle").textContent = TAB_META[tab].t;
+  $("#tabDesc").textContent = TAB_META[tab].d;
+  $("#tabActions").innerHTML = TAB_META[tab].a;
+}
+$("#nav").addEventListener("click", e => { const b = e.target.closest(".navitem"); if (b) switchTab(b.dataset.tab); });
+
+/* ---------------- theme toggle ---------------- */
+$("#themeBtn").addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : cur === "light" ? "dark"
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", next);
+});
+
+/* ---------------- toast ---------------- */
+let toastT;
+function toast(msg){ $("#toastMsg").textContent = msg; $("#toast").classList.add("show"); clearTimeout(toastT); toastT = setTimeout(()=>$("#toast").classList.remove("show"), 2600); }
+
+/* ---------------- wire-up ---------------- */
+$("#drClose").addEventListener("click", closeDrawer);
+$("#drCancel").addEventListener("click", closeDrawer);
+$("#scrim").addEventListener("click", closeDrawer);
+$("#drSave").addEventListener("click", () => { closeDrawer(); toast("Change staged — 4 uncommitted. Review in Save & deploy."); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); closeDids(); } });
+$("#saveSop").addEventListener("click", () => toast("SOP conference-2026 committed to GitHub · PR #48"));
+$("#deployBtn").addEventListener("click", () => toast("Deploying to use1 — DynamoDB writes + YAML push queued"));
+
+// DID manager wiring
+$("#didStat").addEventListener("click", openDids);
+$("#didStat").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDids(); } });
+$("#didClose").addEventListener("click", closeDids);
+$("#didScrim").addEventListener("click", closeDids);
+$("#didSearch").addEventListener("input", e => renderDids(e.target.value));
+$("#didAdd").addEventListener("click", () => toast("Add-DID form would open (number · region · provider · default rule)"));
+
+renderRules(); renderPacks(); renderKeys();
+</script>

@@ -1,0 +1,27 @@
+# Golden fixture for repofile_writer_test.go — mirrors the real
+# apps/voice/configs/telephony.toml [telephony] block shape (inline
+# comments, a trailing section after [telephony] to prove block-boundary
+# detection doesn't bleed into it) so WriteTelephonyGate's line-rewrite is
+# exercised against every edge case the real file has.
+
+label = "KPH(telephony-harness)"
+
+[stt]
+provider = "deepgram-nova3"
+model = "nova-3-general"
+
+[persona]
+prompt_path = "../prompts/concierge.md"
+greet_first = false
+
+[telephony]                         # Phase 11 (D-09): media + §24 answer-gate knobs ONLY.
+enabled = true                      # THE difference from pipeline.toml — this is the telephony harness
+provider = "voipms"                 # upstream SIP trunk provider (Phase 12+)
+max_concurrent_calls = 1             # soft cap on simultaneous ARI calls this controller accepts
+require_gate = true                  # master switch; false is a test/dev-only escape hatch
+gate_mode = "either"                 # "dtmf" | "passphrase" | "either" (D-05b: both factors, either unlocks)
+gate_window_seconds = 10             # fail-closed goodbye + hangup if neither factor lands in time (D-05d)
+unlock_tier_id = "kph-tier"          # tier granted on successful gate unlock (minimal identity seam, D-05a)
+
+[extra]
+foo = "bar"

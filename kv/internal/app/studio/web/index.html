@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kv studio — voice routing console</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Top-of-page error banner. Hidden by default; app.js reveals this (naming
+     the region + profile) whenever /api/config returns a non-2xx response or
+     a payload carrying a non-null `error` — the console never shows a blank
+     screen on a store failure. -->
+<div id="errorBanner" class="error-banner" role="alert" hidden>
+  <span class="i">&#9888;</span>
+  <span id="errorBannerText"></span>
+</div>
+
+<div class="app">
+  <!-- ============ LEFT OPERATOR RAIL ============ -->
+  <aside class="rail">
+    <div class="brand">
+      <h1><span class="knob"></span> kv&nbsp;studio</h1>
+      <div class="sub eyebrow">voice routing console</div>
+    </div>
+
+    <nav id="nav">
+      <button class="navitem active" data-tab="rules"><span class="nk">&#8649;</span> Routing rules <span class="count" id="navCountRules">0</span></button>
+      <button class="navitem" data-tab="knowledge"><span class="nk">&#9670;</span> Knowledge <span class="count" id="navCountKnowledge">0</span></button>
+      <button class="navitem" data-tab="keys"><span class="nk">&#9887;</span> Keys &amp; secrets <span class="count" id="navCountKeys">0</span></button>
+      <button class="navitem" data-tab="deploy"><span class="nk">&#9650;</span> Save &amp; deploy</button>
+    </nav>
+
+    <div class="rail-spacer"></div>
+
+    <div class="railfoot">
+      <span class="stamp" id="metaStamp" title="provenance of the imported live config">not yet imported</span>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main>
+    <div class="topbar">
+      <div class="title">
+        <h2 id="tabTitle">Routing rules</h2>
+        <div class="desc" id="tabDesc">First match wins, top to bottom. Each rule maps a caller + secret to time, knowledge and a persona.</div>
+      </div>
+      <div class="topbar-actions" id="tabActions">
+        <button class="btn ghost" id="reloadBtn" type="button"><span class="k">&#8595;</span> Import from live</button>
+        <button class="btn primary" id="newRuleBtn" type="button"><span class="k">+</span> New rule</button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ---------- RULES TAB ---------- -->
+      <section class="panel active" id="panel-rules">
+        <div class="summary" id="summaryStrip"><!-- rendered by app.js --></div>
+
+        <div class="tablewrap">
+          <div class="tablescroll">
+            <table class="rules">
+              <thead>
+                <tr>
+                  <th style="width:72px">Order</th>
+                  <th style="width:190px">Who calls</th>
+                  <th style="width:190px">Secret</th>
+                  <th style="width:26px"></th>
+                  <th>Grant</th>
+                  <th style="width:150px">Persona</th>
+                </tr>
+              </thead>
+              <tbody id="ruleBody"><!-- rendered by app.js --></tbody>
+            </table>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:12px">Click a row to edit &mdash; use the &uarr;&darr; controls to reorder. Order here is <strong>authoring / presentation order only</strong> and does not change how a call is routed at runtime.</p>
+
+        <div class="didsection">
+          <div class="didsection-head">
+            <div class="eyebrow">Inbound DIDs</div>
+            <button class="btn ghost" id="manageDidsBtn" type="button"><span class="k">&#9782;</span> Manage DIDs</button>
+          </div>
+          <div id="didList"><!-- rendered by app.js --></div>
+        </div>
+      </section>
+
+      <!-- ---------- KNOWLEDGE TAB ---------- -->
+      <section class="panel" id="panel-knowledge">
+        <div class="note"><span class="i">&#9670;</span> <div>Packs are the allow-list a rule can draw from &mdash; imported from <span class="mono">manifest.yaml</span>. Add a source below, then rebuild to regenerate the pack (do-not-say scrub + token-cache floor). A rebuild never auto-commits &mdash; review the diff yourself.</div></div>
+
+        <div class="rebuild-toolbar">
+          <button class="btn primary" id="rebuildBtn" type="button"><span class="k">&#8635;</span> Rebuild knowledge</button>
+          <label class="skipdistill"><input type="checkbox" id="rebuildSkipDistill"> Index only (skip distill)</label>
+          <span class="hint" id="rebuildStatus"></span>
+        </div>
+        <div id="rebuildResult" class="rebuild-result" hidden><!-- rendered by app.js --></div>
+
+        <div class="cards" id="packCards"><!-- rendered by app.js --></div>
+      </section>
+
+      <!-- ---------- KEYS TAB ---------- -->
+      <section class="panel" id="panel-keys">
+        <div class="note"><span class="i">&#9887;</span> <div>Secrets never leave SSM &mdash; a reveal is fetched on demand and shown only in this page, never written to any browser storage. Hide (or navigate away) clears it.</div></div>
+
+        <div class="eyebrow" style="margin-bottom:9px">Telephony gate secrets</div>
+        <div id="keyList"><!-- rendered by app.js --></div>
+
+        <div class="eyebrow" style="margin:22px 0 9px">Pipeline API keys</div>
+        <div id="providerKeyList"><!-- rendered by app.js --></div>
+      </section>
+
+      <!-- ---------- DEPLOY TAB ---------- -->
+      <!-- SOP-01/02/03: a thin fetch-and-render surface over the three
+           Plan-06 endpoints (POST /api/sop/save, /changeset, /deploy). ALL
+           authority (validate/apply/commit/refresh) lives server-side — this
+           markup only posts operator intent and renders the JSON response;
+           app.js issues no store/git call of its own (spec §4). -->
+      <section class="panel" id="panel-deploy">
+        <div class="note"><span class="i">&#9650;</span> <div>A <strong>SOP</strong> is a named, versioned snapshot of every rule, knowledge binding and secret reference. <em>Save as SOP</em> snapshots the current live config to <span class="mono">sops/&lt;name&gt;.yaml</span> and commits it locally. <em>Deploy</em> re-reads that named SOP, validates it, and applies the changeset to the live stores &mdash; nothing is pushed to a remote or opened as a PR; that stays a separate, explicit human step.</div></div>
+
+        <div class="sopname-row">
+          <label class="flab" for="sopNameInput">SOP name</label>
+          <input class="input" id="sopNameInput" type="text" placeholder="e.g. conference-2026" autocomplete="off" spellcheck="false">
+          <button class="btn ghost" id="sopChangesetBtn" type="button"><span class="k">&#8635;</span> Load changeset</button>
+        </div>
+
+        <div class="deploy-grid">
+          <div>
+            <div class="eyebrow" style="margin-bottom:10px">Pending changeset</div>
+            <div class="changeset" id="sopChangeset"><!-- rendered by app.js --></div>
+            <div style="display:flex; gap:9px; margin-top:16px">
+              <button class="btn" id="sopSaveBtn" type="button"><span class="k">&#8991;</span> Save as SOP</button>
+              <button class="btn primary" id="sopDeployBtn" type="button" disabled title="Load the changeset for this name first"><span class="k">&#9650;</span> Deploy</button>
+            </div>
+            <div id="sopSaveResult" class="sop-result" hidden></div>
+          </div>
+          <div>
+            <div class="eyebrow" style="margin-bottom:10px">On deploy</div>
+            <div class="card">
+              <div class="steps" id="sopSteps"><!-- rendered by app.js --></div>
+            </div>
+            <div id="sopDeployResult" class="sop-result" hidden></div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+
+<!-- ============ RULE-EDITOR DRAWER ============ -->
+<!-- WHO -> SECRET -> GRANT (writable, RULE-01/02/03/04/05) plus a
+     read-only KNOWLEDGE/PERSONA display (v2 for binding, see 16-RESEARCH.md
+     "Deferred Ideas"). Every write posts to the Plan-04 REST endpoints —
+     this markup never talks to a store directly. -->
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="dr-head">
+    <div><div class="eyebrow" id="drawerEyebrow">New rule</div><div class="mono" id="drawerTitle" style="font-size:14px; margin-top:2px"></div></div>
+    <button class="iconbtn x" id="drawerClose" type="button" aria-label="Close editor">&#10005;</button>
+  </div>
+  <div class="dr-body" id="drawerBody"><!-- rendered by app.js --></div>
+  <div class="dr-foot">
+    <button class="btn ghost" id="drawerCancel" type="button">Cancel</button>
+    <span style="flex:1"></span>
+    <button class="btn" id="drawerBlock" type="button" hidden><span class="k">&#8861;</span> Block</button>
+    <button class="btn" id="drawerDelete" type="button" hidden>Delete</button>
+    <button class="btn primary" id="drawerSave" type="button"><span class="k">&#10003;</span> Save</button>
+  </div>
+</aside>
+
+<!-- ============ DID MANAGER MODAL ============ -->
+<!-- Search/add(route-existing)/edit over the merged live-VoIP.ms +
+     dids.yaml InboundDID list (DID-01/02). No "purchase a new number"
+     affordance — add always routes an already-owned DID. -->
+<div class="scrim" id="didScrim" hidden></div>
+<div class="modal" id="didModal" role="dialog" aria-modal="true" aria-label="Manage inbound DIDs" hidden>
+  <div class="m-head">
+    <h3>Inbound DIDs</h3>
+    <span class="hint">numbers people dial to reach the agent</span>
+    <button class="iconbtn" id="didModalClose" type="button" aria-label="Close" style="margin-left:auto">&#10005;</button>
+  </div>
+  <div class="m-body">
+    <div id="didStatusNote"><!-- rendered by app.js when VoIP.ms creds are unavailable --></div>
+    <div class="searchbox"><span class="mag">&#8981;</span><input id="didSearch" placeholder="Search by number, label, or region&hellip;" aria-label="Search DIDs"></div>
+    <div id="didModalList"><!-- rendered by app.js --></div>
+    <div id="didFormWrap" hidden><!-- rendered by app.js: add/edit form --></div>
+  </div>
+  <div class="m-foot">
+    <button class="btn primary" id="didAddBtn" type="button"><span class="k">+</span> Route an existing DID</button>
+    <span class="hint">routes a number you already own on VoIP.ms &mdash; never purchases a new one</span>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status"><span class="i">&#10003;</span><span id="toastMsg"></span></div>
+
+<script src="app.js"></script>
+</body>
+</html>

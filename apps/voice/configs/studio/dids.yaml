@@ -1,0 +1,25 @@
+# apps/voice/configs/studio/dids.yaml
+#
+# Studio-owned, git-tracked registry of PER-DID METADATA ONLY: the default
+# routing rule (an AccessCode id) and opening greeting for an inbound DID.
+#
+# NOT a VoIP.ms provisioning list. The DID inventory source of truth is
+# VoIP.ms's getDIDsInfo (see `kv telephony list` / kv/internal/app/cmd/
+# voipms.go's ListInboundDIDs) — this file only carries metadata rows keyed
+# by a DID that already exists there. Adding a row here does NOT
+# create/purchase/route a number; the studio console merges this file's rows
+# with the live VoIP.ms list at read time (Plan 04).
+#
+# Each row:
+#   - did:          E.164 phone number (the DID being called, not a caller)
+#     label:        short operator-facing name for this line
+#     region:       operator-facing region/POP hint
+#     default_rule: an AccessCode id — the rule this DID falls back to when
+#                   no more specific per-caller rule matches
+#     greeting:     opening-greeting text/ref spoken when this DID answers
+#
+# Written by kv/internal/app/studio/studio_files.go's ReadDIDMeta/WriteDIDMeta
+# (a keyed upsert by `did` — see that file for the exact line-splice
+# discipline that preserves this header and any other rows on every write).
+
+dids: []

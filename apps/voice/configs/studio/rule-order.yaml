@@ -1,0 +1,27 @@
+# apps/voice/configs/studio/rule-order.yaml
+#
+# ============================================================================
+# PRESENTATION / AUTHORING ORDER ONLY. THIS FILE DOES NOT CHANGE CALL
+# ROUTING.
+# ============================================================================
+#
+# This file persists the operator's preferred display order for the rules
+# table in `kv studio` (RULE-03). It is read by NOTHING at runtime: inbound
+# caller-id resolution (resolvePhoneToCode, apps/auth/webapp/src/entities/
+# access-code.ts) is a deterministic EXACT-MATCH lookup on the byPhone GSI —
+# there is only ever one AccessCode per normalized phone number, so there is
+# no first-match-wins scan across overlapping rules for an order to
+# influence. A true runtime first-match-wins rule engine is out of scope for
+# v1 (16-CONTEXT.md; tracked as a v2 idea).
+#
+# `order:` is a list of AccessCode ids in the sequence the console should
+# display them. Any code id present in DynamoDB but absent from this list
+# falls back to the existing DynamoDB read order (appended after the
+# explicitly ordered ids). An empty/absent list means "use DynamoDB read
+# order for everything" — this file needs no seed content to function.
+#
+# Written by kv/internal/app/studio/studio_files.go's
+# ReadRuleOrder/WriteRuleOrder. See that file's WriteRuleOrder doc comment:
+# no runtime resolver consults this file, by design.
+
+order: []

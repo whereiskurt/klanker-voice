@@ -1,0 +1,1 @@
+# apps/voice/configs/studio/sops/ — SOP snapshot directory (SOP-01), seeded empty; git-tracked via this .gitkeep. Written by kv/internal/app/studio/sop.go's WriteSOP as <name>.yaml, one file per named SOP.

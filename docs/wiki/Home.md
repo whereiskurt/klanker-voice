@@ -73,6 +73,7 @@ The bill of materials, grouped by where each piece lives in the repo.
 | Go 1.26 | Toolchain | `kv/go.mod` | Current stable line |
 | `spf13/cobra` v1.10.2 | Command tree | `kv/go.mod`, `kv/cmd/` | Matches `km`'s command structure so the two CLIs stay structurally identical |
 | `aws-sdk-go-v2` v1.42.1 (+ `dynamodb`) | Access-code CRUD, usage inspection, session visibility | `kv/internal/` | Only maintained AWS SDK line for Go |
+| `kv studio` | Local, loopback-only web console over rules/DIDs/knowledge/secrets, with a git-committed SOP snapshot + deploy flow | [operator guide](https://github.com/whereiskurt/klanker-voice/blob/main/docs/operators/kv-studio-operator-guide.md) | Single-binary GUI over `kv`'s existing DynamoDB/repo-file/SSM authority — no new service, no new AWS deploy target |
 
 ### Infrastructure — `infra/`
 

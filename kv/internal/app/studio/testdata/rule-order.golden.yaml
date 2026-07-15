@@ -1,0 +1,10 @@
+# Golden fixture for studio_files_test.go — mirrors the real
+# apps/voice/configs/studio/rule-order.yaml shape (header + a non-empty
+# `order:` list of code ids) so WriteRuleOrder's full-replace splice is
+# exercised against a starting file that already has content, not just the
+# seeded empty state.
+
+order:
+  - kph-tier-code
+  - greenhouse-code
+  - no-access
