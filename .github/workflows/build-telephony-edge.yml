@@ -11,6 +11,11 @@ on:
     branches: [main]
     paths:
       - 'apps/voice/**'
+      # kv studio operator-tool config (dids/rule-order/sops) lives under
+      # apps/voice/configs/studio/ but is NOT part of the telephony-edge image
+      # (Asterisk + klanker_voice). Editing it must never rebuild/redeploy
+      # telephony-edge. Mirrors the same exclusion in build-voice.yml.
+      - '!apps/voice/configs/studio/**'
   workflow_dispatch:
 
 concurrency:
