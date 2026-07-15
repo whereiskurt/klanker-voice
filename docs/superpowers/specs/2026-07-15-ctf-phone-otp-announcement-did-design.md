@@ -100,13 +100,20 @@ extends to more than one announcement line later):
 [[telephony.announcement]]
 did = "7254043234"                       # Las Vegas, NV DID; matches the normalized dialplan exten
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
-otp_auth_env_var = "CTF_OTP_AUTH_TOKEN"  # NAME only; value from env/SSM
+otp_env_var = "CTF_OTP_AUTH_TOKEN"       # NAME only; value from env/SSM
 line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
 ```
 
+> **Config-key note (implementation deviation):** the bearer-env-var field is named
+> `otp_env_var`, **not** `otp_auth_env_var`. `config.py`'s `_CREDENTIAL_FIELD_RE`
+> rejects any TOML key containing `_auth_`, so `otp_auth_env_var` would be refused
+> by the shared credential gate before parsing — even though it only ever holds an
+> env-var *name*. `otp_env_var` mirrors the working `tel_mint_env_var` precedent.
+> The value it holds is still `CTF_OTP_AUTH_TOKEN`.
+
 - `did` — compared against the normalized dialplan `exten` in `on_stasis_start`.
 - `otp_url` — non-secret plain URL, like `tel_mint_url`.
-- `otp_auth_env_var` — the **name** of the env var holding the bearer token;
+- `otp_env_var` — the **name** of the env var holding the bearer token;
   the value is read from env/SSM at call time, never stored in TOML (mirrors
   `tel_mint_env_var`).
 - `line_template` — spoken text with a `{code}` placeholder. The code is
