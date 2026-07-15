@@ -382,6 +382,209 @@ async def test_hard_timeout_hangs_up_sip_channel(
     assert controller.calls == {}
 
 
+async def test_session_max_hard_stop_hangs_up_even_if_heartbeat_release_fails(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """telephony-cap-no-hangup: the §24 session cap must HANG UP at session_max,
+    not merely warn. This drives the REAL ``SessionLifecycle._service_timer``
+    to a tiny session_max through the whole live wind-down chain
+    (``_fire_wind_down`` -> ``_on_stop`` -> ``runner.cancel`` ->
+    ``CallSession.run`` finally -> ``lifecycle.release()`` -> composed
+    ``on_released`` -> ARI hangup) -- with the best-effort
+    ``quota.release_heartbeat`` RAISING (models the live telephony-edge failure
+    mode: a scoped task-role IAM gap on the usage table, or a transient
+    DynamoDB error). Before the fix, that raise aborted ``release()`` before
+    ``on_released``, so the PSTN line was never hung up and the pipeline ran on
+    -- exactly the reported "warns at 2:30 but never hangs up at 3:00" bug.
+
+    Overrides the module-level ``stub_call_session_run`` with a FAITHFUL
+    ``CallSession.run`` bracket (start -> block until the runner is cancelled ->
+    ``finally: stop()``), so the real ``on_stop -> release -> on_released`` link
+    is exercised offline without a live provider round trip.
+    """
+
+    async def _faithful_run(self: CallSession) -> None:
+        await self.lifecycle.start()
+        try:
+            await self.runner._shutdown_event.wait()
+        finally:
+            await self.lifecycle.stop()
+
+    monkeypatch.setattr(CallSession, "run", _faithful_run)
+
+    # Neutralize TTS/greet frame emission (no live pipeline is running here).
+    async def _noop(*_a, **_k):
+        return None
+
+    monkeypatch.setattr("klanker_voice.call_runtime.speak_goodbye", _noop)
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _noop)
+    monkeypatch.setattr(
+        "klanker_voice.session.quota.record_tick",
+        lambda **_k: quota.TickResult(False, False),
+    )
+
+    # THE failure mode under test: the best-effort heartbeat release raises.
+    def _boom(*_a, **_k):
+        raise RuntimeError("dynamodb release_heartbeat failed (best-effort)")
+
+    monkeypatch.setattr("klanker_voice.session.quota.release_heartbeat", _boom)
+
+    tiny_tier = quota.Tier(
+        tier_id="pstn-public-tier",
+        session_max_seconds=0.12,
+        period_max_seconds=600,
+        max_concurrent=5,
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.quota.start_gate",
+        lambda identity, **kwargs: _gate_result(
+            tier=tiny_tier, session_max_seconds=0.12, bypass_accounting=False
+        ),
+    )
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        quota_cfg=_quota_config(
+            winddown_warning_seconds=0.05,
+            goodbye_grace_seconds=0.01,
+            user_silence_timeout=300.0,
+            reconnect_grace_seconds=300.0,
+            heartbeat_renew_interval=300.0,
+        ),
+        access_pin="4242",
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+
+    # Unlock (DTMF) -> upgrade_from_bypass starts the REAL service timer.
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+    assert active_call.gate.unlocked is True
+
+    # Let the real timer fire the warning (~0.05s) then the hard stop (~0.12s),
+    # and the whole wind-down chain settle.
+    await asyncio.sleep(1.0)
+
+    assert ari.count("hangup", arg="chan-1") == 1, (
+        f"session-max hard stop never hung up the SIP channel (best-effort "
+        f"heartbeat-release failure stranded the teardown). ARI calls: {ari.names()}"
+    )
+    assert ari.count("destroy_bridge", arg="bridge-1") == 1
+    assert controller.calls == {}
+
+
+async def test_session_max_hard_stop_hangs_up_even_if_goodbye_leg_raises(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """telephony-cap-no-hangup (CORRECTED root cause, faithful repro): the §24
+    session cap must HANG UP at session_max even if the best-effort spoken
+    wind-down leg fails. Unlike the heartbeat-release variant above, this drives
+    the ACTUAL reproduced strand: the REAL ``SessionLifecycle._service_timer``
+    fires the warning, then at session_max ``_fire_wind_down`` -> ``_on_stop``,
+    whose ``speak_goodbye`` RAISES (a worker in a bad state at the cap, a
+    transport hiccup — the live call's leaf trigger).
+
+    Before the fix, that raise propagated out of ``_on_stop`` ->
+    ``_fire_wind_down`` (``_wind_down_fired`` already True) -> ``_service_timer``
+    (catches only ``CancelledError``): the timer task died BEFORE
+    ``runner.cancel``, so ``CallSession.run`` never unblocked, ``release`` /
+    ``on_released`` never ran, and the SIP line stayed open past session_max —
+    exactly "warns at 2:30 but never hangs up at 3:00", with the whole
+    hard-stop path silent in CloudWatch. ``_on_stop`` now runs ``runner.cancel``
+    in a ``finally`` so the hard close ALWAYS fires; ``_fire_wind_down`` swallows
+    the goodbye exception so the timer task ends cleanly. The warning still fires
+    (this asserts the soft-warning path is NOT regressed)."""
+
+    async def _faithful_run(self: CallSession) -> None:
+        await self.lifecycle.start()
+        try:
+            await self.runner._shutdown_event.wait()
+        finally:
+            await self.lifecycle.stop()
+
+    monkeypatch.setattr(CallSession, "run", _faithful_run)
+
+    warnings_fired: list[str] = []
+
+    async def _spy_warning(worker, context, copy):
+        warnings_fired.append(copy)
+
+    # THE failure mode under test: the spoken goodbye leg raises at session_max.
+    async def _boom_goodbye(worker, copy):
+        raise RuntimeError("speak_goodbye queue_frames failed at session_max")
+
+    monkeypatch.setattr("klanker_voice.call_runtime.inject_warning_instruction", _spy_warning)
+    monkeypatch.setattr("klanker_voice.call_runtime.speak_goodbye", _boom_goodbye)
+
+    async def _noop(*_a, **_k):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _noop)
+    monkeypatch.setattr(
+        "klanker_voice.session.quota.record_tick",
+        lambda **_k: quota.TickResult(False, False),
+    )
+
+    tiny_tier = quota.Tier(
+        tier_id="pstn-public-tier",
+        session_max_seconds=0.12,
+        period_max_seconds=600,
+        max_concurrent=5,
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.quota.start_gate",
+        lambda identity, **kwargs: _gate_result(
+            tier=tiny_tier, session_max_seconds=0.12, bypass_accounting=False
+        ),
+    )
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        quota_cfg=_quota_config(
+            winddown_warning_seconds=0.05,
+            goodbye_grace_seconds=0.01,
+            user_silence_timeout=300.0,
+            reconnect_grace_seconds=300.0,
+            heartbeat_renew_interval=300.0,
+        ),
+        access_pin="4242",
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+
+    # Let the spawned CallSession.run task reach lifecycle.start() (bypass=True,
+    # timers skipped) BEFORE unlocking — mirrors prod, where the caller DTMFs
+    # seconds after answer, long after start() has run. (Unlocking in the same
+    # microsecond would race start() past upgrade_from_bypass and spawn a
+    # duplicate timer — a test-only artifact, never the prod ordering.)
+    await asyncio.sleep(0.02)
+
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+    assert active_call.gate.unlocked is True
+
+    await asyncio.sleep(1.0)
+
+    # The soft warning still fires exactly once (not regressed) ...
+    assert len(warnings_fired) == 1, f"soft winddown warning regressed: {warnings_fired}"
+    # ... AND the hard stop still hangs up the SIP channel despite the goodbye raise.
+    assert ari.count("hangup", arg="chan-1") == 1, (
+        f"session-max hard stop never hung up the SIP channel — the failing "
+        f"spoken-goodbye leg stranded the teardown. ARI calls: {ari.names()}"
+    )
+    assert ari.count("destroy_bridge", arg="bridge-1") == 1
+    assert controller.calls == {}
+    assert active_call.call_session.lifecycle._stopped is True
+
+
 # --- (e) Quota-denied leaves no bridge (Task 2) ---------------------------
 
 

@@ -260,17 +260,38 @@ class SessionLifecycle:
         if self._stopped:
             return
         self._stopped = True
+        logger.info(f"release: tearing down session={self.session_id}")
         for task in (self._tick_task, self._timer_task, self._watchdog_task, self._reconnect_task):
             if task is not None:
                 task.cancel()
         _decrement()
         if not self.bypass_accounting:
-            await asyncio.to_thread(quota.release_heartbeat, self.user_id, self.session_id)
+            # Best-effort heartbeat release (documented: TTL cleanup is the
+            # backstop). A failure here — a scoped telephony-edge task-role IAM
+            # gap on the usage table's UpdateItem, or any transient DynamoDB
+            # throttle/error — must NEVER abort the rest of teardown. Unguarded,
+            # an exception propagated out of release() BEFORE the two lines
+            # below, skipping both the scale-in-protection reconcile (a stranded
+            # protected task blocks the next rolling deploy → black screen) AND
+            # ``on_released``. On the telephony path ``on_released`` is the ONLY
+            # hook that cancels the pipeline runner AND ARI-hangs-up the PSTN
+            # channel, so that raise left the runner generating turns and the
+            # SIP line silently open past session_max — the telephony-cap-no-
+            # hangup "warns but never hangs up" bug. (The WebRTC path never
+            # surfaced it: the browser tearing down the transport is an
+            # independent teardown backstop; the PSTN line has none.)
+            try:
+                await asyncio.to_thread(quota.release_heartbeat, self.user_id, self.session_id)
+            except Exception as exc:  # noqa: BLE001 — best-effort; never gate teardown on it
+                logger.warning(
+                    f"release_heartbeat failed (best-effort); continuing teardown: {exc}"
+                )
         await asyncio.to_thread(self._emit_metric)
         # Reconcile against the live count: clears protection once this was the
         # last session (count -> 0), leaves it ON while others are still active.
         await asyncio.to_thread(self._reconcile_scale_in_protection)
         if self.on_released is not None:
+            logger.info(f"release: invoking on_released hook for session={self.session_id}")
             await self.on_released()
 
     async def stop(self) -> None:
@@ -280,16 +301,38 @@ class SessionLifecycle:
         the worker run, or an unhandled error)."""
         await self.release()
 
-    async def _fire_wind_down(self) -> None:
+    async def _fire_wind_down(self, *, trigger: str = "service_timer") -> None:
         """Invoke ``on_stop`` exactly once, no matter which trigger reaches
         it first — the D-02 wall-clock cutoff and D-04's mid-session
         daily/period-exhaustion hook both route here so the identical spoken
         wind-down sequence never double-fires (e.g. exhaustion detected on
-        one 15s tick moments before the service timer's own cutoff)."""
+        one 15s tick moments before the service timer's own cutoff).
+
+        telephony-cap-no-hangup: ``on_stop``'s own ``finally`` now guarantees
+        the load-bearing ``runner.cancel`` (-> ``release`` -> ``on_released``
+        -> PSTN ARI hangup) even if its best-effort spoken-goodbye leg raises.
+        We ALSO swallow any non-cancellation exception from ``on_stop`` here so
+        the calling timer/tick task ends cleanly (a raise would otherwise die
+        as an unretrieved task exception AND, with ``_wind_down_fired`` already
+        set, no later trigger could recover). INFO-logged so the next live call
+        past 3:00 is diagnosable — the whole hard-stop path was previously
+        silent, which is why the strand could not be seen in CloudWatch."""
         if self._wind_down_fired:
+            logger.info(
+                f"wind-down already fired (trigger={trigger}); no-op for session={self.session_id}"
+            )
             return
         self._wind_down_fired = True
-        await self.on_stop()
+        logger.info(f"wind-down firing (trigger={trigger}) for session={self.session_id}")
+        try:
+            await self.on_stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — teardown already triggered in on_stop's finally
+            logger.warning(
+                f"wind-down on_stop raised (hard close already triggered): {exc}"
+            )
+        logger.info(f"wind-down on_stop complete (trigger={trigger}) session={self.session_id}")
 
     async def _service_timer(self) -> None:
         """D-02: the precise in-memory stop clock — warning at
@@ -301,7 +344,11 @@ class SessionLifecycle:
             await asyncio.sleep(warning_at)
             await self.on_warning()
             await asyncio.sleep(max(0.0, session_max - warning_at))
-            await self._fire_wind_down()
+            logger.info(
+                f"service timer reached session_max={session_max}s; firing hard stop "
+                f"for session={self.session_id}"
+            )
+            await self._fire_wind_down(trigger="service_timer")
         except asyncio.CancelledError:
             raise
 
@@ -392,13 +439,16 @@ class SessionLifecycle:
         if result.site_paused:
             logger.warning("Site-wide auto-trip ceiling crossed; kill-switch engaged")
         if result.daily_exhausted:
-            logger.info(f"Mid-session daily exhaustion for user={self.user_id}; invoking wind-down")
+            logger.info(
+                f"Mid-session daily exhaustion for user={self.user_id} session={self.session_id}; "
+                f"invoking wind-down (on_daily_exhausted={'set' if self.on_daily_exhausted else 'none'})"
+            )
             if self.on_daily_exhausted is not None:
                 await self.on_daily_exhausted()
             else:
                 # D-04: identical wind-down as the D-02 service-timer cutoff,
                 # guarded so it never fires twice if both triggers race.
-                await self._fire_wind_down()
+                await self._fire_wind_down(trigger="daily_exhausted")
 
     def _emit_metric(self) -> None:
         try:
