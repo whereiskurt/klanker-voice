@@ -254,8 +254,18 @@ VOIPMS_SMS_PASS_ENV = "VOIPMS_API_PASSWORD"
 #: The SMS body. Uses the PLAIN code (not the digit-spaced spoken form) so it is
 #: copy/paste-able. Flavor + expiry note because the TOTP rolls every ~120s.
 #: Tunable. NEVER logged (it contains the live OTP).
+#:
+#: CRITICAL -- 7-bit GSM charset ONLY, NO non-ASCII characters (quick task
+#: 260716-hg5 follow-up, live-proven 2026-07-16): a single non-GSM character
+#: (an em-dash ``—`` U+2014, a curly quote, etc.) forces the WHOLE SMS into
+#: UCS-2 encoding, and the VoIP.ms -> North-American-mobile route SILENTLY DROPS
+#: UCS-2 messages while ``sendSMS`` still returns ``status="success"`` (accepted
+#: != delivered; ``carrier_status`` stays "Information not available"). The
+#: original em-dash body never arrived; the plain-ASCII rewrite did. Keep every
+#: character here 7-bit ASCII. (The ``{code}`` braces are GSM-7 EXTENDED but are
+#: substituted away before the send, so the wire message is pure basic GSM-7.)
 ANNOUNCEMENT_SMS_BODY_TEMPLATE = (
-    "CTF proof code: {code} — expires in ~2 min. Relay it fast. Hack the planet!"
+    "CTF proof code: {code} - expires in about 2 min. Relay it fast. Hack the planet!"
 )
 
 #: The spoken closing beat that REPLACES ``ANNOUNCEMENT_BYE_COPY`` ONLY when the
@@ -443,12 +453,23 @@ async def _send_sms(
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(VOIPMS_SMS_API_URL, params=params) as resp:
                 if resp.status != 200:
+                    logger.warning(f"sms send: non-200 HTTP status={resp.status}")
                     return False
                 data = await resp.json(content_type=None)
     except Exception:  # noqa: BLE001 -- any transport/parse failure is a send failure, never fatal
         logger.warning("sms send: request failed (transport/parse error)")
         return False
-    return isinstance(data, dict) and data.get("status") == "success"
+    # Surface the VoIP.ms status ENUM on failure (quick 260716-hg5 follow-up) --
+    # it is a short non-secret token (e.g. "ip_not_enabled", "invalid_dst") that
+    # is essential for diagnosing why a send was rejected, mirroring how `kv`
+    # surfaces `voipmsStatusError`. NEVER logs the code/body/dst/creds. A live
+    # 2026-07-16 call failed here with the Fargate egress IP not on the VoIP.ms
+    # API allowlist -- this log line is what makes that visible.
+    vstatus = data.get("status") if isinstance(data, dict) else None
+    if vstatus != "success":
+        logger.warning(f"sms send: VoIP.ms rejected send status={vstatus!r}")
+        return False
+    return True
 
 
 async def _send_sms_pool(
