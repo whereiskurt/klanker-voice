@@ -107,8 +107,16 @@ async def _send_sms_pool(url, api_user, api_pass, dids, dst, message) -> bool
 ### 3. Eligibility + spoken-script branch
 
 ```python
-sms_eligible = bool(entry.sms_dids) and _sms_dst_from_caller(active_call.caller_id) != ""
+dst = _sms_dst_from_caller(active_call.caller_id)
+api_user = os.environ.get("VOIPMS_API_USERNAME", "")
+api_pass = os.environ.get("VOIPMS_API_PASSWORD", "")
+sms_eligible = bool(entry.sms_dids) and bool(dst) and bool(api_user) and bool(api_pass)
 ```
+
+(Eligibility also requires the API creds to be present — known before we
+speak — so the "check your phone" punchline is never promised on a
+deployment where the creds were not wired. A later network/DID failure is
+still possible and accepted, but a guaranteed-broken promise is not.)
 
 - `_sms_dst_from_caller` returns a VoIP.ms-ready NA destination string, or `""` for a
   withheld / non-North-American / malformed ANI (reusing `_normalize_e164`'s NA rules).
