@@ -113,3 +113,13 @@ otp_env_var = "CTF_OTP_AUTH_TOKEN"     # NAME only; token VALUE from env/SSM at 
 code_env_var = "CTF_ANNOUNCEMENT_CODE"  # NAME only; trigger VALUE lives in SSM (/kmv/secrets/use1/ctf/announcement_code), never TOML (D-09)
 line_template = "Hey! Let me get you that O T P. {code}. That's {code}."
 # did = "7254043234"   # informational only -- NOT visible at the edge (all DIDs arrive as the sub-account 557010_klanker-pbx)
+# SMS-during-call (quick task 260716-hg5 -- design doc docs/superpowers/specs/
+# 2026-07-16-ctf-otp-sms-during-call-design.md): text the caller a written copy
+# of the OTP mid-call, then land the "check your phone" punchline. Ordered pool
+# of SMS-capable VoIP.ms sending DIDs -- tried IN ORDER until one send succeeds
+# (runtime auto-fallback). PUBLIC DID digits only; the VoIP.ms API creds are
+# env/SSM-only (VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD), never here. Empty /
+# absent ⇒ feature OFF. 6134805878 is the only SMS-enabled DID as of 2026-07-16
+# (verified via getDIDsInfo); enable SMS on the others in the portal + append
+# them here for fallback depth.
+sms_dids = ["6134805878"]

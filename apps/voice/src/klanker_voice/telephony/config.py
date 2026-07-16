@@ -18,6 +18,7 @@ credential-looking field anywhere in ``pipeline.toml`` (not just inside
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,6 +79,22 @@ class AnnouncementEntry:
             (digit-spaced) for every occurrence -- the template speaks the
             code twice for clarity. Validated at load time to contain at
             least one ``{code}`` occurrence.
+        sms_dids: OPTIONAL ordered pool of SMS-capable VoIP.ms sending DIDs
+            (quick task 260716-hg5 -- design doc docs/superpowers/specs/
+            2026-07-16-ctf-otp-sms-during-call-design.md). Empty tuple (the
+            default) ⇒ the SMS-during-call punchline is OFF and this entry
+            behaves byte-for-byte as it did before. When non-empty, the
+            controller texts the caller a written copy of the OTP, trying each
+            DID IN ORDER until one send succeeds (runtime auto-fallback for a
+            DID that is not SMS-enabled). A DID is a PUBLIC phone number, not a
+            credential -- so the digits live safely in TOML; the ``sms_dids``
+            key contains no credential token and passes
+            ``_reject_credential_fields``. The VoIP.ms API username/password
+            are NEVER here -- the controller reads them at call time from the
+            environment (``VOIPMS_API_USERNAME``/``VOIPMS_API_PASSWORD``, task-
+            def secrets -> SSM), mirroring how the OTP bearer is read from
+            ``otp_env_var``. Each entry is normalized to digits only; empties
+            are dropped.
     """
 
     otp_url: str
@@ -85,6 +102,7 @@ class AnnouncementEntry:
     line_template: str = ""
     code_env_var: str = ""
     did: str = ""
+    sms_dids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -273,6 +291,8 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 f"telephony.announcement[{i}].code_env_var must be a non-empty string"
             )
 
+        sms_dids = _parse_sms_dids(item.get("sms_dids"), i)
+
         entries.append(
             AnnouncementEntry(
                 did=did,
@@ -280,7 +300,32 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 otp_env_var=otp_env_var,
                 line_template=line_template,
                 code_env_var=code_env_var,
+                sms_dids=sms_dids,
             )
         )
 
     return tuple(entries)
+
+
+def _parse_sms_dids(raw: object, i: int) -> tuple[str, ...]:
+    """Normalize a ``[[telephony.announcement]].sms_dids`` value (quick task
+    260716-hg5) into an ordered tuple of digits-only sending DIDs. Absent /
+    ``None`` ⇒ ``()`` (SMS-during-call OFF). A non-list is a hard config
+    error. Each element is coerced to a string and stripped of every non-digit
+    character (so ``"613-480-5878"``, ``"+16134805878"``, and ``"6134805878"``
+    all normalize identically); empty results are dropped. ORDER is preserved
+    -- it is the runtime auto-fallback order. No credential ever appears here:
+    a DID is a public phone number, and the VoIP.ms API creds are read from the
+    environment by the controller, never from TOML."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise ConfigError(
+            f"telephony.announcement[{i}].sms_dids must be an array of DID strings"
+        )
+    dids: list[str] = []
+    for entry in raw:
+        digits = re.sub(r"\D", "", str(entry))
+        if digits:
+            dids.append(digits)
+    return tuple(dids)

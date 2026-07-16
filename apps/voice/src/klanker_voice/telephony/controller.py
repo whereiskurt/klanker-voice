@@ -232,6 +232,38 @@ ANNOUNCEMENT_BYE_COPY = "Good luck! Hack the planet!"
 #: cuts the gag off mid-playback.
 ANNOUNCEMENT_GAG_TAIL_SECONDS = 8.0
 
+#: --- CTF OTP SMS-during-call (quick task 260716-hg5) -------------------------
+#: The design doc docs/superpowers/specs/2026-07-16-ctf-otp-sms-during-call-
+#: design.md: when an announcement entry configures ``sms_dids``, text the
+#: caller (their own ANI) a written copy of the OTP mid-call, then land the
+#: "check your phone" punchline. Everything below is opt-in and additive.
+
+#: VoIP.ms REST endpoint + ``sendSMS`` bound. A fixed vendor URL (like ``kv``'s
+#: ``voipmsBaseURL``), NOT a secret. Bounded timeout so a slow/failing send can
+#: NEVER hang the PSTN line -- the send is fire-and-forget on top of this.
+VOIPMS_SMS_API_URL = "https://voip.ms/api/v1/rest.php"
+SMS_SEND_TIMEOUT_SECONDS = 4.0
+
+#: NAMEs of the environment variables holding the VoIP.ms API username/password
+#: (task-def ``secrets`` -> SSM ``/kmv/secrets/use1/voipms/api_{username,
+#: password}``). VALUES are read at call time, never stored in config/TOML,
+#: never logged -- mirrors how the OTP bearer is resolved from ``otp_env_var``.
+VOIPMS_SMS_USER_ENV = "VOIPMS_API_USERNAME"
+VOIPMS_SMS_PASS_ENV = "VOIPMS_API_PASSWORD"
+
+#: The SMS body. Uses the PLAIN code (not the digit-spaced spoken form) so it is
+#: copy/paste-able. Flavor + expiry note because the TOTP rolls every ~120s.
+#: Tunable. NEVER logged (it contains the live OTP).
+ANNOUNCEMENT_SMS_BODY_TEMPLATE = (
+    "CTF proof code: {code} — expires in ~2 min. Relay it fast. Hack the planet!"
+)
+
+#: The spoken closing beat that REPLACES ``ANNOUNCEMENT_BYE_COPY`` ONLY when the
+#: caller was actually texted (sms-eligible). The panic-readout tease is
+#: unchanged; this is the payoff. Plain punctuation only -- NO markup tags (the
+#: streaming ElevenLabs path reads markup aloud). Tunable.
+ANNOUNCEMENT_SMS_PUNCHLINE_COPY = "just kidding — check your phone. Good luck! Hack the planet!"
+
 #: Bound on the raw trailing ARI DTMF digit buffer (quick task 260716-1g0)
 #: used ONLY for announcement-code suffix matching -- separate from
 #: ``ActiveCall.dtmf_buffer``, which stays windowed to ``len(pin)`` for the
@@ -301,34 +333,43 @@ def _pace_digits_slow(code: str) -> str:
     return ANNOUNCEMENT_SLOW_DIGIT_SEP.join(code)
 
 
-def _build_accel_tail(code: str) -> str:
+def _build_accel_tail(code: str, closing: str) -> str:
     """Build the panic-readout gag tail (quick task 260716-2px; markup-free
     rewrite in 260716-3xx): "Did you get that? ... No?" followed by
     accelerating re-reads of ``code`` using the shrinking plain-punctuation
     separators in ``ANNOUNCEMENT_ACCEL_SEPS`` (comma-paced then space-paced),
-    then an abrupt, drawn-out goodbye. Digits are ALWAYS separated by a comma
+    then an abrupt ``closing`` sign-off. Digits are ALWAYS separated by a comma
     or a space -- never concatenated -- so ElevenLabs never reads the code as
     one number. NO markup tags anywhere, and NO pause punctuation immediately
-    before ``ANNOUNCEMENT_BYE_COPY`` -- the cut into it must be abrupt."""
+    before ``closing`` -- the cut into it must be abrupt. ``closing`` is
+    ``ANNOUNCEMENT_BYE_COPY`` normally, or ``ANNOUNCEMENT_SMS_PUNCHLINE_COPY``
+    when the caller was texted (quick task 260716-hg5)."""
     passes = [sep.join(code) for sep in ANNOUNCEMENT_ACCEL_SEPS]
     accel = " ".join(passes)
     return (
         f"{ANNOUNCEMENT_DIDYOUGET_COPY} ... "
-        f"{ANNOUNCEMENT_NO_COPY} {accel} {ANNOUNCEMENT_BYE_COPY}"
+        f"{ANNOUNCEMENT_NO_COPY} {accel} {closing}"
     )
 
 
-def _build_announcement_script(template: str, code: str) -> str:
+def _build_announcement_script(template: str, code: str, sms_eligible: bool = False) -> str:
     """Substitute the digit-spaced ``code`` into every ``{code}`` occurrence
     of ``template`` (quick task 260715-oq0; slow x2 read), then append the
     panic-readout gag tail (quick task 260716-2px): "Did you get that? ...
-    No?" -> ~3 accelerating digit passes -> abrupt "BYYYYYEEEE!". All one
+    No?" -> ~3 accelerating digit passes -> an abrupt sign-off. All one
     string, spoken as a single TTS utterance via ``speak_goodbye`` -- no
     multi-utterance sequencing. ``str.replace`` substitutes EVERY ``{code}``
-    occurrence, matching the design's "speak it twice" template shape. A
-    standalone, pure, module-level function so it's unit-testable without a
-    call (no controller/ARI/pipeline dependency)."""
-    return template.replace("{code}", _pace_digits_slow(code)) + " " + _build_accel_tail(code)
+    occurrence, matching the design's "speak it twice" template shape.
+
+    Quick task 260716-hg5: when ``sms_eligible`` is True (the caller was
+    texted a written copy of the code), the sign-off becomes the "check your
+    phone" punchline (``ANNOUNCEMENT_SMS_PUNCHLINE_COPY``). ``sms_eligible``
+    defaults to False so the legacy output is BYTE-IDENTICAL to before
+    (``ANNOUNCEMENT_BYE_COPY``) -- no "check your phone" promise for a caller
+    we could not text. A standalone, pure, module-level function so it's
+    unit-testable without a call (no controller/ARI/pipeline dependency)."""
+    closing = ANNOUNCEMENT_SMS_PUNCHLINE_COPY if sms_eligible else ANNOUNCEMENT_BYE_COPY
+    return template.replace("{code}", _pace_digits_slow(code)) + " " + _build_accel_tail(code, closing)
 
 
 async def _fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
@@ -355,6 +396,77 @@ async def _fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
         return None
     code = data.get("code") if isinstance(data, dict) else None
     return code if isinstance(code, str) and code else None
+
+
+def _sms_dst_from_caller(caller_id: Any) -> str:
+    """Derive a VoIP.ms ``sendSMS`` destination from the inbound caller ANI
+    (quick task 260716-hg5). Reuses :func:`_normalize_e164` (the SAME NA rules
+    the tel-mint path uses), then returns the bare 10-digit NANP number VoIP.ms
+    expects as ``dst``. Returns ``""`` for a withheld, non-North-American, or
+    malformed caller ID (VoIP.ms SMS is NA-only) -- the caller is then NOT
+    sms-eligible, gets no text, and hears the legacy sign-off. The destination
+    is derived SOLELY from the inbound ANI, so a caller can only ever cause a
+    text to their OWN number (never a third party)."""
+    e164 = _normalize_e164(caller_id)  # "+1NXXNXXXXXX" for NA, else "" / non-NA "+…"
+    if not e164.startswith("+1") or len(e164) != 12:
+        return ""
+    return e164[2:]  # drop "+1" -> bare 10-digit NANP destination
+
+
+async def _send_sms(
+    from_did: str, dst: str, message: str, api_user: str, api_pass: str
+) -> bool:
+    """Send ONE SMS via VoIP.ms ``sendSMS`` (quick task 260716-hg5). Returns
+    ``True`` ONLY on HTTP 200 with a ``status == "success"`` JSON envelope;
+    ``False`` for every other outcome (missing creds, non-200, non-success
+    status, timeout, transport/parse error). NEVER raises -- the send is
+    fire-and-forget alongside the PSTN readout (mirrors :func:`_fetch_ctf_otp`'s
+    never-raise contract).
+
+    Logging discipline (§13/T-OTP-04): NEVER logs the OTP/body, the destination
+    number, the credentials, or the URL -- a failure logs only a generic
+    marker. Credentials cross only the outbound query string, never a log line.
+    A module-level function (not a method) so tests monkeypatch it directly to
+    avoid a real network call, exactly like ``_fetch_ctf_otp``."""
+    if not (from_did and dst and api_user and api_pass):
+        return False
+    params = {
+        "api_username": api_user,
+        "api_password": api_pass,
+        "method": "sendSMS",
+        "did": from_did,
+        "dst": dst,
+        "message": message,
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=SMS_SEND_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(VOIPMS_SMS_API_URL, params=params) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json(content_type=None)
+    except Exception:  # noqa: BLE001 -- any transport/parse failure is a send failure, never fatal
+        logger.warning("sms send: request failed (transport/parse error)")
+        return False
+    return isinstance(data, dict) and data.get("status") == "success"
+
+
+async def _send_sms_pool(
+    dids: tuple[str, ...], dst: str, message: str, api_user: str, api_pass: str
+) -> bool:
+    """Try each sending DID in ``dids`` IN ORDER until one send succeeds (quick
+    task 260716-hg5 -- runtime auto-fallback for a DID that is not SMS-enabled
+    in the VoIP.ms portal). Returns ``True`` on the FIRST success (and stops --
+    exactly one text is ever delivered), ``False`` if the pool is empty or every
+    attempt fails. Never raises. Logs only the pool index/count -- never the DID
+    value, creds, body, or destination."""
+    for idx, from_did in enumerate(dids):
+        if await _send_sms(from_did, dst, message, api_user, api_pass):
+            logger.info(f"sms send: ok on pool index {idx} of {len(dids)}")
+            return True
+    if dids:
+        logger.warning(f"sms send: all {len(dids)} pool DID(s) failed")
+    return False
 
 
 def _bypass_gate_result() -> quota.GateResult:
@@ -425,6 +537,12 @@ class ActiveCall:
     #: the static ``telephony_cfg.unlock_tier_id`` -- byte-identical to
     #: Phase 11's behavior.
     grant_tier_id: str | None = None
+    #: Quick task 260716-hg5: the fire-early SMS-during-call send task. Held
+    #: ONLY to keep a strong reference so the fire-and-forget send is not
+    #: garbage-collected before it completes (it finishes well within
+    #: ``_gate_announcement``'s grace sleep). NEVER awaited on the teardown
+    #: path. ``None`` unless the announcement was sms-eligible.
+    sms_task: asyncio.Task[bool] | None = None
 
 
 def _normalize_token(raw: Any) -> str:
@@ -1077,7 +1195,28 @@ class AsteriskCallController:
             await self._close_active_call(active_call, "announcement otp fetch failed")
             return
 
-        line = _build_announcement_script(entry.line_template, code)
+        # Quick task 260716-hg5: text the caller a written copy of the OTP,
+        # fired NOW (before the readout) so it lands before the spoken "check
+        # your phone" punchline. sms-eligible ONLY when the entry configures a
+        # sending-DID pool, the caller ANI is a textable NA number, AND the
+        # VoIP.ms API creds are present -- so we never PROMISE a text we cannot
+        # attempt. The send is fire-and-forget: launched via ``create_task``,
+        # its handle parked on the ``ActiveCall`` purely to keep a strong
+        # reference (it finishes within the grace sleep below), and NEVER
+        # awaited on the teardown path -- a slow/failing send can never hang the
+        # PSTN line, and ``_send_sms_pool`` never raises. Never logs the OTP,
+        # the body, the destination, or the creds (T-OTP-04/§13).
+        dst = _sms_dst_from_caller(active_call.caller_id)
+        api_user = os.environ.get(VOIPMS_SMS_USER_ENV, "")
+        api_pass = os.environ.get(VOIPMS_SMS_PASS_ENV, "")
+        sms_eligible = bool(entry.sms_dids) and bool(dst) and bool(api_user) and bool(api_pass)
+        if sms_eligible:
+            body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)
+            active_call.sms_task = asyncio.create_task(
+                _send_sms_pool(entry.sms_dids, dst, body, api_user, api_pass)
+            )
+
+        line = _build_announcement_script(entry.line_template, code, sms_eligible)
         await speak_goodbye(active_call.call_session.worker, line)
         # Base grace for the surrounding speech + the per-digit pause time
         # (the code is read TWICE) + the panic-readout gag tail budget
