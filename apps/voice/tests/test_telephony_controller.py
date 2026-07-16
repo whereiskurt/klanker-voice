@@ -311,9 +311,19 @@ def _dial(digits: str):
     return [_mk(d) for d in digits]
 
 
-def test_build_announcement_line_spaces_digits_and_substitutes_both_occurrences():
+def test_build_announcement_line_paces_digits_and_substitutes_both_occurrences():
+    from klanker_voice.telephony.controller import ANNOUNCEMENT_DIGIT_PAUSE_SECONDS
+
     line = _build_announcement_line("A {code}. That's {code}.", "123456")
-    assert line == "A 1 2 3 4 5 6. That's 1 2 3 4 5 6."
+    paced = f' <break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" /> '.join(
+        f"{d}." for d in "123456"
+    )
+    # both {code} occurrences substituted, digit order preserved, digits paced
+    assert line == f"A {paced}. That's {paced}."
+    # a real pause between every digit, in each of the two reads (5 gaps x 2)
+    assert line.count(f'<break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" />') == 10
+    # each OTP digit is followed by a period so it paces even without break tags
+    assert "1. " in line and line.count("6.") == 2
 
 
 async def test_announcement_code_dispatches_no_quota_no_greet(
@@ -506,7 +516,9 @@ async def test_announcement_success_speaks_digitspaced_line_then_closes(
     for event in _dial(ANNOUNCEMENT_CODE):
         await controller.on_channel_dtmf_received(event)
 
-    assert goodbye_calls == ["Hey! O T P. 1 2 3 4 5 6. That's 1 2 3 4 5 6. Bye."]
+    assert goodbye_calls == [
+        _build_announcement_line("Hey! O T P. {code}. That's {code}. Bye.", "123456")
+    ]
     assert ari.count("hangup", arg="chan-1") == 1
     assert ari.count("destroy_bridge", arg="bridge-1") == 1
     assert sessions[0].closed is True
