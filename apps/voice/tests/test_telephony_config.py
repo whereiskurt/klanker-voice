@@ -288,3 +288,42 @@ def test_credential_looking_key_inside_announcement_table_rejected(make_config_f
     path = make_config_file(append=bad_toml)
     with pytest.raises(ConfigError, match="credential"):
         load_telephony_config(path)
+
+
+# --- Quick task 260716-hg5: [[telephony.announcement]].sms_dids -------------
+
+
+def test_announcement_sms_dids_absent_defaults_empty(make_config_file):
+    """No `sms_dids` line -> `()` (SMS-during-call OFF), byte-identical to the
+    pre-260716-hg5 announcement shape."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].sms_dids == ()
+
+
+def test_announcement_sms_dids_parses_and_normalizes(make_config_file):
+    """`sms_dids` parses to an ORDERED tuple of digits-only DIDs: mixed
+    formats normalize identically, junk/empties drop, order is preserved
+    (it is the runtime auto-fallback order)."""
+    sms_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + (
+        '\nsms_dids = ["613-480-5878", "+17254043234", "  ", "986-276-3234"]\n'
+    )
+    path = make_config_file(append=VALID_TELEPHONY_TOML + sms_toml)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].sms_dids == ("6134805878", "17254043234", "9862763234")
+
+
+def test_announcement_sms_dids_non_list_rejected(make_config_file):
+    """A scalar `sms_dids` (not an array) is a hard config error."""
+    bad_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + '\nsms_dids = "6134805878"\n'
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="sms_dids"):
+        load_telephony_config(path)
+
+
+def test_shipped_telephony_toml_arms_sms_did(make_config_file):
+    """The shipped configs/telephony.toml announcement entry carries the
+    live SMS-enabled sending DID (6134805878, verified 2026-07-16)."""
+    telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
+    cfg = load_telephony_config(telephony_toml_path)
+    assert cfg.announcements[0].sms_dids == ("6134805878",)
