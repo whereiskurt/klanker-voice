@@ -60,7 +60,7 @@ sops edit .secrets.sops.json
   "oidc":       { "cookie_keys": "..." },
   "altcha":     { "secret": "..." },
   "ledger":     { "code_hash_salt": "..." },
-  "ctf":        { "otp_secret": "...", "auth_token": "..." }
+  "ctf":        { "otp_secret": "...", "auth_token": "...", "announcement_code": "..." }
 }
 ```
 
@@ -76,6 +76,13 @@ only). `ctf.auth_token` is the optional shared bearer for the internal-only
 standard SOPS → secrets module → SSM SecureString → container `valueFrom` flow;
 add them with `sops edit .secrets.sops.json` and apply the secrets unit BEFORE
 the ecs-task unit references the new `/kmv/secrets/use1/ctf/*` parameters.
+
+`ctf.announcement_code` (Revision 2, quick 260716-1g0) is the **DTMF access
+code** a caller keys in at the §24 gate to trigger the OTP readout (e.g.
+`990011`). Consumed by telephony-edge as `CTF_ANNOUNCEMENT_CODE`; operator can
+rotate it by editing the SOPS file + re-applying the secrets unit (no image
+rebuild). Semi-public (the MeshTastic bot hands it to players) but kept in SSM
+for rotation, never in TOML/git.
 
 ## Operator note: the ledger salt (Phase 15)
 
