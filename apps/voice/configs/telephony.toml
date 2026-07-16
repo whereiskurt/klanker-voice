@@ -123,3 +123,9 @@ line_template = "Hey! Let me get you that O T P. {code}. That's {code}."
 # (verified via getDIDsInfo); enable SMS on the others in the portal + append
 # them here for fallback depth.
 sms_dids = ["6134805878"]
+# The SMS is sent by POSTing to the auth app's internal /ctf/sms relay (quick
+# 260716-hg5 follow-up), NOT by calling VoIP.ms from here: VoIP.ms's API is
+# IP-allowlisted and this task's Fargate egress IP is ephemeral, while auth
+# egresses from the stable, whitelisted NAT EIP. The relay bearer reuses
+# otp_env_var (CTF_OTP_AUTH_TOKEN). Empty ⇒ no SMS is sent.
+sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"

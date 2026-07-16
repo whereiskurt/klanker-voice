@@ -239,6 +239,31 @@ Unit tests (pytest, mirroring the existing telephony suite; monkeypatch the modu
   raises/fails never affects teardown (still exactly one `_close_active_call`).
 - Log-discipline assertion: OTP, body, and `dst` never appear in emitted log records.
 
+## Revision 2026-07-16 — send via the auth relay (VoIP.ms API IP allowlist)
+
+Live debugging after ship found the direct-from-telephony-edge send **rejected**
+by VoIP.ms: its REST API is **IP-allowlisted**, and the telephony-edge Fargate
+task egresses from an **ephemeral** public IP that cannot be whitelisted (the
+task needs a public IP for SIP/RTP, so it can't sit behind the NAT). The `auth`
+service runs on a private subnet and egresses from the **stable NAT EIP**, which
+is whitelistable.
+
+So the send path changed: telephony-edge no longer calls VoIP.ms directly.
+Instead it **POSTs the built SMS to a new internal auth route** `POST
+/use1/ctf/sms` (`{to, message, dids}`, optional shared bearer reusing
+`CTF_OTP_AUTH_TOKEN`, uniform-404 no-oracle — mirrors `/ctf/otp`). Auth relays to
+VoIP.ms `sendSMS` (with the ordered-pool auto-fallback now living in
+`apps/auth/webapp/src/lib/voipms-sms.ts`) from its stable IP and returns
+`{sent:true}` / 404. VoIP.ms API creds moved to the **auth** task-def;
+`AnnouncementEntry` gained `sms_relay_url`; eligibility = `sms_dids` + `sms_relay_url`
++ NA caller. A separate delivery bug was also fixed: the SMS body must be **7-bit
+GSM-7** (an em-dash forced UCS-2, which this VoIP.ms→NA-mobile route silently
+drops even though `sendSMS` returns success).
+
+**Operator prerequisite:** whitelist the NAT EIP **`3.217.188.133`** in the
+VoIP.ms portal (Main Menu → SOAP/REST API → allowed IPs). Until then the relay
+still gets `ip_not_enabled` (now logged by both sides).
+
 ## Out of scope
 
 - MMS / media (QR image of the code) — SMS text only.
