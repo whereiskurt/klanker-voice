@@ -45,6 +45,14 @@ has `sms_forward_enabled=1`, `sms_forward=5197101515` — so the "spam text from
 own number" was inbound spam to the DID **forwarded** to the operator cell by a
 portal rule, **not** a klanker-voice bug and not the (then-unbuilt) SMS feature.
 
+## Shipped
+
+**PR #61 MERGED to main + telephony-edge DEPLOYED 2026-07-16** (Build: Telephony
+Edge → success; the deploy-concurrency gotcha did NOT bite — it queued behind the
+Voice deploy and ran). Feature is **DORMANT**: no VoIP.ms API creds in the task
+yet ⇒ `sms_eligible=False` ⇒ byte-identical legacy behavior. Gitleaks + Terragrunt
+Plan both passed on the PR.
+
 ## Commits (branch `worktree-otpnumber`)
 
 - `b56f857` docs(spec)
