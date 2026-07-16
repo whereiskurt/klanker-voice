@@ -192,23 +192,29 @@ CTF_OTP_FETCH_TIMEOUT_SECONDS = 3.0
 #: ``goodbye_grace_seconds`` (5s) used by ``_gate_fail_closed``'s own
 #: shorter fixed copy. NOTE: this is now the BASE grace for the surrounding
 #: speech only -- ``_gate_announcement`` adds per-digit pause time on top
-#: (``2 * len(code) * ANNOUNCEMENT_DIGIT_PAUSE_SECONDS``) so the slowed,
+#: (``2 * len(code) * ANNOUNCEMENT_SLOW_DIGIT_SECONDS``) so the slowed,
 #: spoken-twice readout is never cut off mid-number.
 ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS = 12.0
 
-#: Silence inserted between each spoken digit of the OTP readout so the
-#: caller can write the number down (the operator asked for it to "slow WAY
-#: down"). Rendered as an ElevenLabs ``<break time="Xs" />`` tag AND a
-#: trailing period per digit (belt-and-suspenders: the period paces the
-#: read even if a model ignores the break tag). Tunable -- raise for a
-#: slower read, lower for a snappier one.
-ANNOUNCEMENT_DIGIT_PAUSE_SECONDS = 1.0
+#: How each digit of the slow, write-it-down OTP read is separated so the
+#: caller can copy it (the operator asked for it to "slow WAY down").
+#: IMPORTANT: this uses ONLY plain punctuation (period + ellipsis) that TTS
+#: renders as a PAUSE and never speaks aloud. An earlier version used
+#: ElevenLabs ``<break time="Xs" />`` tags, but the streaming ElevenLabs path
+#: pipecat uses does NOT interpret them -- it read the tag markup ALOUD
+#: ("borked" readout). NEVER put angle-bracket markup in a spoken line here.
+#: Tunable -- add more dots / periods for a slower read.
+ANNOUNCEMENT_SLOW_DIGIT_SEP = ". ... "
 
-#: Shrinking inter-digit pauses for the panic-readout gag's accelerating
-#: passes (quick task 260716-2px), rendered in this same order after the
-#: slow x2 read: 0.3s -> 0.15s -> 0.0s (run fast, still digit-separated by
-#: a plain space so ElevenLabs never reads it as one number). Tunable.
-ANNOUNCEMENT_ACCEL_PAUSES: tuple[float, ...] = (0.3, 0.15, 0.0)
+#: Rough spoken time (seconds) per digit in the slow read, used ONLY to size
+#: the teardown grace so the spoken-twice read is never cut off.
+ANNOUNCEMENT_SLOW_DIGIT_SECONDS = 0.9
+
+#: The panic-readout gag's accelerating passes (quick task 260716-2px), as
+#: shrinking PLAIN-PUNCTUATION separators (again: NO markup tags), rendered in
+#: order after the slow x2 read -- comma-paced then space-paced (fast, still
+#: digit-separated so ElevenLabs never reads the code as one number). Tunable.
+ANNOUNCEMENT_ACCEL_SEPS: tuple[str, ...] = (", ", " ")
 
 #: Spoken copy for the panic-readout gag tail (quick task 260716-2px):
 #: after the slow x2 OTP read, the agent asks if the caller got it, denies
@@ -286,35 +292,28 @@ async def _fetch_tel_token(url: str, headers: dict[str, str]) -> str | None:
 
 def _pace_digits_slow(code: str) -> str:
     """Digit-space ``code`` for the slow, write-it-down read (quick task
-    260715-oq0, factored out unchanged for the panic-readout gag by quick
-    task 260716-2px): each digit gets a trailing period and a
-    ``<break time="Ns" />`` tag between digits (e.g. ``"123456"`` ->
-    ``'1. <break time="1.0s" /> 2. <break ...> ... 6.'``) so TTS reads it
-    slowly, one digit at a time, with a real pause the caller can write
-    down (``ANNOUNCEMENT_DIGIT_PAUSE_SECONDS``)."""
-    return f' <break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" /> '.join(
-        f"{digit}." for digit in code
-    )
+    260715-oq0; markup-free rewrite in quick task 260716-3xx): each digit is
+    separated by ``ANNOUNCEMENT_SLOW_DIGIT_SEP`` -- plain punctuation
+    (``". ... "``: a period + an ellipsis) that TTS renders as a PAUSE and
+    NEVER speaks aloud (e.g. ``"123456"`` -> ``"1. ... 2. ... 3. ... 4. ...
+    5. ... 6"``). NO ``<break>`` markup -- the streaming ElevenLabs path reads
+    those tags aloud."""
+    return ANNOUNCEMENT_SLOW_DIGIT_SEP.join(code)
 
 
 def _build_accel_tail(code: str) -> str:
-    """Build the panic-readout gag tail (quick task 260716-2px): "Did you
-    get that? ... No?" followed by ``ANNOUNCEMENT_ACCEL_PAUSES`` accelerating
-    re-reads of ``code`` (shrinking ``<break>`` tags, periods dropped) and
-    an abrupt, drawn-out goodbye. Digits are ALWAYS space-or-break separated
-    -- never concatenated -- so ElevenLabs never reads the code as one
-    number. The last accelerating pass (``pause == 0.0``) is a plain single
-    space join (fastest, still digit-separated). NO break tag immediately
-    precedes ``ANNOUNCEMENT_BYE_COPY`` -- the cut into it must be abrupt."""
-    passes = []
-    for pause in ANNOUNCEMENT_ACCEL_PAUSES:
-        if pause > 0:
-            passes.append(f' <break time="{pause}s" /> '.join(code))
-        else:
-            passes.append(" ".join(code))
+    """Build the panic-readout gag tail (quick task 260716-2px; markup-free
+    rewrite in 260716-3xx): "Did you get that? ... No?" followed by
+    accelerating re-reads of ``code`` using the shrinking plain-punctuation
+    separators in ``ANNOUNCEMENT_ACCEL_SEPS`` (comma-paced then space-paced),
+    then an abrupt, drawn-out goodbye. Digits are ALWAYS separated by a comma
+    or a space -- never concatenated -- so ElevenLabs never reads the code as
+    one number. NO markup tags anywhere, and NO pause punctuation immediately
+    before ``ANNOUNCEMENT_BYE_COPY`` -- the cut into it must be abrupt."""
+    passes = [sep.join(code) for sep in ANNOUNCEMENT_ACCEL_SEPS]
     accel = " ".join(passes)
     return (
-        f'{ANNOUNCEMENT_DIDYOUGET_COPY} <break time="0.5s" /> ... '
+        f"{ANNOUNCEMENT_DIDYOUGET_COPY} ... "
         f"{ANNOUNCEMENT_NO_COPY} {accel} {ANNOUNCEMENT_BYE_COPY}"
     )
 
@@ -1086,7 +1085,7 @@ class AsteriskCallController:
         # never cut off mid-playback by the teardown.
         grace = (
             ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS
-            + 2 * len(code) * ANNOUNCEMENT_DIGIT_PAUSE_SECONDS
+            + 2 * len(code) * ANNOUNCEMENT_SLOW_DIGIT_SECONDS
             + ANNOUNCEMENT_GAG_TAIL_SECONDS
         )
         await asyncio.sleep(grace)
