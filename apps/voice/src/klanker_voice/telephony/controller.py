@@ -98,6 +98,7 @@ code here introduces a new place credentials could leak.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import time
@@ -109,14 +110,18 @@ from urllib.parse import quote
 
 import aiohttp
 from loguru import logger
+from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.workers.runner import WorkerRunner
 
 from klanker_voice import quota
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
 from klanker_voice.call_runtime import CallIdentity, CallSession, create_call_session
 from klanker_voice.config import DuplexConfig, KnowledgeConfig, PipelineConfig, QuotaConfig
-from klanker_voice.pipeline import greet_now, speak_goodbye
+from klanker_voice.factories import build_tts
+from klanker_voice.pipeline import build_worker, greet_now, speak_goodbye
 from klanker_voice.telephony.ari import AriClient, AriError
-from klanker_voice.telephony.config import TelephonyConfig
+from klanker_voice.telephony.config import AnnouncementEntry, TelephonyConfig
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf
 from klanker_voice.telephony.pickup_cue import play_pickup_cue
 from klanker_voice.telephony.rtp_socket import SocketRtpMediaSession
@@ -157,6 +162,22 @@ GATE_FAIL_CLOSED_COPY = (
 #: hears anything -- a slow/unresponsive mint endpoint must never hang a
 #: caller indefinitely.
 TEL_MINT_TIMEOUT_SECONDS = 3.0
+
+#: Short timeout for the CTF phone-OTP /ctf/otp fetch (quick task 260715-oq0,
+#: T-OTP-05) -- mirrors TEL_MINT_TIMEOUT_SECONDS: a slow/unresponsive auth
+#: endpoint must never hang the announcement-DID call.
+CTF_OTP_FETCH_TIMEOUT_SECONDS = 3.0
+
+#: Bounded wait for the OTP announcement line to finish playing before the
+#: minimal TTS-only pipeline is cancelled and the call torn down (T-OTP-05).
+#: Mirrors the existing goodbye leg's proven pattern (call_runtime.py
+#: ``_on_stop``: ``speak_goodbye`` -> ``asyncio.sleep(goodbye_grace_seconds)``
+#: -> ``runner.cancel``) rather than a frame-level completion event -- a
+#: fixed, generous grace period so a stuck TTS synth can NEVER hang the PSTN
+#: line. The spoken line is two digit-spaced 6-digit reads plus a short
+#: intro/outro (roughly 25 spoken "words"); 12s is comfortably above a
+#: natural reading of that length even with ElevenLabs' slower delivery.
+ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS = 12.0
 
 _E164_STRIP_RE = re.compile(r"[^\d+]")
 
@@ -206,6 +227,43 @@ async def _fetch_tel_token(url: str, headers: dict[str, str]) -> str | None:
         return None
     token = data.get("token") if isinstance(data, dict) else None
     return token if isinstance(token, str) and token else None
+
+
+def _build_announcement_line(template: str, code: str) -> str:
+    """Substitute the digit-spaced ``code`` into every ``{code}`` occurrence
+    of ``template`` (quick task 260715-oq0). Digit-spacing is a plain
+    space-join over the code string (``"123456"`` -> ``"1 2 3 4 5 6"``) so
+    TTS reads it one digit at a time; ``str.replace`` substitutes EVERY
+    occurrence, matching the design's "speak it twice" template shape. A
+    standalone, pure, module-level function so it's unit-testable without a
+    call (no controller/ARI/pipeline dependency)."""
+    return template.replace("{code}", " ".join(code))
+
+
+async def _fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
+    """Issue the private ``/ctf/otp`` GET request (quick task 260715-oq0),
+    returning the current-step OTP code string on a 200 JSON response with a
+    non-empty ``code`` field, or ``None`` for ANY failure -- non-200 (incl.
+    the endpoint's own uniform 404 no-oracle response), timeout, network
+    error, or a malformed body. Never raises (T-OTP-05: every failure mode
+    fails closed identically). Never logs the URL or any response body
+    content (T-OTP-04).
+
+    Mirrors :func:`_fetch_tel_token` exactly, including being a module-level
+    function (not a method) so tests can monkeypatch it directly to avoid a
+    real network call."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=CTF_OTP_FETCH_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+    except Exception:  # noqa: BLE001 -- any transport/parse failure is a fetch failure, never fatal
+        logger.warning("ctf otp: /ctf/otp request failed (transport/parse error)")
+        return None
+    code = data.get("code") if isinstance(data, dict) else None
+    return code if isinstance(code, str) and code else None
 
 
 def _bypass_gate_result() -> quota.GateResult:
@@ -328,6 +386,14 @@ class AsteriskCallController:
             raw_words = os.environ.get(PASSPHRASE_WORDS_ENV_VAR, "")
             self._passphrase_words = frozenset(w.strip().lower() for w in raw_words.split() if w.strip())
 
+        #: Quick task 260715-oq0: DID -> AnnouncementEntry, built once from
+        #: telephony_cfg.announcements (empty dict for every deployment
+        #: without an [[telephony.announcement]] table -- the default,
+        #: byte-unaffected case).
+        self._announcements_by_did: dict[str, AnnouncementEntry] = {
+            entry.did: entry for entry in telephony_cfg.announcements
+        }
+
         #: D-02's registry, keyed by the original Asterisk SIP channel ID.
         self.calls: dict[str, ActiveCall] = {}
 
@@ -437,6 +503,24 @@ class AsteriskCallController:
             subject=f"tel:{caller_id or sip_channel_id}", authenticated=True, auth_method="pstn"
         )
 
+        # Quick task 260715-oq0 (CTF phone-OTP announcement DID): a matched
+        # DID dispatches to _run_announcement and returns BEFORE the §24
+        # gate -- no mint, no quota.start_gate, no STT/LLM/conversation
+        # pipeline, no ActiveCall registered. Exact-string match on the
+        # normalized raw exten (the TOML `did` is "7254043234", NOT the
+        # +E.164 form).
+        announcement_entry = self._announcements_by_did.get(did)
+        if announcement_entry is not None:
+            await self._run_announcement(
+                sip_channel_id=sip_channel_id,
+                entry=announcement_entry,
+                transport=transport,
+                media=media,
+                bridge_id=bridge_id,
+                external_media_channel_id=external_media_channel_id,
+            )
+            return
+
         if not self._telephony_cfg.require_gate:
             await self._finish_stasis_start_ungated(
                 sip_channel_id=sip_channel_id,
@@ -459,6 +543,82 @@ class AsteriskCallController:
             external_media_channel_id=external_media_channel_id,
             transport=transport,
             identity=identity,
+        )
+
+    async def _run_announcement(
+        self,
+        *,
+        sip_channel_id: str,
+        entry: AnnouncementEntry,
+        transport: TelephonyTransport,
+        media: RtpMediaSession,
+        bridge_id: str,
+        external_media_channel_id: str,
+    ) -> None:
+        """CTF phone-OTP announcement DID (quick task 260715-oq0, design doc
+        docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-
+        design.md): fetch the current OTP from ``entry.otp_url``, speak it
+        (digit-spaced, twice) over the SAME RTP transport/media/bridge
+        ``on_stasis_start`` already allocated, then hang up. No STT, no LLM,
+        no §24 gate, no quota -- this call is NEVER registered as an
+        ``ActiveCall``, so it is torn down via the same pre-ActiveCall
+        :meth:`_teardown_gate_resources` every other early-failure path
+        uses (quota-denied, allocation failure), not the ActiveCall-based
+        :meth:`_close_active_call`.
+
+        The channel is already answered and the bridge/external-media
+        already exist (both happen upstream in ``on_stasis_start`` before
+        this is ever called) -- this method only needs a minimal TTS-only
+        pipeline (``tts -> transport.output()``, NOT the full
+        ``create_call_session``/``build_pipeline`` cascade) to speak one
+        line over the existing media path.
+
+        On any OTP-fetch failure (non-200, network error, malformed body --
+        ``_fetch_ctf_otp`` returns ``None`` uniformly) the call tears down
+        immediately with NO spoken line (v1 has no error copy, per the
+        design doc). On success, the built line is queued via the same
+        ``TTSSpeakFrame`` seam ``pipeline.speak_goodbye`` uses, then given a
+        bounded grace period to finish playing -- mirroring
+        ``create_call_session``'s own goodbye-leg pattern (queue the frame,
+        sleep a fixed grace period, then cancel the runner) rather than a
+        frame-level completion event, so a stuck synth can NEVER hang the
+        PSTN line (T-OTP-05) -- before the minimal pipeline is cancelled and
+        the shared teardown runs.
+
+        Logging discipline (§13/T-OTP-04): never logs the code, the
+        otp_url, or the bearer -- only the DID and channel id.
+        """
+        bearer = os.environ.get(entry.otp_env_var, "") if entry.otp_env_var else ""
+        headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+        code = await _fetch_ctf_otp(entry.otp_url, headers)
+        if not code:
+            logger.warning(
+                f"announcement: OTP fetch failed did={entry.did!r} channel={sip_channel_id!r}"
+            )
+            await self._teardown_gate_resources(
+                bridge_id, external_media_channel_id, media, sip_channel_id
+            )
+            return
+
+        line = _build_announcement_line(entry.line_template, code)
+
+        tts = build_tts(self._cfg)
+        pipeline = Pipeline([tts, transport.output()])
+        worker = build_worker(pipeline)
+        runner = WorkerRunner(handle_sigint=False)
+        await runner.add_workers(worker)
+        run_task = asyncio.create_task(runner.run())
+        try:
+            await worker.queue_frames([TTSSpeakFrame(text=line, append_to_context=False)])
+            await asyncio.sleep(ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS)
+        finally:
+            await runner.cancel("announcement playback complete")
+            with contextlib.suppress(Exception):
+                await run_task
+
+        logger.info(f"announcement: played did={entry.did!r} channel={sip_channel_id!r}")
+        await self._teardown_gate_resources(
+            bridge_id, external_media_channel_id, media, sip_channel_id
         )
 
     def _register_pickup_cue(self, transport: TelephonyTransport, call_session: CallSession) -> None:

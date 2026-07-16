@@ -167,3 +167,101 @@ def test_telephony_table_must_be_a_table(tmp_path: Path):
     path.write_text("telephony = 1\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="\\[telephony\\] must be a table"):
         load_telephony_config(path)
+
+
+# --- Quick task 260715-oq0: [[telephony.announcement]] (CTF phone-OTP) -----
+
+VALID_ANNOUNCEMENT_TOML = """
+[[telephony.announcement]]
+did = "7254043234"
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
+otp_env_var = "CTF_OTP_AUTH_TOKEN"
+line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
+"""
+
+
+def test_absent_announcement_table_yields_empty_tuple_byte_unchanged(make_config_file):
+    """Absent [[telephony.announcement]] -> announcements == () and every
+    other field stays at its documented default -- byte-identical to the
+    pre-260715-oq0 TelephonyConfig shape."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements == ()
+    assert cfg == TelephonyConfig(
+        enabled=True,
+        provider="voipms",
+        edge="asterisk-ari",
+        codec="pcmu",
+        sample_rate=8000,
+        packet_ms=20,
+        max_concurrent_calls=1,
+        answer_timeout_seconds=15,
+        hangup_on_pipeline_error=True,
+        require_gate=True,
+        gate_mode="either",
+        gate_window_seconds=10,
+        unlock_tier_id="kph-tier",
+    )
+
+
+def test_well_formed_announcement_entry_parses(make_config_file):
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert len(cfg.announcements) == 1
+    entry = cfg.announcements[0]
+    assert entry.did == "7254043234"
+    assert entry.otp_url == "https://auth.klankermaker.ai/use1/ctf/otp"
+    assert entry.otp_env_var == "CTF_OTP_AUTH_TOKEN"
+    assert entry.line_template == "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
+
+
+def test_announcement_entry_without_code_placeholder_rejected(make_config_file):
+    bad_toml = VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML.replace(
+        'line_template = "Hey! Let me get you that O T P. {code}. That\'s {code}. Buh bye."',
+        'line_template = "Hey! Let me get you that OTP. Buh bye."',
+    )
+    path = make_config_file(append=bad_toml)
+    with pytest.raises(ConfigError, match="line_template"):
+        load_telephony_config(path)
+
+
+def test_announcement_entry_missing_did_rejected(make_config_file):
+    bad_toml = VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML.replace(
+        'did = "7254043234"', 'did = ""'
+    )
+    path = make_config_file(append=bad_toml)
+    with pytest.raises(ConfigError, match="did"):
+        load_telephony_config(path)
+
+
+def test_announcement_entry_missing_otp_url_rejected(make_config_file):
+    bad_toml = VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML.replace(
+        'otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"\n', ""
+    )
+    path = make_config_file(append=bad_toml)
+    with pytest.raises(ConfigError, match="otp_url"):
+        load_telephony_config(path)
+
+
+def test_announcement_otp_env_var_optional_defaults_empty(make_config_file):
+    """otp_env_var is optional -- an entry omitting it still parses (an
+    unconfigured bearer means no Authorization header is sent at call time)."""
+    no_env_var_toml = VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML.replace(
+        'otp_env_var = "CTF_OTP_AUTH_TOKEN"\n', ""
+    )
+    path = make_config_file(append=no_env_var_toml)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].otp_env_var == ""
+
+
+def test_real_checked_in_telephony_toml_has_announcement_entry():
+    """apps/voice/configs/telephony.toml (the standalone telephony-edge
+    harness config, NOT pipeline.toml) carries the concrete 7254043234
+    announcement entry."""
+    telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
+    cfg = load_telephony_config(telephony_toml_path)
+    assert len(cfg.announcements) == 1
+    entry = cfg.announcements[0]
+    assert entry.did == "7254043234"
+    assert entry.otp_env_var == "CTF_OTP_AUTH_TOKEN"
+    assert "{code}" in entry.line_template

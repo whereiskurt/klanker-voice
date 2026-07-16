@@ -206,6 +206,15 @@ locals {
             name      = "TELEPHONY_PASSPHRASE_WORDS"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/telephony/passphrase_words"
           },
+          {
+            # CTF phone-OTP announcement DID (quick 260715-oq0): the controller's
+            # _run_announcement path sends this as the Bearer to auth's internal
+            # /ctf/otp route (the token NAME is in configs/telephony.toml as
+            # otp_env_var; only the VALUE lives here, in SSM). Same shared token
+            # auth enforces as CTF_OTP_AUTH_TOKEN.
+            name      = "CTF_OTP_AUTH_TOKEN"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/auth_token"
+          },
           # The telephony pipeline runs IN this container (Phase-9
           # call_runtime): after gate unlock it builds the same
           # STT/LLM/TTS cascade the voice service runs, so it needs the
