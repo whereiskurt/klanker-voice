@@ -119,6 +119,21 @@ def test_sms_dst_from_caller(caller, expected):
 # --- _build_announcement_script branch ---------------------------------------
 
 
+def test_sms_body_is_gsm7_ascii_safe():
+    """REGRESSION (quick 260716-hg5 follow-up, live-proven): the SMS body MUST
+    be pure 7-bit ASCII. A single non-GSM char (em-dash, curly quote, …) forces
+    UCS-2 and the VoIP.ms -> NA-mobile route SILENTLY DROPS UCS-2 while sendSMS
+    still returns success. The em-dash body never arrived; the ASCII body did.
+    Check the FORMATTED body (the {code} braces are substituted away before the
+    wire send)."""
+    from klanker_voice.telephony.controller import ANNOUNCEMENT_SMS_BODY_TEMPLATE
+
+    body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code="482913")
+    non_ascii = [c for c in body if ord(c) >= 128]
+    assert non_ascii == [], f"SMS body has non-GSM-7 (UCS-2-forcing) chars: {non_ascii!r}"
+    assert "{" not in body and "}" not in body  # no leftover template braces on the wire
+
+
 def test_script_ineligible_is_byte_identical_to_legacy():
     """sms_eligible defaults to False -> the closing beat is the legacy
     ANNOUNCEMENT_BYE_COPY and the output is byte-identical to the pre-hg5
@@ -163,6 +178,26 @@ async def test_send_sms_success_on_200_and_status_success(monkeypatch):
 async def test_send_sms_false_on_non_success_status(monkeypatch):
     _patch_session(monkeypatch, status=200, payload={"status": "invalid_did"})
     assert await _send_sms("6134805878", "5197101515", "b", "u", "p") is False
+
+
+async def test_send_sms_logs_voipms_status_enum_on_rejection(monkeypatch):
+    """On a non-success VoIP.ms response the send logs the status ENUM (e.g.
+    ip_not_enabled) so an operator can diagnose WHY a send was rejected -- a
+    live 260716-hg5 call failed silently before this existed. The enum is a
+    non-secret token; the body/dst/creds are still never logged."""
+    from loguru import logger
+
+    _patch_session(monkeypatch, status=200, payload={"status": "ip_not_enabled"})
+    captured: list[str] = []
+    sink_id = logger.add(lambda m: captured.append(str(m)), level="DEBUG")
+    try:
+        ok = await _send_sms("6134805878", "5197101515", "secret-body", "u", "p")
+    finally:
+        logger.remove(sink_id)
+    assert ok is False
+    blob = "\n".join(captured)
+    assert "ip_not_enabled" in blob          # the diagnostic enum IS surfaced
+    assert "secret-body" not in blob         # the message body is NOT logged
 
 
 async def test_send_sms_false_on_non_200(monkeypatch):

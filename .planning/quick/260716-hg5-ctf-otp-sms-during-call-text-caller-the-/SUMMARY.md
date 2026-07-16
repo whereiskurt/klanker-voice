@@ -45,6 +45,22 @@ has `sms_forward_enabled=1`, `sms_forward=5197101515` — so the "spam text from
 own number" was inbound spam to the DID **forwarded** to the operator cell by a
 portal rule, **not** a klanker-voice bug and not the (then-unbuilt) SMS feature.
 
+## Shipped — LIVE
+
+**PR #61 MERGED + telephony-edge deployed + creds live 2026-07-16.** Gitleaks +
+Terragrunt Plan passed on the PR. The post-merge `deploy.yml` (Build: Telephony
+Edge, triggered by the `apps/voice/**` change) APPLIED the ecs task-def terragrunt
+unit with the merged `service.hcl` AS PART OF DEPLOY, using the resolved image —
+so the VoIP.ms API cred secrets landed with **no separate `terragrunt-apply`
+dispatch** and no image-revert. Verified live (via `--profile klanker-application`):
+- task-def **rev 28** carries `VOIPMS_API_USERNAME`/`VOIPMS_API_PASSWORD`;
+- image `7fcf8cc` = main HEAD (has the code + `sms_dids=["6134805878"]`);
+- service PRIMARY / rollout COMPLETED / 1-1 running;
+- `6134805878` `sms_enabled=1 sms_forward_enabled=0` — forwarding disabled (spam
+  echo fixed), SMS still enabled for sending.
+
+Password rotation deferred per operator. Live end-to-end phone test pending.
+
 ## Commits (branch `worktree-otpnumber`)
 
 - `b56f857` docs(spec)
