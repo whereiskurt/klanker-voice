@@ -315,33 +315,35 @@ def test_build_announcement_script_slow_read_twice_then_panic_gag():
     from klanker_voice.telephony.controller import (
         ANNOUNCEMENT_BYE_COPY,
         ANNOUNCEMENT_DIDYOUGET_COPY,
-        ANNOUNCEMENT_DIGIT_PAUSE_SECONDS,
         ANNOUNCEMENT_NO_COPY,
+        _pace_digits_slow,
     )
 
     line = _build_announcement_script("A {code}. That's {code}.", "123456")
-    paced = f' <break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" /> '.join(
-        f"{d}." for d in "123456"
-    )
-    # slow paced read (existing 260715-oq0 behavior) still appears TWICE --
-    # both {code} occurrences substituted
-    assert line.count(paced) == 2
-    # a real pause between every digit, in each of the two slow reads
-    assert line.count(f'<break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" />') == 10
+
+    # NO markup tags anywhere -- the streaming ElevenLabs path reads angle-tag
+    # markup ALOUD (the "borked" readout). Pacing is plain punctuation only.
+    assert "<break" not in line
+    assert "/>" not in line
+
+    # slow paced read still appears TWICE -- both {code} occurrences substituted
+    assert line.count(_pace_digits_slow("123456")) == 2
 
     # gag tail present: "Did you get that? ... No?" then the abrupt bye
     assert ANNOUNCEMENT_DIDYOUGET_COPY in line
     assert ANNOUNCEMENT_NO_COPY in line
     assert ANNOUNCEMENT_BYE_COPY in line
 
-    # accelerating passes present with shrinking break tags
-    assert '<break time="0.3s" />' in line
-    assert '<break time="0.15s" />' in line
-    # the fastest pass is single-space digit separated (never concatenated)
+    # accelerating passes: comma-paced then space-paced (both digit-separated)
+    assert "1, 2, 3, 4, 5, 6" in line
     assert "1 2 3 4 5 6" in line
 
     # digits are NEVER concatenated into a bare number at any speed
     assert "123456" not in line
+
+    # the cut into the bye is abrupt -- no pause punctuation right before it
+    assert f". {ANNOUNCEMENT_BYE_COPY}" not in line
+    assert f", {ANNOUNCEMENT_BYE_COPY}" not in line
 
     # abrupt cut into BYE -- no break tag immediately precedes it
     assert f'/> {ANNOUNCEMENT_BYE_COPY}' not in line
