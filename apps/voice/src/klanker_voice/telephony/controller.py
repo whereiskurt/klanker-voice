@@ -219,11 +219,11 @@ ANNOUNCEMENT_ACCEL_SEPS: tuple[str, ...] = (", ", " ")
 #: Spoken copy for the panic-readout gag tail (quick task 260716-2px):
 #: after the slow x2 OTP read, the agent asks if the caller got it, denies
 #: them a moment, re-reads the digits in accelerating passes, then cuts
-#: dead into an abrupt, drawn-out goodbye (NO break tag before it -- the
-#: whole point is the abruptness).
+#: straight into a sign-off and hangs up immediately (the accel-to-sign-off
+#: cut is abrupt -- no pause punctuation before it).
 ANNOUNCEMENT_DIDYOUGET_COPY = "Did you get that?"
 ANNOUNCEMENT_NO_COPY = "No?"
-ANNOUNCEMENT_BYE_COPY = "BYYYYYEEEE!"
+ANNOUNCEMENT_BYE_COPY = "Good luck! Hack the planet!"
 
 #: Grace-period budget (seconds) reserved for the panic-readout gag tail
 #: ("Did you get that? ... No?" + the accelerating digit passes + the
