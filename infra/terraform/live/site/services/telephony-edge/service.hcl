@@ -187,6 +187,21 @@ locals {
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/sip_password"
           },
           {
+            # VoIP.ms REST API creds (quick 260716-hg5): consumed by the Python
+            # controller's SMS-during-call path (_send_sms -> sendSMS) to text
+            # the caller a written copy of the CTF OTP. DISTINCT from the SIP
+            # creds above (which Asterisk uses for the trunk). The IAM policy
+            # already grants ssm:GetParameter on /kmv/secrets/use1/voipms/* and
+            # these parameters already exist (kv uses the same two). Values are
+            # SSM-only, never in TOML/git, never logged.
+            name      = "VOIPMS_API_USERNAME"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/api_username"
+          },
+          {
+            name      = "VOIPMS_API_PASSWORD"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/api_password"
+          },
+          {
             name      = "ASTERISK_ARI_USERNAME"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/asterisk/ari_username"
           },
