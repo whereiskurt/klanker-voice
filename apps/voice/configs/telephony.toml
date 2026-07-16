@@ -97,13 +97,19 @@ unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (m
 # ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
 # TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.
 
-# CTF phone-OTP announcement DID (quick task 260715-oq0, design doc
-# docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md).
-# A call to this DID skips the §24 gate entirely -- answer, fetch the current
-# OTP, speak it, hang up. otp_env_var carries only the NAME of the bearer env
-# var; the CTF_OTP_AUTH_TOKEN VALUE is env/SSM-only, never here (D-09).
+# CTF phone-OTP announcement (quick task 260716-1g0, Revision 2 -- design doc
+# docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md,
+# "Revision 2 (2026-07-16) -- DTMF-code trigger, not DID" section). A caller
+# INSIDE the existing §24 answer-gate who enters the armed DTMF code hears
+# the current OTP (digit-spaced, twice) and the line hangs up -- no mint, no
+# quota, no concierge. Revision 1's DID-keyed pre-gate dispatch never fired
+# on a live call: VoIP.ms routes all DIDs to one sub-account, so the dialed
+# number is not visible at the edge. otp_env_var/code_env_var carry only env
+# var NAMES; the CTF_OTP_AUTH_TOKEN bearer and the CTF_ANNOUNCEMENT_CODE
+# trigger value are env/SSM-only, never here (D-09).
 [[telephony.announcement]]
-did = "7254043234"                     # Las Vegas DID; matches the normalized dialplan exten
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"     # NAME only; token VALUE from env/SSM at call time (D-09)
+code_env_var = "CTF_ANNOUNCEMENT_CODE"  # NAME only; value 990011 lives in SSM (/kmv/secrets/use1/ctf/announcement_code), never TOML (D-09)
 line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
+# did = "7254043234"   # informational only -- NOT visible at the edge (all DIDs arrive as the sub-account 557010_klanker-pbx)
