@@ -169,11 +169,12 @@ def test_telephony_table_must_be_a_table(tmp_path: Path):
         load_telephony_config(path)
 
 
-# --- Quick task 260715-oq0: [[telephony.announcement]] (CTF phone-OTP) -----
+# --- Quick task 260716-1g0: [[telephony.announcement]] (CTF phone-OTP,
+# Revision 2 -- DTMF-code trigger, not DID) ----------------------------------
 
 VALID_ANNOUNCEMENT_TOML = """
 [[telephony.announcement]]
-did = "7254043234"
+code_env_var = "CTF_ANNOUNCEMENT_CODE"
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"
 line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
@@ -209,10 +210,11 @@ def test_well_formed_announcement_entry_parses(make_config_file):
     cfg = load_telephony_config(path)
     assert len(cfg.announcements) == 1
     entry = cfg.announcements[0]
-    assert entry.did == "7254043234"
+    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE"
     assert entry.otp_url == "https://auth.klankermaker.ai/use1/ctf/otp"
     assert entry.otp_env_var == "CTF_OTP_AUTH_TOKEN"
     assert entry.line_template == "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
+    assert entry.did == ""
 
 
 def test_announcement_entry_without_code_placeholder_rejected(make_config_file):
@@ -225,13 +227,21 @@ def test_announcement_entry_without_code_placeholder_rejected(make_config_file):
         load_telephony_config(path)
 
 
-def test_announcement_entry_missing_did_rejected(make_config_file):
+def test_announcement_entry_missing_code_env_var_rejected(make_config_file):
     bad_toml = VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML.replace(
-        'did = "7254043234"', 'did = ""'
+        'code_env_var = "CTF_ANNOUNCEMENT_CODE"', 'code_env_var = ""'
     )
     path = make_config_file(append=bad_toml)
-    with pytest.raises(ConfigError, match="did"):
+    with pytest.raises(ConfigError, match="code_env_var"):
         load_telephony_config(path)
+
+
+def test_announcement_did_optional_defaults_empty(make_config_file):
+    """Revision 2 (260716-1g0): `did` is no longer a matcher -- an entry
+    with no `did` line at all parses cleanly, defaulting to ""."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].did == ""
 
 
 def test_announcement_entry_missing_otp_url_rejected(make_config_file):
@@ -256,12 +266,25 @@ def test_announcement_otp_env_var_optional_defaults_empty(make_config_file):
 
 def test_real_checked_in_telephony_toml_has_announcement_entry():
     """apps/voice/configs/telephony.toml (the standalone telephony-edge
-    harness config, NOT pipeline.toml) carries the concrete 7254043234
-    announcement entry."""
+    harness config, NOT pipeline.toml) is code-keyed (Revision 2,
+    260716-1g0) -- the trigger value itself lives only in SSM."""
     telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
     cfg = load_telephony_config(telephony_toml_path)
     assert len(cfg.announcements) == 1
     entry = cfg.announcements[0]
-    assert entry.did == "7254043234"
+    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE"
     assert entry.otp_env_var == "CTF_OTP_AUTH_TOKEN"
     assert "{code}" in entry.line_template
+
+
+def test_credential_looking_key_inside_announcement_table_rejected(make_config_file):
+    """The shared credential gate refuses a credential-shaped key ANYWHERE
+    in the file, including inside an [[telephony.announcement]] table."""
+    bad_toml = (
+        VALID_TELEPHONY_TOML
+        + VALID_ANNOUNCEMENT_TOML.rstrip()
+        + '\ncode_secret = "oops"\n'
+    )
+    path = make_config_file(append=bad_toml)
+    with pytest.raises(ConfigError, match="credential"):
+        load_telephony_config(path)

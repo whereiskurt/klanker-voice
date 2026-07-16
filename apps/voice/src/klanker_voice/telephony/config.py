@@ -29,20 +29,34 @@ ALLOWED_GATE_MODES = frozenset({"dtmf", "passphrase", "either"})
 
 @dataclass(frozen=True)
 class AnnouncementEntry:
-    """One ``[[telephony.announcement]]`` table (quick task 260715-oq0, the
-    CTF phone-OTP announcement DID -- design doc
-    docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md).
+    """One ``[[telephony.announcement]]`` table (quick task 260716-1g0,
+    Revision 2 of the CTF phone-OTP announcement -- design doc
+    docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md,
+    "Revision 2 (2026-07-16) -- DTMF-code trigger, not DID" section).
 
-    A caller whose normalized DID matches ``did`` is routed to the
-    ``AsteriskCallController._run_announcement`` branch BEFORE the §24 gate:
-    no mint, no quota, no STT/LLM/conversation pipeline -- just fetch the
-    current OTP from ``otp_url`` and speak ``line_template`` (digit-spaced,
-    twice) over the existing RTP path, then hang up.
+    Revision 1 (DID-keyed, dispatched BEFORE the §24 gate) never fired on a
+    live call: VoIP.ms routes every DID to one sub-account, so the dialed
+    number is never visible at ``on_stasis_start`` (``did`` there is always
+    ``557010_klanker-pbx``). Revision 2 instead triggers the announcement by
+    a DTMF access code entered INSIDE the existing §24 answer-gate
+    (``AsteriskCallController._gate_announcement``, DID-agnostic) -- no
+    mint, no quota, no concierge, but the gate's redaction/fail-closed
+    machinery stays engaged the whole time.
 
     Attributes:
-        did: Compared against the normalized dialplan ``exten`` in
-            ``on_stasis_start`` (exact string match on the raw digits, NOT
-            the +E.164 form).
+        code_env_var: The NAME of the environment variable holding the DTMF
+            trigger code that arms this announcement (a short numeric
+            keypad sequence, value in SSM -- never in TOML, operator-
+            rotatable like
+            ``TELEPHONY_ACCESS_PIN``). REQUIRED at load time -- an entry
+            without one is meaningless (nothing could ever trigger it).
+            Splits to ``code``/``env``/``var``, none of which are credential
+            tokens, so it passes this module's shared
+            ``_reject_credential_fields`` gate cleanly (mirrors the working
+            ``otp_env_var``/``tel_mint_env_var`` precedent).
+        did: OPTIONAL/informational only (no longer a matcher -- Revision 2's
+            root-cause fix: the dialed DID is not visible at the edge, so it
+            can never gate dispatch). Defaults to ``""``.
         otp_url: The auth app's internal-only ``/ctf/otp`` issuer URL. A
             NON-secret plain URL, like ``tel_mint_url``.
         otp_env_var: The NAME of the environment variable holding the
@@ -66,10 +80,11 @@ class AnnouncementEntry:
             least one ``{code}`` occurrence.
     """
 
-    did: str
     otp_url: str
     otp_env_var: str = ""
     line_template: str = ""
+    code_env_var: str = ""
+    did: str = ""
 
 
 @dataclass(frozen=True)
@@ -231,9 +246,10 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
         if not isinstance(item, dict):
             raise ConfigError(f"telephony.announcement[{i}] must be a table")
 
+        # Revision 2 (260716-1g0): `did` is no longer a matcher -- it's
+        # optional/informational only (the dialed DID is never visible at
+        # the edge). No validation, no error on absence.
         did = str(item.get("did", "")).strip()
-        if not did:
-            raise ConfigError(f"telephony.announcement[{i}].did must be a non-empty string")
 
         otp_url = item.get("otp_url")
         if not otp_url or not isinstance(otp_url, str):
@@ -251,12 +267,19 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
 
         otp_env_var = str(item.get("otp_env_var", ""))
 
+        code_env_var = str(item.get("code_env_var", "")).strip()
+        if not code_env_var:
+            raise ConfigError(
+                f"telephony.announcement[{i}].code_env_var must be a non-empty string"
+            )
+
         entries.append(
             AnnouncementEntry(
                 did=did,
                 otp_url=otp_url,
                 otp_env_var=otp_env_var,
                 line_template=line_template,
+                code_env_var=code_env_var,
             )
         )
 

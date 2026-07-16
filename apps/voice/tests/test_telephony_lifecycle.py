@@ -214,6 +214,7 @@ def _build_controller(
     quota_cfg: quota.QuotaConfig | None = None,
     access_pin: str | None = None,
     passphrase_words: frozenset[str] | None = None,
+    announcement_codes: dict[str, Any] | None = None,
 ) -> tuple[AsteriskCallController, FakeAriClient, list[FakeRtpMediaSession]]:
     cfg = load_config(make_config_file())
     knowledge_cfg = load_knowledge_config()
@@ -236,6 +237,12 @@ def _build_controller(
         # from the environment.
         access_pin=access_pin if access_pin is not None else "",
         passphrase_words=passphrase_words if passphrase_words is not None else frozenset(),
+        # Quick task 260716-1g0: explicit injection seam (mirrors access_pin/
+        # passphrase_words) -- None means "resolve from telephony_cfg.
+        # announcements + os.environ" (the controller's own default), an
+        # explicit dict hermetically arms trigger codes without touching
+        # the real environment.
+        announcement_codes=announcement_codes,
     )
     return controller, ari, sessions
 

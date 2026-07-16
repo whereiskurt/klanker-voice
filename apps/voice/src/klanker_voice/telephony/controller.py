@@ -79,6 +79,23 @@ The PIN (``TELEPHONY_ACCESS_PIN``) and passphrase words
 :class:`AsteriskCallController` construction (or injected directly for
 tests) -- never re-read per call, never logged (D-05e).
 
+**CTF phone-OTP DTMF-code trigger (quick task 260716-1g0, Revision 2 --
+design doc docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-
+design.md).** A caller already INSIDE the §24 gate who enters an armed
+announcement code (checked AFTER the real PIN, only on a PIN miss) is
+dispatched to :meth:`_gate_announcement` from
+:meth:`on_channel_dtmf_received` -- fetches the current OTP and speaks it
+(digit-spaced, twice), then tears the call down via the single idempotent
+:meth:`_close_active_call`. Mirrors :meth:`_gate_fail_closed`'s shape
+exactly, but resolves the gate via :meth:`~klanker_voice.telephony.gate.
+GateProcessor.cancel_for_takeover` (NOT ``unlock``) so the §24 redaction
+boundary (D-05e) stays closed the whole time and no fail-closed timer can
+race the announcement's own goodbye. Never calls ``quota.start_gate`` or
+``greet_now`` -- no concierge, no metered session. Supersedes Revision 1's
+DID-keyed PRE-gate dispatch, which never fired on a live call (VoIP.ms
+routes every DID to one sub-account, so the dialed number is invisible at
+``on_stasis_start``).
+
 **Pickup cue (quick task 260713-m9n).** Both finish paths register a
 fire-once ``on_client_connected`` handler (:meth:`_register_pickup_cue`)
 that plays a short ring + pre-rendered KPH "hey" prompt
@@ -98,7 +115,6 @@ code here introduces a new place credentials could leak.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 import re
 import time
@@ -110,16 +126,12 @@ from urllib.parse import quote
 
 import aiohttp
 from loguru import logger
-from pipecat.frames.frames import TTSSpeakFrame
-from pipecat.pipeline.pipeline import Pipeline
-from pipecat.workers.runner import WorkerRunner
 
 from klanker_voice import quota
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
 from klanker_voice.call_runtime import CallIdentity, CallSession, create_call_session
 from klanker_voice.config import DuplexConfig, KnowledgeConfig, PipelineConfig, QuotaConfig
-from klanker_voice.factories import build_tts
-from klanker_voice.pipeline import build_worker, greet_now, speak_goodbye
+from klanker_voice.pipeline import greet_now, speak_goodbye
 from klanker_voice.telephony.ari import AriClient, AriError
 from klanker_voice.telephony.config import AnnouncementEntry, TelephonyConfig
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf
@@ -169,15 +181,25 @@ TEL_MINT_TIMEOUT_SECONDS = 3.0
 CTF_OTP_FETCH_TIMEOUT_SECONDS = 3.0
 
 #: Bounded wait for the OTP announcement line to finish playing before the
-#: minimal TTS-only pipeline is cancelled and the call torn down (T-OTP-05).
-#: Mirrors the existing goodbye leg's proven pattern (call_runtime.py
-#: ``_on_stop``: ``speak_goodbye`` -> ``asyncio.sleep(goodbye_grace_seconds)``
-#: -> ``runner.cancel``) rather than a frame-level completion event -- a
-#: fixed, generous grace period so a stuck TTS synth can NEVER hang the PSTN
-#: line. The spoken line is two digit-spaced 6-digit reads plus a short
-#: intro/outro (roughly 25 spoken "words"); 12s is comfortably above a
-#: natural reading of that length even with ElevenLabs' slower delivery.
+#: call is torn down (T-OTP-05). Mirrors the existing goodbye leg's proven
+#: pattern (``_gate_fail_closed``: ``speak_goodbye`` ->
+#: ``asyncio.sleep(...)`` -> ``_close_active_call``) rather than a
+#: frame-level completion event -- a fixed, generous grace period so a
+#: stuck TTS synth can NEVER hang the PSTN line. The spoken line is two
+#: digit-spaced 6-digit reads plus a short intro/outro (roughly 25 spoken
+#: "words"); 12s is comfortably above a natural reading of that length even
+#: with ElevenLabs' slower delivery. Longer than the plain
+#: ``goodbye_grace_seconds`` (5s) used by ``_gate_fail_closed``'s own
+#: shorter fixed copy.
 ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS = 12.0
+
+#: Bound on the raw trailing ARI DTMF digit buffer (quick task 260716-1g0)
+#: used ONLY for announcement-code suffix matching -- separate from
+#: ``ActiveCall.dtmf_buffer``, which stays windowed to ``len(pin)`` for the
+#: real PIN. Generous enough for fat-fingered noise before the 6-digit
+#: announcement code while staying bounded (never grows unbounded across a
+#: long gate window).
+DTMF_RAW_MAX_DIGITS = 32
 
 _E164_STRIP_RE = re.compile(r"[^\d+]")
 
@@ -318,6 +340,12 @@ class ActiveCall:
     #: The controller's own accumulated ARI ``ChannelDtmfReceived`` digit
     #: buffer for this call (Landmine 5: ARI delivers one event per digit).
     dtmf_buffer: str = ""
+    #: Quick task 260716-1g0 (Revision 2): a SEPARATE raw trailing-digit
+    #: buffer (bounded to ``DTMF_RAW_MAX_DIGITS``), used only for
+    #: announcement-code suffix matching -- additive, never replaces or
+    #: windows ``dtmf_buffer`` (the real PIN path stays byte-for-byte
+    #: unchanged).
+    dtmf_raw: str = ""
     #: Phase 12 Plan 06 (D-02/D-05): the tier :meth:`AsteriskCallController.
     #: _gate_unlock` grants on a successful gate factor. ``None`` means
     #: "never grant a tier for this call" -- set only when
@@ -364,6 +392,7 @@ class AsteriskCallController:
         media_session_opener: MediaSessionOpener = SocketRtpMediaSession.open,
         access_pin: str | None = None,
         passphrase_words: frozenset[str] | None = None,
+        announcement_codes: dict[str, AnnouncementEntry] | None = None,
     ) -> None:
         self._ari = ari
         self._cfg = cfg
@@ -386,13 +415,23 @@ class AsteriskCallController:
             raw_words = os.environ.get(PASSPHRASE_WORDS_ENV_VAR, "")
             self._passphrase_words = frozenset(w.strip().lower() for w in raw_words.split() if w.strip())
 
-        #: Quick task 260715-oq0: DID -> AnnouncementEntry, built once from
-        #: telephony_cfg.announcements (empty dict for every deployment
-        #: without an [[telephony.announcement]] table -- the default,
-        #: byte-unaffected case).
-        self._announcements_by_did: dict[str, AnnouncementEntry] = {
-            entry.did: entry for entry in telephony_cfg.announcements
-        }
+        #: Quick task 260716-1g0 (Revision 2): armed DTMF trigger code ->
+        #: AnnouncementEntry, built once from telephony_cfg.announcements.
+        #: Resolved from the explicit `announcement_codes` kwarg when a
+        #: caller (tests) injects one, else from os.environ[entry.
+        #: code_env_var] -- an entry whose env var is unset/empty is
+        #: skipped entirely (no trigger armed, gate behaves normally). Empty
+        #: dict for every deployment without an [[telephony.announcement]]
+        #: table, or where the code env var isn't set -- the default,
+        #: byte-unaffected case.
+        if announcement_codes is not None:
+            self._announcements_by_code: dict[str, AnnouncementEntry] = dict(announcement_codes)
+        else:
+            self._announcements_by_code = {
+                code: entry
+                for entry in telephony_cfg.announcements
+                if (code := os.environ.get(entry.code_env_var, "").strip())
+            }
 
         #: D-02's registry, keyed by the original Asterisk SIP channel ID.
         self.calls: dict[str, ActiveCall] = {}
@@ -503,24 +542,6 @@ class AsteriskCallController:
             subject=f"tel:{caller_id or sip_channel_id}", authenticated=True, auth_method="pstn"
         )
 
-        # Quick task 260715-oq0 (CTF phone-OTP announcement DID): a matched
-        # DID dispatches to _run_announcement and returns BEFORE the §24
-        # gate -- no mint, no quota.start_gate, no STT/LLM/conversation
-        # pipeline, no ActiveCall registered. Exact-string match on the
-        # normalized raw exten (the TOML `did` is "7254043234", NOT the
-        # +E.164 form).
-        announcement_entry = self._announcements_by_did.get(did)
-        if announcement_entry is not None:
-            await self._run_announcement(
-                sip_channel_id=sip_channel_id,
-                entry=announcement_entry,
-                transport=transport,
-                media=media,
-                bridge_id=bridge_id,
-                external_media_channel_id=external_media_channel_id,
-            )
-            return
-
         if not self._telephony_cfg.require_gate:
             await self._finish_stasis_start_ungated(
                 sip_channel_id=sip_channel_id,
@@ -543,82 +564,6 @@ class AsteriskCallController:
             external_media_channel_id=external_media_channel_id,
             transport=transport,
             identity=identity,
-        )
-
-    async def _run_announcement(
-        self,
-        *,
-        sip_channel_id: str,
-        entry: AnnouncementEntry,
-        transport: TelephonyTransport,
-        media: RtpMediaSession,
-        bridge_id: str,
-        external_media_channel_id: str,
-    ) -> None:
-        """CTF phone-OTP announcement DID (quick task 260715-oq0, design doc
-        docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-
-        design.md): fetch the current OTP from ``entry.otp_url``, speak it
-        (digit-spaced, twice) over the SAME RTP transport/media/bridge
-        ``on_stasis_start`` already allocated, then hang up. No STT, no LLM,
-        no §24 gate, no quota -- this call is NEVER registered as an
-        ``ActiveCall``, so it is torn down via the same pre-ActiveCall
-        :meth:`_teardown_gate_resources` every other early-failure path
-        uses (quota-denied, allocation failure), not the ActiveCall-based
-        :meth:`_close_active_call`.
-
-        The channel is already answered and the bridge/external-media
-        already exist (both happen upstream in ``on_stasis_start`` before
-        this is ever called) -- this method only needs a minimal TTS-only
-        pipeline (``tts -> transport.output()``, NOT the full
-        ``create_call_session``/``build_pipeline`` cascade) to speak one
-        line over the existing media path.
-
-        On any OTP-fetch failure (non-200, network error, malformed body --
-        ``_fetch_ctf_otp`` returns ``None`` uniformly) the call tears down
-        immediately with NO spoken line (v1 has no error copy, per the
-        design doc). On success, the built line is queued via the same
-        ``TTSSpeakFrame`` seam ``pipeline.speak_goodbye`` uses, then given a
-        bounded grace period to finish playing -- mirroring
-        ``create_call_session``'s own goodbye-leg pattern (queue the frame,
-        sleep a fixed grace period, then cancel the runner) rather than a
-        frame-level completion event, so a stuck synth can NEVER hang the
-        PSTN line (T-OTP-05) -- before the minimal pipeline is cancelled and
-        the shared teardown runs.
-
-        Logging discipline (§13/T-OTP-04): never logs the code, the
-        otp_url, or the bearer -- only the DID and channel id.
-        """
-        bearer = os.environ.get(entry.otp_env_var, "") if entry.otp_env_var else ""
-        headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
-        code = await _fetch_ctf_otp(entry.otp_url, headers)
-        if not code:
-            logger.warning(
-                f"announcement: OTP fetch failed did={entry.did!r} channel={sip_channel_id!r}"
-            )
-            await self._teardown_gate_resources(
-                bridge_id, external_media_channel_id, media, sip_channel_id
-            )
-            return
-
-        line = _build_announcement_line(entry.line_template, code)
-
-        tts = build_tts(self._cfg)
-        pipeline = Pipeline([tts, transport.output()])
-        worker = build_worker(pipeline)
-        runner = WorkerRunner(handle_sigint=False)
-        await runner.add_workers(worker)
-        run_task = asyncio.create_task(runner.run())
-        try:
-            await worker.queue_frames([TTSSpeakFrame(text=line, append_to_context=False)])
-            await asyncio.sleep(ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS)
-        finally:
-            await runner.cancel("announcement playback complete")
-            with contextlib.suppress(Exception):
-                await run_task
-
-        logger.info(f"announcement: played did={entry.did!r} channel={sip_channel_id!r}")
-        await self._teardown_gate_resources(
-            bridge_id, external_media_channel_id, media, sip_channel_id
         )
 
     def _register_pickup_cue(self, transport: TelephonyTransport, call_session: CallSession) -> None:
@@ -1023,6 +968,52 @@ class AsteriskCallController:
         await asyncio.sleep(self._quota_cfg.goodbye_grace_seconds)
         await self._close_active_call(active_call, reason)
 
+    async def _gate_announcement(self, active_call: ActiveCall, entry: AnnouncementEntry) -> None:
+        """CTF phone-OTP DTMF-code trigger (quick task 260716-1g0, Revision
+        2 -- design doc docs/superpowers/specs/2026-07-15-ctf-phone-otp-
+        announcement-did-design.md): fetch the current OTP from
+        ``entry.otp_url``, speak it (digit-spaced, twice) over the SAME
+        persistent pipeline/worker the §24 gate already built for this
+        call, then tear the call down. MIRRORS :meth:`_gate_fail_closed`'s
+        shape exactly -- no ``quota.start_gate``, no ``greet_now``, no
+        concierge turn.
+
+        First resolves the gate via ``active_call.gate.cancel_for_takeover``
+        (NOT ``unlock``) so the §24 redaction boundary (D-05e) stays CLOSED
+        the whole time and the fail-closed timer can never race this
+        method's own goodbye -- single teardown, exactly one
+        :meth:`_close_active_call` reached either way.
+
+        On any OTP-fetch failure (non-200, network error, malformed body --
+        ``_fetch_ctf_otp`` returns ``None`` uniformly) the call tears down
+        immediately with NO spoken line. On success, the built line is
+        queued via the same ``speak_goodbye`` seam ``_gate_fail_closed``
+        uses, given a bounded grace period to finish playing (never a
+        frame-level completion event -- a stuck synth can NEVER hang the
+        PSTN line, T-OTP-05), then the single idempotent teardown runs.
+
+        Logging discipline (§13/T-OTP-04/D-05e): never logs the DTMF
+        trigger code, the OTP code, the otp_url, or the bearer -- only the
+        channel id."""
+        if active_call.gate is not None:
+            active_call.gate.cancel_for_takeover("announcement")
+
+        bearer = os.environ.get(entry.otp_env_var, "") if entry.otp_env_var else ""
+        headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+        code = await _fetch_ctf_otp(entry.otp_url, headers)
+        if not code:
+            logger.warning(
+                f"announcement: OTP fetch failed channel={active_call.sip_channel_id!r}"
+            )
+            await self._close_active_call(active_call, "announcement otp fetch failed")
+            return
+
+        line = _build_announcement_line(entry.line_template, code)
+        await speak_goodbye(active_call.call_session.worker, line)
+        await asyncio.sleep(ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS)
+        logger.info(f"announcement: played channel={active_call.sip_channel_id!r}")
+        await self._close_active_call(active_call, "announcement complete")
+
     # --- ChannelDtmfReceived: the §24 gate's DTMF PIN path (Task 3) --------
 
     async def on_channel_dtmf_received(self, event: dict[str, Any]) -> None:
@@ -1032,7 +1023,15 @@ class AsteriskCallController:
         exact match, unlocks the gate directly -- the PIN never touches the
         pipeline/frame stream/LLM at all. A no-op for an unknown channel,
         an ungated call (``active_call.gate is None``), an empty digit, or
-        when ``gate_mode`` excludes the DTMF factor."""
+        when ``gate_mode`` excludes the DTMF factor.
+
+        Quick task 260716-1g0 (Revision 2): the real PIN keeps STRICT
+        priority -- checked first, unchanged, and this method ``return``s
+        immediately on a PIN match. ONLY when the PIN did NOT match does it
+        test the raw trailing digit buffer (suffix semantics, a fat-fingered
+        prefix before the code still matches) against every armed
+        announcement code; a match dispatches to :meth:`_gate_announcement`
+        instead of unlocking the concierge."""
         if self._telephony_cfg.gate_mode not in ("dtmf", "either"):
             return
         channel_id = _normalize_token((event.get("channel", {}) or {}).get("id"))
@@ -1040,11 +1039,17 @@ class AsteriskCallController:
         active_call = self.calls.get(channel_id)
         if active_call is None or active_call.gate is None or not digit:
             return
+        active_call.dtmf_raw = (active_call.dtmf_raw + digit)[-DTMF_RAW_MAX_DIGITS:]
         active_call.dtmf_buffer, matched = accumulate_dtmf(
             active_call.dtmf_buffer, digit, self._pin
         )
         if matched:
             await active_call.gate.unlock("dtmf")
+            return
+        for code, entry in self._announcements_by_code.items():
+            if code and active_call.dtmf_raw.endswith(code):
+                await self._gate_announcement(active_call, entry)
+                return
 
     async def _teardown_gate_resources(
         self,

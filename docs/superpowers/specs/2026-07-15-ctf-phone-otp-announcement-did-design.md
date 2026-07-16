@@ -195,3 +195,78 @@ parameters**, independently. No auth callback.
 2. **TOTP period:** 120 s, ±1 step skew.
 3. **No `/ctf/verify` in this repo** — meshtk verifies with the shared secret.
    Revisit only if meshtk later prefers a verify oracle.
+
+---
+
+## Revision 2 (2026-07-16) — DTMF-code trigger, not DID
+
+### Why (root cause of the live failure)
+
+The Revision-1 DID-keyed announcement branch **never fired** on the first live
+call. VoIP.ms routes all four DIDs to a single sub-account
+(`557010_klanker-pbx`), so the dialed number is **not visible** at the edge —
+`on_stasis_start` receives `did=557010_klanker-pbx` for every call regardless of
+which number was dialed. A per-DID match on `"7254043234"` can therefore never
+succeed; every call fell through to the §24 gate.
+
+### New behavior (operator-chosen)
+
+The announcement is now **gated behind a DTMF access code** and triggered by
+that code, DID-agnostically:
+
+1. Caller dials any of the numbers → hears the existing §24 gate prompt.
+2. The CTF player (told by the MeshTastic bot to press **`990011`**) enters it
+   on the keypad.
+3. The controller recognizes the announcement code → fetches the OTP → speaks
+   the line (digits spaced, twice) over the **live gated pipeline** → hangs up.
+   No concierge, no `quota.start_gate`.
+4. A normal caller entering the real `TELEPHONY_ACCESS_PIN` still unlocks the
+   concierge unchanged; a wrong/no entry still fails closed and hangs up.
+
+### Config (code-triggered, replaces DID-keyed)
+
+```toml
+[[telephony.announcement]]
+otp_url      = "https://auth.klankermaker.ai/use1/ctf/otp"
+otp_env_var  = "CTF_OTP_AUTH_TOKEN"        # bearer for /ctf/otp (value in SSM)
+code_env_var = "CTF_ANNOUNCEMENT_CODE"     # NAME of env var holding the DTMF trigger code (value in SSM)
+line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
+# did = "7254043234"   # informational only — NOT visible at the edge (all DIDs arrive as the sub-account)
+```
+
+`AnnouncementEntry` gains `code_env_var`; `did` becomes optional/informational.
+The **trigger code itself is never in TOML** — the entry carries only the env-var
+NAME, and the value comes from SSM (`/kmv/secrets/use1/ctf/announcement_code` =
+`990011`), operator-rotatable like `TELEPHONY_ACCESS_PIN`.
+
+### Controller / gate integration
+
+- `__init__`: resolve each entry's code from `os.environ[entry.code_env_var]`
+  → `_announcements_by_code: dict[codevalue, AnnouncementEntry]`. An entry whose
+  env var is unset is skipped (no trigger armed → gate behaves normally).
+- `on_channel_dtmf_received`: after the existing PIN check, test the accumulated
+  digits (suffix match, mirroring `accumulate_dtmf`'s trailing-window semantics)
+  against each armed announcement code. On a match → `_gate_announcement`.
+- `_gate_announcement(active_call, entry)`: mirrors `_gate_fail_closed` —
+  `code = await _fetch_ctf_otp(entry.otp_url, headers)`; on failure →
+  `_close_active_call`; on success → `speak_goodbye(active_call.call_session.worker,
+  _build_announcement_line(entry.line_template, code))` → grace sleep →
+  `_close_active_call`. No `quota.start_gate`, no `greet_now`, no concierge.
+- Remove the dead Revision-1 pre-gate DID dispatch (`_announcements_by_did`,
+  the `on_stasis_start` announcement branch, and `_run_announcement`) — the DID
+  is never distinguishable, so that path is unreachable.
+
+### Secret + deploy
+
+- New SSM SecureString `/kmv/secrets/use1/ctf/announcement_code` (add
+  `announcement_code` to the `ctf` secret definition; value `990011`).
+- **telephony-edge** task-def gains `CTF_ANNOUNCEMENT_CODE` (auth does not need
+  it). Apply the secrets unit, then redeploy telephony-edge.
+
+### Tests
+
+- config: `code_env_var` parsed/validated; absent table → `()`.
+- controller: a DTMF sequence ending in the armed code invokes `_gate_announcement`
+  (spy) and does NOT call `quota.start_gate`; the PIN still unlocks the concierge;
+  a wrong code still fails closed; OTP-fetch failure tears down without speaking.
+  (`_fetch_ctf_otp` + `speak_goodbye`/worker mocked.)
