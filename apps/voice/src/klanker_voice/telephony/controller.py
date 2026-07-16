@@ -245,8 +245,14 @@ ANNOUNCEMENT_GAG_TAIL_SECONDS = 8.0
 #: which egresses from the STABLE NAT EIP (whitelisted) and calls VoIP.ms. The
 #: relay bearer reuses ``entry.otp_env_var`` (the same CTF_OTP_AUTH_TOKEN the
 #: ``/ctf/otp`` fetch already uses). Bounded timeout so a slow/failing relay can
-#: NEVER hang the PSTN line -- the send is fire-and-forget on top of this.
-SMS_SEND_TIMEOUT_SECONDS = 4.0
+#: NEVER hang the PSTN line -- the send is fire-and-forget on top of this. MUST
+#: exceed the auth relay's OWN VoIP.ms timeout (10s in voipms-sms.ts) plus
+#: overhead, so telephony waits for the relay's real answer instead of aborting
+#: a send VoIP.ms is still processing (a genuine send takes several seconds --
+#: observed live 2026-07-16, a 4s timeout reported failure on a send that
+#: actually delivered). Safe on the phone path: the fire-early send has ~25s of
+#: readout grace to complete.
+SMS_SEND_TIMEOUT_SECONDS = 12.0
 
 #: The SMS body. Uses the PLAIN code (not the digit-spaced spoken form) so it is
 #: copy/paste-able. Flavor + expiry note because the TOTP rolls every ~120s.

@@ -14,7 +14,13 @@
  */
 
 const VOIPMS_SMS_API_URL = "https://voip.ms/api/v1/rest.php";
-const SEND_TIMEOUT_MS = 4000;
+// VoIP.ms `sendSMS` responds fast on a rejection (e.g. ip_not_enabled) but
+// takes several seconds when it ACTUALLY sends (it contacts the carrier). A
+// 4s timeout aborted real sends AFTER VoIP.ms had already queued them ->
+// spurious `transport_error` with the SMS actually delivered (observed live
+// 2026-07-16). 10s comfortably covers a genuine send. This runs server-side in
+// the internal relay, not on any user-facing latency path.
+const SEND_TIMEOUT_MS = 10000;
 
 export interface VoipmsCreds {
   apiUsername: string;
