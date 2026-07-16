@@ -204,6 +204,28 @@ ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS = 12.0
 #: slower read, lower for a snappier one.
 ANNOUNCEMENT_DIGIT_PAUSE_SECONDS = 1.0
 
+#: Shrinking inter-digit pauses for the panic-readout gag's accelerating
+#: passes (quick task 260716-2px), rendered in this same order after the
+#: slow x2 read: 0.3s -> 0.15s -> 0.0s (run fast, still digit-separated by
+#: a plain space so ElevenLabs never reads it as one number). Tunable.
+ANNOUNCEMENT_ACCEL_PAUSES: tuple[float, ...] = (0.3, 0.15, 0.0)
+
+#: Spoken copy for the panic-readout gag tail (quick task 260716-2px):
+#: after the slow x2 OTP read, the agent asks if the caller got it, denies
+#: them a moment, re-reads the digits in accelerating passes, then cuts
+#: dead into an abrupt, drawn-out goodbye (NO break tag before it -- the
+#: whole point is the abruptness).
+ANNOUNCEMENT_DIDYOUGET_COPY = "Did you get that?"
+ANNOUNCEMENT_NO_COPY = "No?"
+ANNOUNCEMENT_BYE_COPY = "BYYYYYEEEE!"
+
+#: Grace-period budget (seconds) reserved for the panic-readout gag tail
+#: ("Did you get that? ... No?" + the accelerating digit passes + the
+#: abrupt "BYYYYYEEEE!") on top of the base announcement grace and the
+#: slow x2 digit-pause time, so ``_gate_announcement``'s teardown never
+#: cuts the gag off mid-playback.
+ANNOUNCEMENT_GAG_TAIL_SECONDS = 8.0
+
 #: Bound on the raw trailing ARI DTMF digit buffer (quick task 260716-1g0)
 #: used ONLY for announcement-code suffix matching -- separate from
 #: ``ActiveCall.dtmf_buffer``, which stays windowed to ``len(pin)`` for the
@@ -262,21 +284,52 @@ async def _fetch_tel_token(url: str, headers: dict[str, str]) -> str | None:
     return token if isinstance(token, str) and token else None
 
 
-def _build_announcement_line(template: str, code: str) -> str:
-    """Substitute the digit-spaced ``code`` into every ``{code}`` occurrence
-    of ``template`` (quick task 260715-oq0). Digit-spacing is a plain
-    space-join over the code string is now paced: each digit gets a trailing
-    period and a ``<break time="Ns" />`` tag between digits (e.g.
-    ``"123456"`` -> ``'1. <break time="1.0s" /> 2. <break ...> ... 6.'``) so
-    TTS reads it slowly, one digit at a time, with a real pause the caller
-    can write down (``ANNOUNCEMENT_DIGIT_PAUSE_SECONDS``); ``str.replace``
-    substitutes EVERY occurrence, matching the design's "speak it twice"
-    template shape. A standalone, pure, module-level function so it's
-    unit-testable without a call (no controller/ARI/pipeline dependency)."""
-    paced = f' <break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" /> '.join(
+def _pace_digits_slow(code: str) -> str:
+    """Digit-space ``code`` for the slow, write-it-down read (quick task
+    260715-oq0, factored out unchanged for the panic-readout gag by quick
+    task 260716-2px): each digit gets a trailing period and a
+    ``<break time="Ns" />`` tag between digits (e.g. ``"123456"`` ->
+    ``'1. <break time="1.0s" /> 2. <break ...> ... 6.'``) so TTS reads it
+    slowly, one digit at a time, with a real pause the caller can write
+    down (``ANNOUNCEMENT_DIGIT_PAUSE_SECONDS``)."""
+    return f' <break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" /> '.join(
         f"{digit}." for digit in code
     )
-    return template.replace("{code}", paced)
+
+
+def _build_accel_tail(code: str) -> str:
+    """Build the panic-readout gag tail (quick task 260716-2px): "Did you
+    get that? ... No?" followed by ``ANNOUNCEMENT_ACCEL_PAUSES`` accelerating
+    re-reads of ``code`` (shrinking ``<break>`` tags, periods dropped) and
+    an abrupt, drawn-out goodbye. Digits are ALWAYS space-or-break separated
+    -- never concatenated -- so ElevenLabs never reads the code as one
+    number. The last accelerating pass (``pause == 0.0``) is a plain single
+    space join (fastest, still digit-separated). NO break tag immediately
+    precedes ``ANNOUNCEMENT_BYE_COPY`` -- the cut into it must be abrupt."""
+    passes = []
+    for pause in ANNOUNCEMENT_ACCEL_PAUSES:
+        if pause > 0:
+            passes.append(f' <break time="{pause}s" /> '.join(code))
+        else:
+            passes.append(" ".join(code))
+    accel = " ".join(passes)
+    return (
+        f'{ANNOUNCEMENT_DIDYOUGET_COPY} <break time="0.5s" /> ... '
+        f"{ANNOUNCEMENT_NO_COPY} {accel} {ANNOUNCEMENT_BYE_COPY}"
+    )
+
+
+def _build_announcement_script(template: str, code: str) -> str:
+    """Substitute the digit-spaced ``code`` into every ``{code}`` occurrence
+    of ``template`` (quick task 260715-oq0; slow x2 read), then append the
+    panic-readout gag tail (quick task 260716-2px): "Did you get that? ...
+    No?" -> ~3 accelerating digit passes -> abrupt "BYYYYYEEEE!". All one
+    string, spoken as a single TTS utterance via ``speak_goodbye`` -- no
+    multi-utterance sequencing. ``str.replace`` substitutes EVERY ``{code}``
+    occurrence, matching the design's "speak it twice" template shape. A
+    standalone, pure, module-level function so it's unit-testable without a
+    call (no controller/ARI/pipeline dependency)."""
+    return template.replace("{code}", _pace_digits_slow(code)) + " " + _build_accel_tail(code)
 
 
 async def _fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
@@ -1025,12 +1078,17 @@ class AsteriskCallController:
             await self._close_active_call(active_call, "announcement otp fetch failed")
             return
 
-        line = _build_announcement_line(entry.line_template, code)
+        line = _build_announcement_script(entry.line_template, code)
         await speak_goodbye(active_call.call_session.worker, line)
         # Base grace for the surrounding speech + the per-digit pause time
-        # (the code is read TWICE), so the slowed readout is never cut off
-        # mid-number by the teardown.
-        grace = ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS + 2 * len(code) * ANNOUNCEMENT_DIGIT_PAUSE_SECONDS
+        # (the code is read TWICE) + the panic-readout gag tail budget
+        # (quick task 260716-2px), so the slowed readout AND the gag are
+        # never cut off mid-playback by the teardown.
+        grace = (
+            ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS
+            + 2 * len(code) * ANNOUNCEMENT_DIGIT_PAUSE_SECONDS
+            + ANNOUNCEMENT_GAG_TAIL_SECONDS
+        )
         await asyncio.sleep(grace)
         logger.info(f"announcement: played channel={active_call.sip_channel_id!r}")
         await self._close_active_call(active_call, "announcement complete")

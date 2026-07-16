@@ -25,7 +25,7 @@ from typing import Any
 from klanker_voice.auth import AuthError, SessionIdentity
 from klanker_voice.config import load_config, load_knowledge_config
 from klanker_voice.telephony.config import AnnouncementEntry
-from klanker_voice.telephony.controller import AsteriskCallController, _build_announcement_line
+from klanker_voice.telephony.controller import AsteriskCallController, _build_announcement_script
 
 from tests.test_call_runtime import _gate_result, _quota_config, fake_aws, reset_active_count  # noqa: F401
 from tests.test_telephony_lifecycle import (  # noqa: F401 -- stub_call_session_run is an autouse fixture
@@ -311,19 +311,43 @@ def _dial(digits: str):
     return [_mk(d) for d in digits]
 
 
-def test_build_announcement_line_paces_digits_and_substitutes_both_occurrences():
-    from klanker_voice.telephony.controller import ANNOUNCEMENT_DIGIT_PAUSE_SECONDS
+def test_build_announcement_script_slow_read_twice_then_panic_gag():
+    from klanker_voice.telephony.controller import (
+        ANNOUNCEMENT_BYE_COPY,
+        ANNOUNCEMENT_DIDYOUGET_COPY,
+        ANNOUNCEMENT_DIGIT_PAUSE_SECONDS,
+        ANNOUNCEMENT_NO_COPY,
+    )
 
-    line = _build_announcement_line("A {code}. That's {code}.", "123456")
+    line = _build_announcement_script("A {code}. That's {code}.", "123456")
     paced = f' <break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" /> '.join(
         f"{d}." for d in "123456"
     )
-    # both {code} occurrences substituted, digit order preserved, digits paced
-    assert line == f"A {paced}. That's {paced}."
-    # a real pause between every digit, in each of the two reads (5 gaps x 2)
+    # slow paced read (existing 260715-oq0 behavior) still appears TWICE --
+    # both {code} occurrences substituted
+    assert line.count(paced) == 2
+    # a real pause between every digit, in each of the two slow reads
     assert line.count(f'<break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" />') == 10
-    # each OTP digit is followed by a period so it paces even without break tags
-    assert "1. " in line and line.count("6.") == 2
+
+    # gag tail present: "Did you get that? ... No?" then the abrupt bye
+    assert ANNOUNCEMENT_DIDYOUGET_COPY in line
+    assert ANNOUNCEMENT_NO_COPY in line
+    assert ANNOUNCEMENT_BYE_COPY in line
+
+    # accelerating passes present with shrinking break tags
+    assert '<break time="0.3s" />' in line
+    assert '<break time="0.15s" />' in line
+    # the fastest pass is single-space digit separated (never concatenated)
+    assert "1 2 3 4 5 6" in line
+
+    # digits are NEVER concatenated into a bare number at any speed
+    assert "123456" not in line
+
+    # abrupt cut into BYE -- no break tag immediately precedes it
+    assert f'/> {ANNOUNCEMENT_BYE_COPY}' not in line
+    bye_index = line.index(ANNOUNCEMENT_BYE_COPY)
+    assert line[bye_index - 1] == " "
+    assert line[bye_index - 2] != ">"
 
 
 async def test_announcement_code_dispatches_no_quota_no_greet(
@@ -501,24 +525,27 @@ async def test_announcement_success_speaks_digitspaced_line_then_closes(
     monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
 
     # Keep the test fast -- the bounded grace period is a fixed sleep, not an
-    # event, so shrink it rather than actually waiting ~12s.
+    # event, so shrink it rather than actually waiting ~12s (+ the panic-gag
+    # tail budget, quick task 260716-2px).
     monkeypatch.setattr(
         "klanker_voice.telephony.controller.ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS", 0.05
     )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.ANNOUNCEMENT_GAG_TAIL_SECONDS", 0.05
+    )
 
+    entry = _announcement_entry()
     controller, ari, sessions = _build_controller(
         make_config_file,
         telephony_cfg=_gated_cfg(),
-        announcement_codes={ANNOUNCEMENT_CODE: _announcement_entry()},
+        announcement_codes={ANNOUNCEMENT_CODE: entry},
     )
 
     await controller.on_stasis_start(_stasis_event())
     for event in _dial(ANNOUNCEMENT_CODE):
         await controller.on_channel_dtmf_received(event)
 
-    assert goodbye_calls == [
-        _build_announcement_line("Hey! O T P. {code}. That's {code}. Bye.", "123456")
-    ]
+    assert goodbye_calls == [_build_announcement_script(entry.line_template, "123456")]
     assert ari.count("hangup", arg="chan-1") == 1
     assert ari.count("destroy_bridge", arg="bridge-1") == 1
     assert sessions[0].closed is True

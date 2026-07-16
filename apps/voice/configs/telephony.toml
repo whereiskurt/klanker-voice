@@ -111,5 +111,5 @@ unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (m
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"     # NAME only; token VALUE from env/SSM at call time (D-09)
 code_env_var = "CTF_ANNOUNCEMENT_CODE"  # NAME only; trigger VALUE lives in SSM (/kmv/secrets/use1/ctf/announcement_code), never TOML (D-09)
-line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
+line_template = "Hey! Let me get you that O T P. {code}. That's {code}."
 # did = "7254043234"   # informational only -- NOT visible at the edge (all DIDs arrive as the sub-account 557010_klanker-pbx)
