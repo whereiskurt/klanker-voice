@@ -103,6 +103,14 @@ class AnnouncementEntry:
     code_env_var: str = ""
     did: str = ""
     sms_dids: tuple[str, ...] = ()
+    #: The auth app's internal ``/ctf/sms`` relay URL (quick task 260716-hg5
+    #: follow-up). telephony-edge POSTs the built SMS here instead of calling
+    #: VoIP.ms directly -- the auth app egresses from the STABLE, VoIP.ms-
+    #: whitelisted NAT EIP, whereas this task's Fargate egress IP is ephemeral
+    #: and cannot be whitelisted. A NON-secret plain URL, like ``otp_url``.
+    #: Empty ⇒ SMS is not sent even if ``sms_dids`` is set (the relay is the
+    #: only send path). The bearer reuses ``otp_env_var``.
+    sms_relay_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -292,6 +300,7 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
             )
 
         sms_dids = _parse_sms_dids(item.get("sms_dids"), i)
+        sms_relay_url = str(item.get("sms_relay_url", "")).strip()
 
         entries.append(
             AnnouncementEntry(
@@ -301,6 +310,7 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 line_template=line_template,
                 code_env_var=code_env_var,
                 sms_dids=sms_dids,
+                sms_relay_url=sms_relay_url,
             )
         )
 

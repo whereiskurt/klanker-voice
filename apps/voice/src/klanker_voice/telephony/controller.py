@@ -238,18 +238,15 @@ ANNOUNCEMENT_GAG_TAIL_SECONDS = 8.0
 #: caller (their own ANI) a written copy of the OTP mid-call, then land the
 #: "check your phone" punchline. Everything below is opt-in and additive.
 
-#: VoIP.ms REST endpoint + ``sendSMS`` bound. A fixed vendor URL (like ``kv``'s
-#: ``voipmsBaseURL``), NOT a secret. Bounded timeout so a slow/failing send can
+#: The send does NOT call VoIP.ms directly (quick task 260716-hg5 follow-up):
+#: VoIP.ms's REST API is IP-allowlisted and this Fargate task egresses from an
+#: EPHEMERAL public IP that cannot be whitelisted. Instead the built SMS is
+#: POSTed to the auth app's internal ``/ctf/sms`` relay (``entry.sms_relay_url``),
+#: which egresses from the STABLE NAT EIP (whitelisted) and calls VoIP.ms. The
+#: relay bearer reuses ``entry.otp_env_var`` (the same CTF_OTP_AUTH_TOKEN the
+#: ``/ctf/otp`` fetch already uses). Bounded timeout so a slow/failing relay can
 #: NEVER hang the PSTN line -- the send is fire-and-forget on top of this.
-VOIPMS_SMS_API_URL = "https://voip.ms/api/v1/rest.php"
 SMS_SEND_TIMEOUT_SECONDS = 4.0
-
-#: NAMEs of the environment variables holding the VoIP.ms API username/password
-#: (task-def ``secrets`` -> SSM ``/kmv/secrets/use1/voipms/api_{username,
-#: password}``). VALUES are read at call time, never stored in config/TOML,
-#: never logged -- mirrors how the OTP bearer is resolved from ``otp_env_var``.
-VOIPMS_SMS_USER_ENV = "VOIPMS_API_USERNAME"
-VOIPMS_SMS_PASS_ENV = "VOIPMS_API_PASSWORD"
 
 #: The SMS body. Uses the PLAIN code (not the digit-spaced spoken form) so it is
 #: copy/paste-able. Flavor + expiry note because the TOTP rolls every ~120s.
@@ -423,71 +420,39 @@ def _sms_dst_from_caller(caller_id: Any) -> str:
     return e164[2:]  # drop "+1" -> bare 10-digit NANP destination
 
 
-async def _send_sms(
-    from_did: str, dst: str, message: str, api_user: str, api_pass: str
+async def _send_sms_via_relay(
+    url: str, headers: dict[str, str], dst: str, message: str, dids: tuple[str, ...]
 ) -> bool:
-    """Send ONE SMS via VoIP.ms ``sendSMS`` (quick task 260716-hg5). Returns
-    ``True`` ONLY on HTTP 200 with a ``status == "success"`` JSON envelope;
-    ``False`` for every other outcome (missing creds, non-200, non-success
-    status, timeout, transport/parse error). NEVER raises -- the send is
-    fire-and-forget alongside the PSTN readout (mirrors :func:`_fetch_ctf_otp`'s
-    never-raise contract).
+    """POST the built SMS to the auth app's internal ``/ctf/sms`` relay (quick
+    task 260716-hg5 follow-up), which sends it via VoIP.ms from the STABLE,
+    whitelisted NAT EIP -- telephony-edge cannot call the IP-allowlisted VoIP.ms
+    API from its ephemeral Fargate IP. Returns ``True`` ONLY on HTTP 200 with a
+    JSON ``{"sent": true}`` body; ``False`` for every other outcome (non-200 --
+    incl. the relay's uniform-404 failure response -- timeout, transport/parse
+    error, or ``sent`` not true). NEVER raises -- the send is fire-and-forget
+    alongside the PSTN readout (mirrors :func:`_fetch_ctf_otp`'s never-raise
+    contract).
 
-    Logging discipline (§13/T-OTP-04): NEVER logs the OTP/body, the destination
-    number, the credentials, or the URL -- a failure logs only a generic
-    marker. Credentials cross only the outbound query string, never a log line.
-    A module-level function (not a method) so tests monkeypatch it directly to
-    avoid a real network call, exactly like ``_fetch_ctf_otp``."""
-    if not (from_did and dst and api_user and api_pass):
+    Logging discipline (§13/T-OTP-04): NEVER logs the OTP/body, the destination,
+    the DIDs, the bearer, or the URL -- only a generic outcome marker; the relay
+    itself surfaces the VoIP.ms status enum server-side. A module-level function
+    (not a method) so tests monkeypatch it directly, exactly like
+    ``_fetch_ctf_otp``."""
+    if not (url and dst and message and dids):
         return False
-    params = {
-        "api_username": api_user,
-        "api_password": api_pass,
-        "method": "sendSMS",
-        "did": from_did,
-        "dst": dst,
-        "message": message,
-    }
+    payload = {"to": dst, "message": message, "dids": list(dids)}
     try:
         timeout = aiohttp.ClientTimeout(total=SMS_SEND_TIMEOUT_SECONDS)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(VOIPMS_SMS_API_URL, params=params) as resp:
+            async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
-                    logger.warning(f"sms send: non-200 HTTP status={resp.status}")
+                    logger.warning(f"sms relay: non-200 status={resp.status}")
                     return False
                 data = await resp.json(content_type=None)
     except Exception:  # noqa: BLE001 -- any transport/parse failure is a send failure, never fatal
-        logger.warning("sms send: request failed (transport/parse error)")
+        logger.warning("sms relay: request failed (transport/parse error)")
         return False
-    # Surface the VoIP.ms status ENUM on failure (quick 260716-hg5 follow-up) --
-    # it is a short non-secret token (e.g. "ip_not_enabled", "invalid_dst") that
-    # is essential for diagnosing why a send was rejected, mirroring how `kv`
-    # surfaces `voipmsStatusError`. NEVER logs the code/body/dst/creds. A live
-    # 2026-07-16 call failed here with the Fargate egress IP not on the VoIP.ms
-    # API allowlist -- this log line is what makes that visible.
-    vstatus = data.get("status") if isinstance(data, dict) else None
-    if vstatus != "success":
-        logger.warning(f"sms send: VoIP.ms rejected send status={vstatus!r}")
-        return False
-    return True
-
-
-async def _send_sms_pool(
-    dids: tuple[str, ...], dst: str, message: str, api_user: str, api_pass: str
-) -> bool:
-    """Try each sending DID in ``dids`` IN ORDER until one send succeeds (quick
-    task 260716-hg5 -- runtime auto-fallback for a DID that is not SMS-enabled
-    in the VoIP.ms portal). Returns ``True`` on the FIRST success (and stops --
-    exactly one text is ever delivered), ``False`` if the pool is empty or every
-    attempt fails. Never raises. Logs only the pool index/count -- never the DID
-    value, creds, body, or destination."""
-    for idx, from_did in enumerate(dids):
-        if await _send_sms(from_did, dst, message, api_user, api_pass):
-            logger.info(f"sms send: ok on pool index {idx} of {len(dids)}")
-            return True
-    if dids:
-        logger.warning(f"sms send: all {len(dids)} pool DID(s) failed")
-    return False
+    return isinstance(data, dict) and data.get("sent") is True
 
 
 def _bypass_gate_result() -> quota.GateResult:
@@ -1216,25 +1181,31 @@ class AsteriskCallController:
             await self._close_active_call(active_call, "announcement otp fetch failed")
             return
 
-        # Quick task 260716-hg5: text the caller a written copy of the OTP,
-        # fired NOW (before the readout) so it lands before the spoken "check
-        # your phone" punchline. sms-eligible ONLY when the entry configures a
-        # sending-DID pool, the caller ANI is a textable NA number, AND the
-        # VoIP.ms API creds are present -- so we never PROMISE a text we cannot
-        # attempt. The send is fire-and-forget: launched via ``create_task``,
-        # its handle parked on the ``ActiveCall`` purely to keep a strong
-        # reference (it finishes within the grace sleep below), and NEVER
-        # awaited on the teardown path -- a slow/failing send can never hang the
-        # PSTN line, and ``_send_sms_pool`` never raises. Never logs the OTP,
-        # the body, the destination, or the creds (T-OTP-04/§13).
+        # Quick task 260716-hg5 (+ follow-up: relay via auth): text the caller a
+        # written copy of the OTP, fired NOW (before the readout) so it lands
+        # before the spoken "check your phone" punchline. sms-eligible ONLY when
+        # the entry configures a sending-DID pool AND a relay URL AND the caller
+        # ANI is a textable NA number -- so we never PROMISE a text we cannot
+        # attempt. The build-and-POST goes to auth's /ctf/sms relay (auth sends
+        # via VoIP.ms from the stable whitelisted NAT EIP; telephony-edge's
+        # ephemeral Fargate IP is not on the VoIP.ms API allowlist). Bearer
+        # reuses the same CTF_OTP_AUTH_TOKEN the OTP fetch uses. The send is
+        # fire-and-forget: launched via ``create_task``, its handle parked on the
+        # ``ActiveCall`` purely to keep a strong reference (it finishes within
+        # the grace sleep below), and NEVER awaited on the teardown path -- a
+        # slow/failing relay can never hang the PSTN line, and
+        # ``_send_sms_via_relay`` never raises. Never logs the OTP, body, dst,
+        # DIDs, or bearer (T-OTP-04/§13).
         dst = _sms_dst_from_caller(active_call.caller_id)
-        api_user = os.environ.get(VOIPMS_SMS_USER_ENV, "")
-        api_pass = os.environ.get(VOIPMS_SMS_PASS_ENV, "")
-        sms_eligible = bool(entry.sms_dids) and bool(dst) and bool(api_user) and bool(api_pass)
+        sms_eligible = bool(entry.sms_dids) and bool(entry.sms_relay_url) and bool(dst)
         if sms_eligible:
             body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)
+            bearer = os.environ.get(entry.otp_env_var, "") if entry.otp_env_var else ""
+            relay_headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
             active_call.sms_task = asyncio.create_task(
-                _send_sms_pool(entry.sms_dids, dst, body, api_user, api_pass)
+                _send_sms_via_relay(
+                    entry.sms_relay_url, relay_headers, dst, body, entry.sms_dids
+                )
             )
 
         line = _build_announcement_script(entry.line_template, code, sms_eligible)

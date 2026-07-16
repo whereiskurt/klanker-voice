@@ -321,9 +321,17 @@ def test_announcement_sms_dids_non_list_rejected(make_config_file):
         load_telephony_config(path)
 
 
-def test_shipped_telephony_toml_arms_sms_did(make_config_file):
-    """The shipped configs/telephony.toml announcement entry carries the
-    live SMS-enabled sending DID (6134805878, verified 2026-07-16)."""
+def test_announcement_sms_relay_url_absent_defaults_empty(make_config_file):
+    """No `sms_relay_url` -> "" (the relay is the only send path, so SMS is off)."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].sms_relay_url == ""
+
+
+def test_shipped_telephony_toml_arms_sms_did_and_relay(make_config_file):
+    """The shipped configs/telephony.toml announcement entry carries the live
+    SMS-enabled sending DID (6134805878) and the auth /ctf/sms relay URL."""
     telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
     cfg = load_telephony_config(telephony_toml_path)
     assert cfg.announcements[0].sms_dids == ("6134805878",)
+    assert cfg.announcements[0].sms_relay_url == "https://auth.klankermaker.ai/use1/ctf/sms"

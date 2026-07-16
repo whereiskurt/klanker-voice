@@ -169,7 +169,15 @@ locals {
           # a shared bearer (telephony-edge sends the same token). Both are SSM
           # SecureString, never in git/TOML.
           { name = "CTF_OTP_SECRET", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret" },
-          { name = "CTF_OTP_AUTH_TOKEN", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/auth_token" }
+          { name = "CTF_OTP_AUTH_TOKEN", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/auth_token" },
+          # VoIP.ms REST API creds (quick 260716-hg5 follow-up): the internal
+          # /ctf/sms relay sends the CTF OTP text via VoIP.ms sendSMS. The relay
+          # lives in AUTH (not telephony-edge) because auth egresses from the
+          # STABLE NAT EIP, which is whitelisted on VoIP.ms's IP-restricted API,
+          # whereas telephony-edge's Fargate egress IP is ephemeral. Same two SSM
+          # SecureStrings kv uses; never in git/TOML.
+          { name = "VOIPMS_API_USERNAME", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/api_username" },
+          { name = "VOIPMS_API_PASSWORD", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/api_password" }
           # NOTE: magic-link email is sent via the SESv2 SDK (nodemailer SES transport),
           # NOT SMTP — so NO AUTH_SES_ACCESS_KEY_ID/SECRET here (SMTP creds are invalid as
           # API creds). The SESv2 client uses the task role (ses:SendEmail below).
