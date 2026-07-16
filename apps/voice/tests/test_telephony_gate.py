@@ -322,6 +322,79 @@ async def test_start_timer_is_idempotent():
     assert fail_closed_calls == ["fail_closed"]
 
 
+# --- GateProcessor: cancel_for_takeover (quick task 260716-1g0, Revision 2) -
+
+
+async def test_cancel_for_takeover_resolves_without_unlocking():
+    """cancel_for_takeover flips _resolved True but leaves _unlocked False
+    (the §24 redaction boundary stays CLOSED) -- neither on_unlock nor
+    on_fail_closed ever fires."""
+    gate, unlock_calls, fail_closed_calls = _gate(gate_window_seconds=0.05)
+
+    gate.cancel_for_takeover("announcement")
+
+    assert gate._resolved is True
+    assert gate.unlocked is False
+    assert unlock_calls == []
+    assert fail_closed_calls == []
+
+
+async def test_cancel_for_takeover_cancels_the_fail_closed_timer():
+    """A subsequent gate-window expiry does NOT fire on_fail_closed once
+    cancel_for_takeover has already resolved the gate -- the timer task is
+    cancelled, so no racing second goodbye."""
+    gate, unlock_calls, fail_closed_calls = _gate(gate_window_seconds=0.05)
+
+    gate.start_timer()
+    gate.cancel_for_takeover("announcement")
+    await asyncio.sleep(0.15)
+
+    assert fail_closed_calls == []
+    assert unlock_calls == []
+    assert gate.unlocked is False
+
+
+async def test_cancel_for_takeover_is_idempotent():
+    """A second call (or a call after the gate already resolved via unlock)
+    is a no-op."""
+    gate, unlock_calls, _ = _gate()
+
+    await gate.unlock("dtmf")
+    gate.cancel_for_takeover("announcement")  # no-op: already resolved via unlock
+    gate.cancel_for_takeover("announcement")  # no-op: idempotent
+
+    assert unlock_calls == ["unlocked"]
+    assert gate.unlocked is True  # unchanged by the later cancel_for_takeover calls
+
+
+async def test_cancel_for_takeover_keeps_redaction_boundary_closed():
+    """Post-takeover, the gate still swallows transcription/speaking-state
+    frames -- process_frame's locked-window behavior is unaffected (only
+    ``unlock`` flips it to pass-through)."""
+    gate, _, _ = _gate()
+    gate.cancel_for_takeover("announcement")
+
+    down, _ = await run_test(
+        gate,
+        frames_to_send=[
+            TranscriptionFrame(text="anything at all", user_id="", timestamp=""),
+        ],
+        expected_down_frames=[],
+    )
+    assert down == []
+
+
+async def test_cancel_for_takeover_never_logs_reason_beyond_call_id(loguru_caplog):
+    """D-05e: only reason + call_id are logged -- never a transcript, PIN, or
+    DTMF code."""
+    gate, _, _ = _gate(call_id="chan-77")
+    gate.cancel_for_takeover("announcement")
+
+    text = loguru_caplog.text
+    assert "chan-77" in text
+    assert "announcement" in text
+
+
 # --- D-05e: never-logged guarantees ------------------------------------------
 
 

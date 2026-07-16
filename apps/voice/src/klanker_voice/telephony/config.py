@@ -45,8 +45,9 @@ class AnnouncementEntry:
 
     Attributes:
         code_env_var: The NAME of the environment variable holding the DTMF
-            trigger code that arms this announcement (e.g. ``990011``, value
-            in SSM -- never in TOML, operator-rotatable like
+            trigger code that arms this announcement (a short numeric
+            keypad sequence, value in SSM -- never in TOML, operator-
+            rotatable like
             ``TELEPHONY_ACCESS_PIN``). REQUIRED at load time -- an entry
             without one is meaningless (nothing could ever trigger it).
             Splits to ``code``/``env``/``var``, none of which are credential

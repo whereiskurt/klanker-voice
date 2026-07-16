@@ -279,6 +279,31 @@ class GateProcessor(FrameProcessor):
         logger.info(f"unlocked{{method: {method!r}, call_id: {self._call_id!r}}}")
         await self._on_unlock()
 
+    def cancel_for_takeover(self, reason: str) -> None:
+        """Resolve the gate WITHOUT unlocking (quick task 260716-1g0,
+        Revision 2 CTF phone-OTP DTMF trigger) -- lets a caller-layer
+        handler (the controller's ``_gate_announcement``) take over an
+        already-answered, still-gated call and speak a line of its own,
+        while keeping the §24 redaction boundary CLOSED the whole time
+        (``self._unlocked`` is never set here, so ``process_frame`` keeps
+        swallowing ``TranscriptionFrame``/``InterimTranscriptionFrame``/
+        ``UserStartedSpeakingFrame``/``UserStoppedSpeakingFrame`` exactly as
+        it did before this call).
+
+        Idempotent (a second call, or a call after ``unlock``/fail-closed
+        already resolved the gate, is a no-op) -- gives the caller the same
+        "gate already resolved before teardown" invariant
+        :meth:`_fire_fail_closed` relies on, so no fail-closed timer can
+        race a second goodbye. Cancels the fail-closed timer task if one is
+        running. Logs ONLY ``reason`` + ``call_id`` -- never the
+        transcript, the matched words, the PIN, or any DTMF code (D-05e)."""
+        if self._resolved:
+            return
+        self._resolved = True
+        if self._timer_task is not None:
+            self._timer_task.cancel()
+        logger.info(f"gate cancelled for takeover reason={reason!r} call_id={self._call_id!r}")
+
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
 
