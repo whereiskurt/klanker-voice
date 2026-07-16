@@ -190,8 +190,19 @@ CTF_OTP_FETCH_TIMEOUT_SECONDS = 3.0
 #: "words"); 12s is comfortably above a natural reading of that length even
 #: with ElevenLabs' slower delivery. Longer than the plain
 #: ``goodbye_grace_seconds`` (5s) used by ``_gate_fail_closed``'s own
-#: shorter fixed copy.
+#: shorter fixed copy. NOTE: this is now the BASE grace for the surrounding
+#: speech only -- ``_gate_announcement`` adds per-digit pause time on top
+#: (``2 * len(code) * ANNOUNCEMENT_DIGIT_PAUSE_SECONDS``) so the slowed,
+#: spoken-twice readout is never cut off mid-number.
 ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS = 12.0
+
+#: Silence inserted between each spoken digit of the OTP readout so the
+#: caller can write the number down (the operator asked for it to "slow WAY
+#: down"). Rendered as an ElevenLabs ``<break time="Xs" />`` tag AND a
+#: trailing period per digit (belt-and-suspenders: the period paces the
+#: read even if a model ignores the break tag). Tunable -- raise for a
+#: slower read, lower for a snappier one.
+ANNOUNCEMENT_DIGIT_PAUSE_SECONDS = 1.0
 
 #: Bound on the raw trailing ARI DTMF digit buffer (quick task 260716-1g0)
 #: used ONLY for announcement-code suffix matching -- separate from
@@ -254,12 +265,18 @@ async def _fetch_tel_token(url: str, headers: dict[str, str]) -> str | None:
 def _build_announcement_line(template: str, code: str) -> str:
     """Substitute the digit-spaced ``code`` into every ``{code}`` occurrence
     of ``template`` (quick task 260715-oq0). Digit-spacing is a plain
-    space-join over the code string (``"123456"`` -> ``"1 2 3 4 5 6"``) so
-    TTS reads it one digit at a time; ``str.replace`` substitutes EVERY
-    occurrence, matching the design's "speak it twice" template shape. A
-    standalone, pure, module-level function so it's unit-testable without a
-    call (no controller/ARI/pipeline dependency)."""
-    return template.replace("{code}", " ".join(code))
+    space-join over the code string is now paced: each digit gets a trailing
+    period and a ``<break time="Ns" />`` tag between digits (e.g.
+    ``"123456"`` -> ``'1. <break time="1.0s" /> 2. <break ...> ... 6.'``) so
+    TTS reads it slowly, one digit at a time, with a real pause the caller
+    can write down (``ANNOUNCEMENT_DIGIT_PAUSE_SECONDS``); ``str.replace``
+    substitutes EVERY occurrence, matching the design's "speak it twice"
+    template shape. A standalone, pure, module-level function so it's
+    unit-testable without a call (no controller/ARI/pipeline dependency)."""
+    paced = f' <break time="{ANNOUNCEMENT_DIGIT_PAUSE_SECONDS}s" /> '.join(
+        f"{digit}." for digit in code
+    )
+    return template.replace("{code}", paced)
 
 
 async def _fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
@@ -1010,7 +1027,11 @@ class AsteriskCallController:
 
         line = _build_announcement_line(entry.line_template, code)
         await speak_goodbye(active_call.call_session.worker, line)
-        await asyncio.sleep(ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS)
+        # Base grace for the surrounding speech + the per-digit pause time
+        # (the code is read TWICE), so the slowed readout is never cut off
+        # mid-number by the teardown.
+        grace = ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS + 2 * len(code) * ANNOUNCEMENT_DIGIT_PAUSE_SECONDS
+        await asyncio.sleep(grace)
         logger.info(f"announcement: played channel={active_call.sip_channel_id!r}")
         await self._close_active_call(active_call, "announcement complete")
 
