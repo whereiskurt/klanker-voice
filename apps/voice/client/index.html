@@ -9,15 +9,17 @@
     <meta name="description" content="A live conversation with the KlankerMaker concierge." />
     <link rel="canonical" href="https://voice.klankermaker.ai/" />
 
-    <!-- Open Graph / social unfurl. og:image is GitHub's own 1200x630 PNG card for
-         whereiskurt/klanker-voice (a real raster — renders in Slack/X/iMessage/Discord,
-         unlike the repo's SVG banner which those scrapers reject). -->
+    <!-- Open Graph / social unfurl. og:image is a self-hosted 1200x630 PNG served
+         same-origin from voice.klankermaker.ai (built from docs/assets/klanker-voice-og.svg,
+         copied to dist root by Vite). Self-hosted because some preview scrapers — notably
+         Signal — refuse to render cross-origin generated images like GitHub's repo card. -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Klanker Voice" />
     <meta property="og:title" content="Klanker Voice — tap the mic, or drop a quarter" />
     <meta property="og:description" content="A live, low-latency speech-to-speech conversation with the KlankerMaker concierge — an agent that knows Kurt, the klanker platform, and defcon.run. Tap the mic and say whoa." />
     <meta property="og:url" content="https://voice.klankermaker.ai/" />
-    <meta property="og:image" content="https://opengraph.githubassets.com/1/whereiskurt/klanker-voice" />
+    <meta property="og:image" content="https://voice.klankermaker.ai/og-image.png" />
+    <meta property="og:image:secure_url" content="https://voice.klankermaker.ai/og-image.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -27,7 +29,7 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Klanker Voice — tap the mic, or drop a quarter" />
     <meta name="twitter:description" content="A live, low-latency speech-to-speech conversation with the KlankerMaker concierge. Tap the mic and say whoa." />
-    <meta name="twitter:image" content="https://opengraph.githubassets.com/1/whereiskurt/klanker-voice" />
+    <meta name="twitter:image" content="https://voice.klankermaker.ai/og-image.png" />
     <meta name="twitter:image:alt" content="Klanker Voice — a public speech-to-speech voice agent" />
   </head>
   <body>

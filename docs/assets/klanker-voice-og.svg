@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Klanker Voice — a public speech-to-speech voice agent at voice.klankermaker.ai">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06070c"/>
+      <stop offset="0.55" stop-color="#0b0d16"/>
+      <stop offset="1" stop-color="#10121c"/>
+    </linearGradient>
+    <linearGradient id="wave" gradientUnits="userSpaceOnUse" x1="760" y1="0" x2="1010" y2="0">
+      <stop offset="0" stop-color="#34f5d0"/>
+      <stop offset="0.35" stop-color="#2de2c8"/>
+      <stop offset="0.7" stop-color="#4ea8ff"/>
+      <stop offset="1" stop-color="#8b7cf6"/>
+    </linearGradient>
+    <linearGradient id="voice" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#34f5d0"/>
+      <stop offset="1" stop-color="#4ea8ff"/>
+    </linearGradient>
+    <radialGradient id="orb" cx="0.35" cy="0.3" r="1">
+      <stop offset="0" stop-color="#34f5d0"/>
+      <stop offset="0.55" stop-color="#2de2c8"/>
+      <stop offset="1" stop-color="#0e6e60"/>
+    </radialGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="1.6" cy="1.6" r="1.6" fill="#232636"/>
+    </pattern>
+  </defs>
+
+  <!-- backdrop (full-bleed, no rounded corners so there is no transparency) -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#dots)" opacity="0.5"/>
+  <rect x="24" y="24" width="1152" height="582" rx="18" fill="none" stroke="#232636" stroke-width="2"/>
+
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <!-- eyebrow + corner tag -->
+    <text x="80" y="150" font-size="20" letter-spacing="4" fill="#7c8296" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">PUBLIC SPEECH-TO-SPEECH VOICE AGENT</text>
+    <text x="1120" y="150" font-size="18" text-anchor="end" letter-spacing="1" fill="#7c8296" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">a klanker family production</text>
+
+    <!-- wordmark -->
+    <text x="78" y="308" font-size="104" font-weight="800" letter-spacing="8" fill="#e6e8ef">KLANKER</text>
+    <text x="78" y="414" font-size="104" font-weight="800" letter-spacing="8" fill="url(#voice)">VOICE</text>
+
+    <!-- tagline + url -->
+    <text x="82" y="474" font-size="30" letter-spacing="2" fill="#a6abbd" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">tap the mic. or drop a quarter.</text>
+    <text x="82" y="524" font-size="26" letter-spacing="1" fill="#4ea8ff" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">voice.klankermaker.ai</text>
+    <text x="82" y="562" font-size="18" letter-spacing="1" fill="#7c8296" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">VAD &#8594; STT &#8594; LLM &#8594; TTS &#183; &#8804;1.2s &#183; barge-in welcome</text>
+  </g>
+
+  <!-- the orb (browser door) -->
+  <g filter="url(#glow)">
+    <circle cx="700" cy="315" r="40" fill="url(#orb)"/>
+  </g>
+  <circle cx="700" cy="315" r="40" fill="none" stroke="#34f5d0" stroke-opacity="0.5"/>
+  <!-- mic glyph inside orb -->
+  <g stroke="#06070c" stroke-width="5" fill="none" stroke-linecap="round">
+    <rect x="691" y="291" width="18" height="32" rx="9" fill="#06070c" stroke="none"/>
+    <path d="M 684 315 a 16 16 0 0 0 32 0"/>
+    <line x1="700" y1="331" x2="700" y2="340"/>
+  </g>
+
+  <!-- voice bars: orb to handset -->
+  <g stroke="url(#wave)" stroke-width="8" stroke-linecap="round">
+    <line x1="772" y1="291" x2="772" y2="339"/>
+    <line x1="790" y1="271" x2="790" y2="359"/>
+    <line x1="808" y1="251" x2="808" y2="379"/>
+    <line x1="826" y1="281" x2="826" y2="349"/>
+    <line x1="844" y1="237" x2="844" y2="393"/>
+    <line x1="862" y1="263" x2="862" y2="367"/>
+    <line x1="880" y1="225" x2="880" y2="405"/>
+    <line x1="898" y1="279" x2="898" y2="351"/>
+    <line x1="916" y1="247" x2="916" y2="383"/>
+    <line x1="934" y1="287" x2="934" y2="343"/>
+    <line x1="952" y1="257" x2="952" y2="373"/>
+  </g>
+
+  <!-- payphone (PSTN door) -->
+  <g transform="translate(985,206) scale(1.14)">
+    <rect x="0" y="0" width="150" height="192" rx="14" fill="#10121c" stroke="#232636" stroke-width="3"/>
+    <rect x="0" y="0" width="150" height="192" rx="14" fill="none" stroke="url(#wave)" stroke-width="1.5" opacity="0.6"/>
+    <!-- handset -->
+    <g filter="url(#glow)">
+      <path d="M 30 44 q 45 -26 90 0 l -9 18 q -36 -20 -72 0 Z" fill="#2de2c8"/>
+    </g>
+    <!-- coin slot -->
+    <rect x="108" y="70" width="22" height="6" rx="3" fill="#f5a623"/>
+    <!-- DTMF keypad -->
+    <g fill="#e6e8ef">
+      <g opacity="0.9">
+        <circle cx="47" cy="98" r="8"/><circle cx="75" cy="98" r="8"/><circle cx="103" cy="98" r="8"/>
+        <circle cx="47" cy="126" r="8"/><circle cx="75" cy="126" r="8"/><circle cx="103" cy="126" r="8"/>
+        <circle cx="47" cy="154" r="8"/><circle cx="75" cy="154" r="8"/><circle cx="103" cy="154" r="8"/>
+      </g>
+      <g fill="#4ea8ff">
+        <circle cx="75" cy="126" r="8"/>
+      </g>
+    </g>
+    <text x="75" y="182" font-size="12" letter-spacing="1.5" text-anchor="middle" fill="#7c8296" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">NO QUARTERS NEEDED</text>
+  </g>
+</svg>
