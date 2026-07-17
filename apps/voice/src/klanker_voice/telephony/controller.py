@@ -210,11 +210,15 @@ ANNOUNCEMENT_SLOW_DIGIT_SEP = ". ... "
 #: the teardown grace so the spoken-twice read is never cut off.
 ANNOUNCEMENT_SLOW_DIGIT_SECONDS = 0.9
 
-#: The panic-readout gag's accelerating passes (quick task 260716-2px), as
-#: shrinking PLAIN-PUNCTUATION separators (again: NO markup tags), rendered in
-#: order after the slow x2 read -- comma-paced then space-paced (fast, still
-#: digit-separated so ElevenLabs never reads the code as one number). Tunable.
-ANNOUNCEMENT_ACCEL_SEPS: tuple[str, ...] = (", ", " ")
+#: The panic-readout gag's accelerating passes (quick task 260716-2px; extended
+#: to 6 passes 2026-07-17 per operator: "say it 5-6x really fast, disorienting
+#: but with a rhythm"), as PLAIN-PUNCTUATION separators (again: NO markup tags),
+#: rendered in order after the slow x2 read. One comma-paced pass to seat the
+#: digits, then FIVE fast space-paced passes -- the same six digits rattling by
+#: back-to-back is the disorienting rhythm. Every separator is NON-empty so the
+#: digits stay separated and ElevenLabs never reads the code as one number.
+#: Tunable: add/remove entries to change the pass count; keep them non-empty.
+ANNOUNCEMENT_ACCEL_SEPS: tuple[str, ...] = (", ", " ", " ", " ", " ", " ")
 
 #: Spoken copy for the panic-readout gag tail (quick task 260716-2px):
 #: after the slow x2 OTP read, the agent asks if the caller got it, denies
@@ -230,9 +234,10 @@ ANNOUNCEMENT_BYE_COPY = "Good luck! Hack the planet!"
 #: additional pre-punchline pause + the sign-off) on top of the base
 #: announcement grace and the slow x2 digit-pause time, so
 #: ``_gate_announcement``'s teardown never cuts the gag off mid-playback.
-#: Bumped 8.0 -> 10.0 (2026-07-16) to cover the new ANNOUNCEMENT_PUNCHLINE_PAUSE
-#: beat before "Just kidding...".
-ANNOUNCEMENT_GAG_TAIL_SECONDS = 10.0
+#: Bumped 8.0 -> 10.0 (2026-07-16) to cover the ANNOUNCEMENT_PUNCHLINE_PAUSE
+#: beat before "Just kidding...", then 10.0 -> 18.0 (2026-07-17) to cover the
+#: 6-pass fast digit readout (ANNOUNCEMENT_ACCEL_SEPS grew 2 -> 6 passes).
+ANNOUNCEMENT_GAG_TAIL_SECONDS = 18.0
 
 #: --- CTF OTP SMS-during-call (quick task 260716-hg5) -------------------------
 #: The design doc docs/superpowers/specs/2026-07-16-ctf-otp-sms-during-call-
