@@ -481,6 +481,31 @@ def _dialed_did_from_sip_to(raw: Any) -> str:
     return e164[2:]  # bare 10-digit NANP DID
 
 
+def _dialed_did_from_cidname(cidname: Any, prefix_map: dict[str, str]) -> str:
+    """Resolve the dialed DID from the caller-ID NAME via Approach C (quick
+    260717-buf, live-confirmed 2026-07-17). VoIP.ms prepends each DID's per-DID
+    ``callerid_prefix`` to the inbound caller-ID name, which the dialplan stashes
+    into KLANKER_SIP_CIDNAME (``${CALLERID(name)}``) for us to read here.
+
+    ``cidname`` is either EXACTLY the tag (caller had no CNAM -- e.g.
+    ``"KVD3234"``) or the tag PREPENDED to a CNAM (e.g. ``"KVD3234 Some Name"``).
+    A tag key from ``prefix_map`` matches when ``cidname`` equals it OR starts
+    with it followed by a non-alphanumeric boundary (a space/punctuation) -- so a
+    tag never spuriously matches a longer alphanumeric token. Keys are tried
+    LONGEST-first so a tag that is a prefix of another can't shadow it. Returns
+    the mapped bare-digit DID, or ``""`` for no map / no match / junk. Never
+    raises."""
+    text = _normalize_token(cidname)
+    if not text or not prefix_map:
+        return ""
+    for tag in sorted(prefix_map, key=len, reverse=True):
+        if not tag:
+            continue
+        if text == tag or (text.startswith(tag) and not text[len(tag)].isalnum()):
+            return prefix_map[tag]
+    return ""
+
+
 def _select_sms_send_dids(entry: AnnouncementEntry, dialed_did: str) -> tuple[str, ...]:
     """Choose the ordered VoIP.ms sending-DID list for this call's OTP text
     (quick task 260716-hg5 follow-up -- per-DID SMS reply).
@@ -768,54 +793,32 @@ class AsteriskCallController:
 
         await self._ari.answer(sip_channel_id)
 
-        # Per-DID SMS reply (quick task 260716-hg5 follow-up): resolve the ACTUAL
-        # dialed DID. PRIMARY source is the per-DID sub-account map: when a DID
-        # has its OWN VoIP.ms sub-account, ``did`` above (dialplan.exten) IS that
-        # sub-account's SIP username (e.g. 557010_vegas3234), which maps 1:1 to a
-        # DID. FALLBACK is the SIP ``To:`` header (stashed into KLANKER_SIP_TO by
-        # the dialplan before Stasis) -- used for DIDs still on the SHARED
-        # sub-account, where exten is only the shared name (557010_klanker-pbx)
-        # and the To: header ALSO turns out to carry only that name (live-proven
-        # 2026-07-16 -- hence per-DID sub-accounts). ``""`` on a total miss (per-
-        # DID SMS then falls back to the legacy pool). Sub-account names + DIDs
-        # are PUBLIC, so all three are safe to log at INFO. Read AFTER answer()
-        # so answer stays the first ARI REST call; the KLANKER_SIP_TO var
-        # persists past Answer().
+        # Per-DID SMS reply -- resolve the ACTUAL dialed DID (quick 260716-hg5 →
+        # rewired to Approach C in 260717-buf). Resolution order:
+        #   1. sub-account map: if a DID has its OWN VoIP.ms sub-account, ``did``
+        #      (dialplan.exten) IS the sub-account username → maps 1:1 to a DID
+        #      (INERT today -- no DID is on a per-DID sub-account; kept for #67);
+        #   2. Approach C -- the per-DID VoIP.ms "Caller ID name prefix" rides in
+        #      the From display name → ``${CALLERID(name)}`` (stashed as
+        #      KLANKER_SIP_CIDNAME); a tag there resolves the dialed DID with NO
+        #      routing change (live-confirmed 2026-07-17). This is the LIVE path;
+        #   3. SIP ``To:`` header (KLANKER_SIP_TO) -- a dead last-ditch fallback
+        #      (on the shared sub-account it only ever carries the sub-account
+        #      name, live-proven 2026-07-16).
+        # ``""`` on a total miss → _select_sms_send_dids falls back to the (now
+        # empty) sms_dids pool → no text. Sub-account names, CID tags + DIDs are
+        # PUBLIC, safe to log at INFO. Read AFTER answer() so answer stays the
+        # first ARI REST call; the channel vars persist past Answer().
         sip_to = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_TO")
-        dialed_did = self._telephony_cfg.subaccount_did_map.get(did, "") or _dialed_did_from_sip_to(
-            sip_to
+        cidname = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_CIDNAME")
+        dialed_did = (
+            self._telephony_cfg.subaccount_did_map.get(did, "")
+            or _dialed_did_from_cidname(cidname, self._telephony_cfg.cid_prefix_did_map)
+            or _dialed_did_from_sip_to(sip_to)
         )
         logger.info(
             f"on_stasis_start: channel={sip_channel_id} dialed_did={dialed_did or '<none>'} "
-            f"exten={did!r} sip_to={sip_to or '<none>'!r}"
-        )
-
-        # Per-DID SMS reply v2 DIAGNOSTIC (quick task 260716-wgz, Step 1 of
-        # docs/superpowers/specs/2026-07-17-per-did-sms-reply-v2-plan.md): the
-        # To: header only carries the shared sub-account name, so probe FIVE
-        # other candidate headers/functions (stashed into channel vars by the
-        # dialplan before Stasis) and log them ONCE per call to see which -- if
-        # any -- carries the real dialed DID. OBSERVE-ONLY: these values feed
-        # nothing (not dialed_did, gate, or SMS selection); a spoofed header
-        # cannot alter routing. get_channel_var returns "" on unset/miss and
-        # never raises. Sub-account names + DIDs are PUBLIC, so INFO is safe.
-        # Remove once the carrying header is identified.
-        probe_pcpid = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_PCPID")
-        probe_diversion = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_DIVERSION")
-        probe_rpid = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_RPID")
-        probe_contact = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_CONTACT")
-        probe_dnid = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_DNID")
-        # Approach C (per-DID caller-ID-name-prefix): VoIP.ms's per-DID "Caller ID
-        # name prefix" rides in the From display name, so capture the raw From
-        # header and the parsed caller-ID name to see the tag → dialed-DID mapping.
-        probe_from = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_FROM")
-        probe_cidname = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_CIDNAME")
-        logger.info(
-            f"on_stasis_start SIP-HEADER-PROBE: channel={sip_channel_id} "
-            f"pcpid={probe_pcpid or '<none>'!r} diversion={probe_diversion or '<none>'!r} "
-            f"rpid={probe_rpid or '<none>'!r} contact={probe_contact or '<none>'!r} "
-            f"dnid={probe_dnid or '<none>'!r} cidname={probe_cidname or '<none>'!r} "
-            f"from={probe_from or '<none>'!r}"
+            f"exten={did!r} cidname={cidname or '<none>'!r} sip_to={sip_to or '<none>'!r}"
         )
 
         # R2: Klanker must already be bound and listening BEFORE Asterisk's
