@@ -74,13 +74,6 @@ fi
 echo "[entrypoint] scrubbing VoIP.ms SIP credentials from the environment before exec'ing the controller (D-04)"
 unset VOIPMS_SIP_USERNAME
 unset VOIPMS_SIP_PASSWORD
-# Per-DID sub-account SIP creds (quick task 260716-hg5 follow-up): these
-# reach Asterisk's rendered pjsip.conf but, exactly like the klanker-pbx creds
-# above, must NEVER reach the Python controller (D-04/D-09).
-unset VOIPMS_SIP_USERNAME_VEGAS3234
-unset VOIPMS_SIP_PASSWORD_VEGAS3234
-unset VOIPMS_SIP_USERNAME_VEGAS3283
-unset VOIPMS_SIP_PASSWORD_VEGAS3283
 
 cd /app
 echo "[entrypoint] exec'ing the telephony controller..."
