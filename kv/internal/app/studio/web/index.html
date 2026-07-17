@@ -26,7 +26,8 @@
     </div>
 
     <nav id="nav">
-      <button class="navitem active" data-tab="rules"><span class="nk">&#8649;</span> Routing rules <span class="count" id="navCountRules">0</span></button>
+      <button class="navitem active" data-tab="map"><span class="nk">&#8982;</span> Map</button>
+      <button class="navitem" data-tab="rules"><span class="nk">&#8649;</span> Routing rules (Advanced) <span class="count" id="navCountRules">0</span></button>
       <button class="navitem" data-tab="knowledge"><span class="nk">&#9670;</span> Knowledge <span class="count" id="navCountKnowledge">0</span></button>
       <button class="navitem" data-tab="keys"><span class="nk">&#9887;</span> Keys &amp; secrets <span class="count" id="navCountKeys">0</span></button>
       <button class="navitem" data-tab="deploy"><span class="nk">&#9650;</span> Save &amp; deploy</button>
@@ -43,8 +44,8 @@
   <main>
     <div class="topbar">
       <div class="title">
-        <h2 id="tabTitle">Routing rules</h2>
-        <div class="desc" id="tabDesc">First match wins, top to bottom. Each rule maps a caller + secret to time, knowledge and a persona.</div>
+        <h2 id="tabTitle">Routing map</h2>
+        <div class="desc" id="tabDesc">Who reaches which knowledge, and what unlocks it &mdash; hover or focus a caller to trace its route.</div>
       </div>
       <div class="topbar-actions" id="tabActions">
         <button class="btn ghost" id="reloadBtn" type="button"><span class="k">&#8595;</span> Import from live</button>
@@ -54,8 +55,55 @@
 
     <div class="content">
 
-      <!-- ---------- RULES TAB ---------- -->
-      <section class="panel active" id="panel-rules">
+      <!-- ---------- MAP TAB (default landing — routing-flow overview) ---------- -->
+      <!-- Live-data port of the approved mockup
+           (docs/superpowers/specs/2026-07-15-kv-studio-flow-mockup.html):
+           four lanes built entirely from GET /api/config by app.js's
+           renderMap(cfg). Read-only — every box deep-links to its EXISTING
+           editor (switchTab + openRuleDrawer/openDidModal); no inline
+           editing lives here. Node containers below are left EMPTY —
+           app.js fills them. -->
+      <section class="panel active" id="panel-map">
+        <p class="hint" style="margin-bottom:14px">Hover or keyboard-focus a caller/DID box to trace its whole route. Click any box to jump to its editor.</p>
+        <div class="stage">
+          <svg class="wires" id="mapWires" aria-hidden="true"></svg>
+          <div class="lanes" id="mapLanes">
+            <div class="lane" data-lane="callers">
+              <div class="lane-hd" data-lane="callers"><span class="idx">1</span><span class="lane-title">Callers &amp; DIDs<small>who's dialing in</small></span></div>
+              <div class="nodes" id="map-callers"><!-- rendered by app.js: renderMap --></div>
+            </div>
+            <div class="lane" data-lane="evaluator">
+              <div class="lane-hd" data-lane="evaluator"><span class="idx">2</span><span class="lane-title">Evaluator<small>who + secret &rarr; route</small></span></div>
+              <div class="gate" id="mapGate">
+                <div class="g-title"><span class="spark">&#10704;</span> The gate</div>
+                <div class="g-desc">Matches who's calling against a secret &mdash; a spoken passphrase, a DTMF PIN, or nothing &mdash; and routes the call to a persona with a time limit.</div>
+                <div class="keys">
+                  <div class="kl eyebrow">Secrets it knows</div>
+                  <div id="mapGateKeys"><!-- rendered by app.js: renderMap --></div>
+                </div>
+                <div class="keys grants">
+                  <div class="kl eyebrow">Grants &middot; time limit</div>
+                  <div id="mapGateGrants"><!-- rendered by app.js: renderMap --></div>
+                </div>
+              </div>
+            </div>
+            <div class="lane" data-lane="personas">
+              <div class="lane-hd" data-lane="personas"><span class="idx">3</span><span class="lane-title">Persona<small>who they talk to &middot; time</small></span></div>
+              <div class="nodes" id="map-personas"><!-- rendered by app.js: renderMap --></div>
+            </div>
+            <div class="lane" data-lane="knowledge">
+              <div class="lane-hd" data-lane="knowledge"><span class="idx">4</span><span class="lane-title">Knowledge<small>packs they can reach</small></span></div>
+              <div class="nodes" id="map-knowledge"><!-- rendered by app.js: renderMap --></div>
+            </div>
+          </div>
+          <div id="mapEmpty" class="map-empty" hidden></div>
+        </div>
+        <!-- rendered by app.js: renderMapUnlocks -->
+        <div id="mapUnlocks" class="map-unlocks" hidden></div>
+      </section>
+
+      <!-- ---------- RULES TAB (Advanced) ---------- -->
+      <section class="panel" id="panel-rules">
         <div class="summary" id="summaryStrip"><!-- rendered by app.js --></div>
 
         <div class="tablewrap">
