@@ -308,23 +308,6 @@ async def test_stasis_start_allocates_and_registers(
     assert order.index("media_open") < order.index("create_external_media")
 
 
-async def test_stasis_start_resolves_dialed_did_from_subaccount_map(
-    make_config_file, stub_provider_keys, fake_aws, monkeypatch
-):
-    """Per-DID sub-account (quick 260716-hg5 follow-up): a call whose
-    dialplan.exten IS a mapped sub-account SIP username resolves ActiveCall.
-    dialed_did straight from the config map -- no To: header needed."""
-    controller, ari, sessions = _build_controller(
-        make_config_file,
-        telephony_cfg=_telephony_cfg(subaccount_did_map={"557010_vegas3234": "7254043234"}),
-    )
-    _patch_start_gate(monkeypatch)
-
-    await controller.on_stasis_start(_stasis_event(exten="557010_vegas3234"))
-
-    assert controller.calls["chan-1"].dialed_did == "7254043234"
-
-
 async def test_stasis_start_dialed_did_falls_back_to_to_header(
     make_config_file, stub_provider_keys, fake_aws, monkeypatch
 ):

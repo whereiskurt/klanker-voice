@@ -798,29 +798,24 @@ class AsteriskCallController:
 
         await self._ari.answer(sip_channel_id)
 
-        # Per-DID SMS reply -- resolve the ACTUAL dialed DID (quick 260716-hg5 →
-        # rewired to Approach C in 260717-buf). Resolution order:
-        #   1. sub-account map: if a DID has its OWN VoIP.ms sub-account, ``did``
-        #      (dialplan.exten) IS the sub-account username → maps 1:1 to a DID
-        #      (INERT today -- no DID is on a per-DID sub-account; kept for #67);
-        #   2. Approach C -- the per-DID VoIP.ms "Caller ID name prefix" rides in
+        # Per-DID SMS reply -- resolve the ACTUAL dialed DID via Approach C
+        # (quick 260717-buf, live-confirmed 2026-07-17). Resolution order:
+        #   1. Approach C -- the per-DID VoIP.ms "Caller ID name prefix" rides in
         #      the From display name → ``${CALLERID(name)}`` (stashed as
         #      KLANKER_SIP_CIDNAME); a tag there resolves the dialed DID with NO
-        #      routing change (live-confirmed 2026-07-17). This is the LIVE path;
-        #   3. SIP ``To:`` header (KLANKER_SIP_TO) -- a dead last-ditch fallback
+        #      routing change. This is the LIVE path;
+        #   2. SIP ``To:`` header (KLANKER_SIP_TO) -- a dead last-ditch fallback
         #      (on the shared sub-account it only ever carries the sub-account
         #      name, live-proven 2026-07-16).
         # ``""`` on a total miss → _select_sms_send_dids falls back to the (now
-        # empty) sms_dids pool → no text. Sub-account names, CID tags + DIDs are
-        # PUBLIC, safe to log at INFO. Read AFTER answer() so answer stays the
-        # first ARI REST call; the channel vars persist past Answer().
+        # empty) sms_dids pool → no text. CID tags + DIDs are PUBLIC, safe to log
+        # at INFO. Read AFTER answer() so answer stays the first ARI REST call;
+        # the channel vars persist past Answer().
         sip_to = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_TO")
         cidname = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_CIDNAME")
-        dialed_did = (
-            self._telephony_cfg.subaccount_did_map.get(did, "")
-            or _dialed_did_from_cidname(cidname, self._telephony_cfg.cid_prefix_did_map)
-            or _dialed_did_from_sip_to(sip_to)
-        )
+        dialed_did = _dialed_did_from_cidname(
+            cidname, self._telephony_cfg.cid_prefix_did_map
+        ) or _dialed_did_from_sip_to(sip_to)
         logger.info(
             f"on_stasis_start: channel={sip_channel_id} dialed_did={dialed_did or '<none>'} "
             f"exten={did!r} cidname={cidname or '<none>'!r} sip_to={sip_to or '<none>'!r}"
