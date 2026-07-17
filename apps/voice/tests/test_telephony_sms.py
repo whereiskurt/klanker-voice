@@ -24,6 +24,7 @@ from klanker_voice.telephony.controller import (
     ANNOUNCEMENT_PUNCHLINE_PAUSE,
     ANNOUNCEMENT_SMS_PUNCHLINE_COPY,
     _build_announcement_script,
+    _dialed_did_from_cidname,
     _dialed_did_from_sip_to,
     _select_sms_send_dids,
     _send_sms_via_relay,
@@ -411,6 +412,39 @@ async def test_hook_log_discipline_no_secret_leak(
 )
 def test_dialed_did_from_sip_to(sip_to, expected):
     assert _dialed_did_from_sip_to(sip_to) == expected
+
+
+# --- Per-DID reply: _dialed_did_from_cidname (Approach C CID-name-prefix) -----
+
+_CID_PREFIX_MAP = {"KVD3234": "7254043234", "KVD3283": "7254043283"}
+
+
+@pytest.mark.parametrize(
+    "cidname,expected",
+    [
+        ("KVD3234", "7254043234"),                 # exact tag (caller had no CNAM)
+        ("KVD3283", "7254043283"),
+        ("KVD3234 Some Name", "7254043234"),        # tag PREPENDED to a CNAM (space boundary)
+        ("KVD3283-Caller", "7254043283"),           # non-alnum boundary (punctuation)
+        ("KVD9999", ""),                            # unknown tag -> no match
+        ("KVD3234EXTRA", ""),                       # alnum run past the tag -> NOT a match
+        ("5197101515", ""),                         # a bare caller number, no tag
+        ("", ""),                                   # cidname absent
+        (None, ""),                                 # never raises
+    ],
+)
+def test_dialed_did_from_cidname(cidname, expected):
+    assert _dialed_did_from_cidname(cidname, _CID_PREFIX_MAP) == expected
+
+
+def test_dialed_did_from_cidname_empty_map_never_matches():
+    assert _dialed_did_from_cidname("KVD3234", {}) == ""
+
+
+def test_dialed_did_from_cidname_longest_tag_wins():
+    # A tag that is a prefix of another must not shadow the longer, exact one.
+    m = {"KVD": "1111111111", "KVD3234": "7254043234"}
+    assert _dialed_did_from_cidname("KVD3234", m) == "7254043234"
 
 
 # --- Per-DID reply: _select_sms_send_dids (sender selection) -----------------

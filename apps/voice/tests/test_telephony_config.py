@@ -329,12 +329,13 @@ def test_announcement_sms_relay_url_absent_defaults_empty(make_config_file):
 
 
 def test_shipped_telephony_toml_arms_sms_did_and_relay(make_config_file):
-    """The shipped configs/telephony.toml announcement entry carries the live
-    SMS-enabled sending DID (6134805878), the auth /ctf/sms relay URL, and the
-    per-DID reply enrollment for both Las Vegas DIDs."""
+    """The shipped configs/telephony.toml announcement entry has an EMPTY sms_dids
+    fallback pool (quick 260717-buf reserves 613 -- unresolved dialed DID sends no
+    text), the auth /ctf/sms relay URL, and per-DID reply enrollment for both
+    Las Vegas DIDs (which now resolve via the CALLERID(name) prefix map)."""
     telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
     cfg = load_telephony_config(telephony_toml_path)
-    assert cfg.announcements[0].sms_dids == ("6134805878",)
+    assert cfg.announcements[0].sms_dids == ()
     assert cfg.announcements[0].sms_relay_url == "https://auth.klankermaker.ai/use1/ctf/sms"
     assert cfg.announcements[0].sms_reply_dids == ("7254043234", "7254043283")
 
@@ -409,4 +410,46 @@ def test_shipped_telephony_toml_maps_both_vegas_subaccounts(make_config_file):
     assert cfg.subaccount_did_map == {
         "557010_vegas3234": "7254043234",
         "557010_vegas3283": "7254043283",
+    }
+
+
+# --- Quick task 260717-buf: [telephony.cid_prefix_dids] (Approach C) ---
+
+
+def test_cid_prefix_dids_absent_defaults_empty(make_config_file):
+    """No [telephony.cid_prefix_dids] table -> {} (CID-name-prefix resolution OFF,
+    byte-identical to before)."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    assert load_telephony_config(path).cid_prefix_did_map == {}
+
+
+def test_cid_prefix_dids_parses_and_normalizes(make_config_file):
+    """Keys (CID-name-prefix tags) are kept verbatim; values (DIDs) normalize to
+    digits-only."""
+    toml = VALID_TELEPHONY_TOML + (
+        "\n[telephony.cid_prefix_dids]\n"
+        '"KVD3234" = "725-404-3234"\n'
+        '"KVD3283" = "+17254043283"\n'
+    )
+    cfg = load_telephony_config(make_config_file(append=toml))
+    assert cfg.cid_prefix_did_map == {
+        "KVD3234": "7254043234",
+        "KVD3283": "17254043283",
+    }
+
+
+def test_cid_prefix_dids_non_table_rejected(make_config_file):
+    """A scalar `cid_prefix_dids` (not a table) is a hard config error."""
+    bad_toml = VALID_TELEPHONY_TOML + '\ncid_prefix_dids = "not-a-table"\n'
+    with pytest.raises(ConfigError, match="cid_prefix_dids"):
+        load_telephony_config(make_config_file(append=bad_toml))
+
+
+def test_shipped_telephony_toml_maps_both_vegas_cid_prefixes(make_config_file):
+    """The shipped configs/telephony.toml maps both Las Vegas CID-name-prefix
+    tags to their DIDs (Approach C per-DID reply resolution)."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    assert cfg.cid_prefix_did_map == {
+        "KVD3234": "7254043234",
+        "KVD3283": "7254043283",
     }

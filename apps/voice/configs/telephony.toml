@@ -114,6 +114,20 @@ unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (m
 "557010_vegas3234" = "7254043234"
 "557010_vegas3283" = "7254043283"
 
+# Per-DID SMS reply via Approach C -- VoIP.ms per-DID "Caller ID name prefix"
+# (quick 260717-buf, CONFIRMED live 2026-07-17). VoIP.ms prepends each DID's
+# configured prefix to the inbound caller-ID NAME, which arrives in the SIP From
+# display name -> ${CALLERID(name)} at the edge. The controller matches a tag
+# here anchored at the START of CALLERID(name) (exact when the caller has no
+# CNAM, or the tag PREPENDED to a CNAM otherwise) -> resolves the dialed DID with
+# NO routing change (DIDs stay on the shared 557010_klanker-pbx sub-account).
+# Keys = the VoIP.ms callerid_prefix set per DID (setDIDInfo callerid_prefix);
+# values = the bare-digit DID. Tags + DIDs are PUBLIC (no secret). LIVE-STEP:
+# each DID's callerid_prefix must be set in VoIP.ms to the matching key here.
+[telephony.cid_prefix_dids]
+"KVD3234" = "7254043234"
+"KVD3283" = "7254043283"
+
 # CTF phone-OTP announcement (quick task 260716-1g0, Revision 2 -- design doc
 # docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md,
 # "Revision 2 (2026-07-16) -- DTMF-code trigger, not DID" section). A caller
@@ -139,17 +153,20 @@ line_template = "Hey! Let me get you that O T P. {code}. That's {code}."
 # absent ⇒ feature OFF. 6134805878 is the only SMS-enabled DID as of 2026-07-16
 # (verified via getDIDsInfo); enable SMS on the others in the portal + append
 # them here for fallback depth.
-sms_dids = ["6134805878"]
-# Per-DID reply (quick task 260716-hg5 follow-up -- design doc docs/superpowers/
-# specs/2026-07-16-ctf-per-did-sms-reply-design.md): each ENROLLED dialed DID
-# replies FROM ITSELF, not from the shared sms_dids pool. The controller reads
-# the actual dialed number from the SIP To: header (surfaced by the dialplan as
-# KLANKER_SIP_TO) and: enrolled dialed DID -> text from THAT DID; a resolved-
-# but-unenrolled DID (e.g. 613) -> NO text (keeps 613 reserved/unburned even
-# though the announcement is DID-agnostic); an unresolved dialed DID (To: parse
-# miss) -> falls back to sms_dids above so the feature is never stranded while
-# the header mechanism is verified live. Both Las Vegas DIDs are enrolled
-# (SMS-enabled 2026-07-16); add more here as they are SMS-enabled in the portal.
+# EMPTY (quick 260717-buf): with per-DID reply now resolving via CALLERID(name)
+# (Approach C, below), the shared fallback pool is dropped so an UNRESOLVED
+# dialed DID sends NO text -- this reserves 613 (and every non-enrolled number):
+# dialed a Vegas DID -> texts from itself; dialed 613 / anything unprefixed ->
+# no text at all. (Was ["6134805878"]; 613 is no longer a universal sender.)
+sms_dids = []
+# Per-DID reply (quick 260716-hg5 → resolution rewired in 260717-buf): each
+# ENROLLED dialed DID replies FROM ITSELF. The controller now resolves the
+# dialed DID from the per-DID Caller ID name prefix in ${CALLERID(name)} (see
+# [telephony.cid_prefix_dids] above -- Approach C, live-confirmed 2026-07-17);
+# the dead SIP To: header stays only as a last-ditch fallback. Selection:
+# enrolled dialed DID -> text from THAT DID; a resolved-but-unenrolled DID -> NO
+# text; an unresolved dialed DID -> the (now empty) sms_dids pool -> no text.
+# Both Las Vegas DIDs are enrolled (SMS-enabled 2026-07-16).
 sms_reply_dids = ["7254043234", "7254043283"]
 # The SMS is sent by POSTing to the auth app's internal /ctf/sms relay (quick
 # 260716-hg5 follow-up), NOT by calling VoIP.ms from here: VoIP.ms's API is
