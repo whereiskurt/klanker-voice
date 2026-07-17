@@ -104,11 +104,19 @@ class FakeAriClient:
     order); returns predictable incrementing ids. No HTTP, no aiohttp, no
     real ARI server anywhere in this file."""
 
-    def __init__(self, order: list[str] | None = None) -> None:
+    def __init__(
+        self, order: list[str] | None = None, channel_vars: dict[str, str] | None = None
+    ) -> None:
         self.calls: list[tuple[str, tuple, dict]] = []
         self._order = order
         self._ext_counter = 0
         self._bridge_counter = 0
+        #: variable name -> value, served by get_channel_var for every channel
+        #: (tests are single-call). Empty ⇒ get_channel_var returns "" (the
+        #: real ARI behavior for an unset var), so the dialed DID is unknown
+        #: and per-DID SMS falls back to the legacy pool -- byte-identical to
+        #: the pre-per-DID tests.
+        self.channel_vars: dict[str, str] = dict(channel_vars or {})
 
     def _record(self, name: str, args: tuple = (), kwargs: dict | None = None) -> None:
         self.calls.append((name, args, kwargs or {}))
@@ -117,6 +125,10 @@ class FakeAriClient:
 
     async def answer(self, channel_id: str) -> None:
         self._record("answer", (channel_id,))
+
+    async def get_channel_var(self, channel_id: str, variable: str) -> str:
+        self._record("get_channel_var", (channel_id, variable))
+        return self.channel_vars.get(variable, "")
 
     async def create_external_media(
         self,

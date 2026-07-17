@@ -142,6 +142,30 @@ async def test_destroy_bridge_deletes_bridge():
     assert call["url"] == "http://127.0.0.1:8088/ari/bridges/bridge-1"
 
 
+async def test_get_channel_var_reads_value_from_variable_endpoint():
+    client, fake = _client_with_fake_session(
+        [_FakeResponse(status=200, json_body={"value": "<sip:17254043283@toronto.voip.ms>"})]
+    )
+    value = await client.get_channel_var("chan-1", "KLANKER_SIP_TO")
+    assert value == "<sip:17254043283@toronto.voip.ms>"
+    call = fake.calls[0]
+    assert call["method"] == "GET"
+    assert call["url"] == "http://127.0.0.1:8088/ari/channels/chan-1/variable"
+    assert call["params"]["variable"] == "KLANKER_SIP_TO"
+
+
+async def test_get_channel_var_returns_empty_on_unset_variable():
+    """An unset channel var (ARI 404) fails soft to "" -- never raises: a
+    missing To: header simply means the dialed DID is unknown."""
+    client, _fake = _client_with_fake_session([_FakeResponse(status=404)])
+    assert await client.get_channel_var("chan-1", "KLANKER_SIP_TO") == ""
+
+
+async def test_get_channel_var_returns_empty_on_missing_value_key():
+    client, _fake = _client_with_fake_session([_FakeResponse(status=200, json_body={})])
+    assert await client.get_channel_var("chan-1", "KLANKER_SIP_TO") == ""
+
+
 async def test_non_2xx_response_raises_ari_error_without_leaking_password():
     client, _fake = _client_with_fake_session([_FakeResponse(status=500)])
     with pytest.raises(AriError) as exc_info:

@@ -103,6 +103,24 @@ class AnnouncementEntry:
     code_env_var: str = ""
     did: str = ""
     sms_dids: tuple[str, ...] = ()
+    #: Per-DID reply enrollment (quick task 260716-hg5 follow-up -- design doc
+    #: docs/superpowers/specs/2026-07-16-ctf-per-did-sms-reply-design.md). The
+    #: set of DIALED DIDs that are allowed to reply-via-SMS FROM THEMSELVES: a
+    #: call to an enrolled DID is texted from THAT SAME number, not from the
+    #: shared ``sms_dids`` pool. Empty (the default) ⇒ pure legacy pool
+    #: behavior, byte-identical to before. When non-empty, the controller
+    #: reads the actual dialed DID from the SIP ``To:`` header (surfaced by
+    #: the dialplan into ``KLANKER_SIP_TO``) and:
+    #:   * dialed DID resolved AND enrolled here → text FROM the dialed DID;
+    #:   * dialed DID resolved but NOT enrolled → NO text (this is how a DID
+    #:     like 613 is RESERVED/unburned even though the announcement itself
+    #:     is DID-agnostic);
+    #:   * dialed DID unresolved (``To:`` parse miss) → fall back to the
+    #:     legacy ``sms_dids`` pool so the feature is never stranded while the
+    #:     header mechanism is being verified.
+    #: Each entry is normalized to digits only (same rule as ``sms_dids``); a
+    #: DID is a public phone number, never a credential.
+    sms_reply_dids: tuple[str, ...] = ()
     #: The auth app's internal ``/ctf/sms`` relay URL (quick task 260716-hg5
     #: follow-up). telephony-edge POSTs the built SMS here instead of calling
     #: VoIP.ms directly -- the auth app egresses from the STABLE, VoIP.ms-
@@ -300,6 +318,7 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
             )
 
         sms_dids = _parse_sms_dids(item.get("sms_dids"), i)
+        sms_reply_dids = _parse_sms_dids(item.get("sms_reply_dids"), i, field="sms_reply_dids")
         sms_relay_url = str(item.get("sms_relay_url", "")).strip()
 
         entries.append(
@@ -310,6 +329,7 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 line_template=line_template,
                 code_env_var=code_env_var,
                 sms_dids=sms_dids,
+                sms_reply_dids=sms_reply_dids,
                 sms_relay_url=sms_relay_url,
             )
         )
@@ -317,21 +337,23 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
     return tuple(entries)
 
 
-def _parse_sms_dids(raw: object, i: int) -> tuple[str, ...]:
-    """Normalize a ``[[telephony.announcement]].sms_dids`` value (quick task
-    260716-hg5) into an ordered tuple of digits-only sending DIDs. Absent /
-    ``None`` ⇒ ``()`` (SMS-during-call OFF). A non-list is a hard config
-    error. Each element is coerced to a string and stripped of every non-digit
-    character (so ``"613-480-5878"``, ``"+16134805878"``, and ``"6134805878"``
-    all normalize identically); empty results are dropped. ORDER is preserved
-    -- it is the runtime auto-fallback order. No credential ever appears here:
-    a DID is a public phone number, and the VoIP.ms API creds are read from the
-    environment by the controller, never from TOML."""
+def _parse_sms_dids(raw: object, i: int, field: str = "sms_dids") -> tuple[str, ...]:
+    """Normalize a ``[[telephony.announcement]]`` DID-array value (quick task
+    260716-hg5) into an ordered tuple of digits-only DIDs. Absent /
+    ``None`` ⇒ ``()``. A non-list is a hard config error. Each element is
+    coerced to a string and stripped of every non-digit character (so
+    ``"613-480-5878"``, ``"+16134805878"``, and ``"6134805878"`` all normalize
+    identically); empty results are dropped. ORDER is preserved -- for
+    ``sms_dids`` it is the runtime auto-fallback order. No credential ever
+    appears here: a DID is a public phone number, and the VoIP.ms API creds are
+    read from the environment by the controller, never from TOML. ``field``
+    names the parsed key for the error message (reused for both ``sms_dids``
+    and ``sms_reply_dids``)."""
     if raw is None:
         return ()
     if not isinstance(raw, (list, tuple)):
         raise ConfigError(
-            f"telephony.announcement[{i}].sms_dids must be an array of DID strings"
+            f"telephony.announcement[{i}].{field} must be an array of DID strings"
         )
     dids: list[str] = []
     for entry in raw:

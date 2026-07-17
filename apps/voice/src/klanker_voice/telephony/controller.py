@@ -426,6 +426,62 @@ def _sms_dst_from_caller(caller_id: Any) -> str:
     return e164[2:]  # drop "+1" -> bare 10-digit NANP destination
 
 
+def _dialed_did_from_sip_to(raw: Any) -> str:
+    """Extract the ACTUAL dialed DID from a raw SIP ``To:`` header value
+    (quick task 260716-hg5 follow-up -- per-DID SMS reply). On a shared
+    VoIP.ms sub-account the ARI ``StasisStart`` event's ``dialplan.exten`` is
+    the sub-account NAME, not the number the caller dialed -- but VoIP.ms
+    still carries the dialed DID in the SIP ``To:`` header, which the dialplan
+    stashes into the ``KLANKER_SIP_TO`` channel variable for us to read here.
+
+    A ``To:`` header looks like ``"Name" <sip:17254043283@toronto.voip.ms>;
+    tag=...`` (or bare ``<sip:+17254043283@...>``). Pulls the user-part of the
+    first ``sip:`` URI, then normalizes it through the SAME NA rules
+    (:func:`_normalize_e164`) as every other number in this module and returns
+    the bare 10-digit NANP form (matching ``sms_reply_dids`` after
+    ``_parse_sms_dids`` normalization). Returns ``""`` for anything it cannot
+    confidently resolve to a 10-digit NANP DID (missing header, non-NA number,
+    junk) -- the caller then treats the dialed DID as UNKNOWN. Never raises."""
+    text = _normalize_token(raw)
+    if not text:
+        return ""
+    m = re.search(r"sip:\+?(\d{6,15})@", text)
+    user = m.group(1) if m else ""
+    if not user:
+        # No sip: URI user (odd header shape) -- fall back to the first
+        # 10-or-11-digit run anywhere in the header value.
+        m2 = re.search(r"(\d{10,11})", text)
+        user = m2.group(1) if m2 else ""
+    e164 = _normalize_e164(user)
+    if not e164.startswith("+1") or len(e164) != 12:
+        return ""
+    return e164[2:]  # bare 10-digit NANP DID
+
+
+def _select_sms_send_dids(entry: AnnouncementEntry, dialed_did: str) -> tuple[str, ...]:
+    """Choose the ordered VoIP.ms sending-DID list for this call's OTP text
+    (quick task 260716-hg5 follow-up -- per-DID SMS reply).
+
+    Per-DID mode is ON whenever ``entry.sms_reply_dids`` is non-empty:
+      * ``dialed_did`` resolved AND enrolled → ``(dialed_did,)`` -- the caller
+        is texted FROM the exact number they dialed;
+      * ``dialed_did`` resolved but NOT enrolled → ``()`` -- NO text (this is
+        how a DID like 613 stays reserved/unburned even though the
+        announcement trigger itself is DID-agnostic);
+      * ``dialed_did`` unresolved (empty -- ``To:`` header parse miss) → the
+        legacy ``entry.sms_dids`` pool, so the feature is never stranded while
+        the header mechanism is being verified live.
+
+    When ``entry.sms_reply_dids`` is empty this returns ``entry.sms_dids``
+    unconditionally -- byte-identical to the pre-per-DID pool behavior. Pure /
+    module-level so it is unit-testable without a controller or a live call."""
+    if not entry.sms_reply_dids:
+        return entry.sms_dids
+    if dialed_did:
+        return (dialed_did,) if dialed_did in entry.sms_reply_dids else ()
+    return entry.sms_dids
+
+
 async def _send_sms_via_relay(
     url: str, headers: dict[str, str], dst: str, message: str, dids: tuple[str, ...]
 ) -> bool:
@@ -504,6 +560,13 @@ class ActiveCall:
     caller_id: str
     did: str
     created_at: float
+    #: The ACTUAL dialed DID (bare 10-digit NANP), parsed from the SIP ``To:``
+    #: header (quick task 260716-hg5 follow-up). ``did`` above is the ARI
+    #: ``dialplan.exten``, which on a shared VoIP.ms sub-account is the
+    #: sub-account NAME, not the number dialed -- ``dialed_did`` is the real
+    #: one, used for per-DID SMS reply. ``""`` when the ``To:`` header carried
+    #: no resolvable NANP DID (parse miss).
+    dialed_did: str = ""
     closed: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     #: Phase 11 Plan 06 (D-05): the §24 gate for this call, or ``None`` when
@@ -682,6 +745,24 @@ class AsteriskCallController:
 
         await self._ari.answer(sip_channel_id)
 
+        # Per-DID SMS reply (quick task 260716-hg5 follow-up): the dialplan
+        # stashes the raw SIP ``To:`` header into the ``KLANKER_SIP_TO``
+        # channel variable BEFORE Stasis, because ``did`` above (dialplan.exten)
+        # is the shared sub-account NAME (557010_klanker-pbx) on a VoIP.ms
+        # sub-account, never the number the caller dialed. Read it now (the var
+        # persists past Answer()) and parse out the real dialed DID; ``""`` on
+        # any miss (feature falls back to the legacy pool). A DID is a PUBLIC
+        # number, so ``sip_to`` and ``dialed_did`` are safe to log at INFO --
+        # this is also the live verification signal that VoIP.ms actually
+        # carries the dialed DID in ``To:``. Read AFTER answer() so answer stays
+        # the first ARI REST call.
+        sip_to = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_TO")
+        dialed_did = _dialed_did_from_sip_to(sip_to)
+        logger.info(
+            f"on_stasis_start: channel={sip_channel_id} dialed_did={dialed_did or '<none>'} "
+            f"sip_to={sip_to or '<none>'!r}"
+        )
+
         # R2: Klanker must already be bound and listening BEFORE Asterisk's
         # externalMedia channel is created -- connection_type=client means
         # Asterisk always dials OUT to us; a not-yet-bound port silently
@@ -726,6 +807,7 @@ class AsteriskCallController:
                 sip_channel_id=sip_channel_id,
                 caller_id=caller_id,
                 did=did,
+                dialed_did=dialed_did,
                 media=media,
                 bridge_id=bridge_id,
                 external_media_channel_id=external_media_channel_id,
@@ -738,6 +820,7 @@ class AsteriskCallController:
             sip_channel_id=sip_channel_id,
             caller_id=caller_id,
             did=did,
+            dialed_did=dialed_did,
             media=media,
             bridge_id=bridge_id,
             external_media_channel_id=external_media_channel_id,
@@ -777,6 +860,7 @@ class AsteriskCallController:
         sip_channel_id: str,
         caller_id: str,
         did: str,
+        dialed_did: str = "",
         media: RtpMediaSession,
         bridge_id: str,
         external_media_channel_id: str,
@@ -835,6 +919,7 @@ class AsteriskCallController:
             call_session=call_session,
             caller_id=caller_id,
             did=did,
+            dialed_did=dialed_did,
             created_at=time.time(),
         )
         self.calls[sip_channel_id] = active_call
@@ -907,6 +992,7 @@ class AsteriskCallController:
         sip_channel_id: str,
         caller_id: str,
         did: str,
+        dialed_did: str = "",
         media: RtpMediaSession,
         bridge_id: str,
         external_media_channel_id: str,
@@ -1022,6 +1108,7 @@ class AsteriskCallController:
             call_session=call_session,
             caller_id=caller_id,
             did=did,
+            dialed_did=dialed_did,
             created_at=time.time(),
             gate=gate,
             grant_tier_id=grant_tier_id,
@@ -1202,15 +1289,23 @@ class AsteriskCallController:
         # slow/failing relay can never hang the PSTN line, and
         # ``_send_sms_via_relay`` never raises. Never logs the OTP, body, dst,
         # DIDs, or bearer (T-OTP-04/§13).
+        # Per-DID reply (quick task 260716-hg5 follow-up): choose the sending
+        # DID(s) from the ACTUAL dialed DID (parsed from the SIP To: header at
+        # StasisStart) when ``sms_reply_dids`` enrolls it -- so an enrolled DID
+        # texts FROM ITSELF, a resolved-but-unenrolled DID (e.g. a reserved
+        # 613) sends nothing, and an unresolved dialed DID falls back to the
+        # legacy pool. ``_select_sms_send_dids`` is byte-identical to the old
+        # ``entry.sms_dids`` when no per-DID enrollment is configured.
         dst = _sms_dst_from_caller(active_call.caller_id)
-        sms_eligible = bool(entry.sms_dids) and bool(entry.sms_relay_url) and bool(dst)
+        send_dids = _select_sms_send_dids(entry, active_call.dialed_did)
+        sms_eligible = bool(send_dids) and bool(entry.sms_relay_url) and bool(dst)
         if sms_eligible:
             body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)
             bearer = os.environ.get(entry.otp_env_var, "") if entry.otp_env_var else ""
             relay_headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
             active_call.sms_task = asyncio.create_task(
                 _send_sms_via_relay(
-                    entry.sms_relay_url, relay_headers, dst, body, entry.sms_dids
+                    entry.sms_relay_url, relay_headers, dst, body, send_dids
                 )
             )
 
