@@ -790,6 +790,28 @@ class AsteriskCallController:
             f"exten={did!r} sip_to={sip_to or '<none>'!r}"
         )
 
+        # Per-DID SMS reply v2 DIAGNOSTIC (quick task 260716-wgz, Step 1 of
+        # docs/superpowers/specs/2026-07-17-per-did-sms-reply-v2-plan.md): the
+        # To: header only carries the shared sub-account name, so probe FIVE
+        # other candidate headers/functions (stashed into channel vars by the
+        # dialplan before Stasis) and log them ONCE per call to see which -- if
+        # any -- carries the real dialed DID. OBSERVE-ONLY: these values feed
+        # nothing (not dialed_did, gate, or SMS selection); a spoofed header
+        # cannot alter routing. get_channel_var returns "" on unset/miss and
+        # never raises. Sub-account names + DIDs are PUBLIC, so INFO is safe.
+        # Remove once the carrying header is identified.
+        probe_pcpid = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_PCPID")
+        probe_diversion = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_DIVERSION")
+        probe_rpid = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_RPID")
+        probe_contact = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_CONTACT")
+        probe_dnid = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_DNID")
+        logger.info(
+            f"on_stasis_start SIP-HEADER-PROBE: channel={sip_channel_id} "
+            f"pcpid={probe_pcpid or '<none>'!r} diversion={probe_diversion or '<none>'!r} "
+            f"rpid={probe_rpid or '<none>'!r} contact={probe_contact or '<none>'!r} "
+            f"dnid={probe_dnid or '<none>'!r}"
+        )
+
         # R2: Klanker must already be bound and listening BEFORE Asterisk's
         # externalMedia channel is created -- connection_type=client means
         # Asterisk always dials OUT to us; a not-yet-bound port silently
