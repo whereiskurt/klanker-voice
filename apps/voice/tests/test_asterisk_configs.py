@@ -177,6 +177,8 @@ class TestExtensionsConfInboundOnly:
             ("Set(KLANKER_SIP_RPID=", "PJSIP_HEADER(read,Remote-Party-ID)"),
             ("Set(KLANKER_SIP_CONTACT=", "PJSIP_HEADER(read,Contact)"),
             ("Set(KLANKER_SIP_DNID=", "CALLERID(dnid)"),
+            ("Set(KLANKER_SIP_FROM=", "PJSIP_HEADER(read,From)"),
+            ("Set(KLANKER_SIP_CIDNAME=", "CALLERID(name)"),
         ]
         for var_frag, src_frag in expected:
             idx = next(

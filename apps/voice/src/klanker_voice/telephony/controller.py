@@ -805,11 +805,17 @@ class AsteriskCallController:
         probe_rpid = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_RPID")
         probe_contact = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_CONTACT")
         probe_dnid = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_DNID")
+        # Approach C (per-DID caller-ID-name-prefix): VoIP.ms's per-DID "Caller ID
+        # name prefix" rides in the From display name, so capture the raw From
+        # header and the parsed caller-ID name to see the tag → dialed-DID mapping.
+        probe_from = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_FROM")
+        probe_cidname = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_CIDNAME")
         logger.info(
             f"on_stasis_start SIP-HEADER-PROBE: channel={sip_channel_id} "
             f"pcpid={probe_pcpid or '<none>'!r} diversion={probe_diversion or '<none>'!r} "
             f"rpid={probe_rpid or '<none>'!r} contact={probe_contact or '<none>'!r} "
-            f"dnid={probe_dnid or '<none>'!r}"
+            f"dnid={probe_dnid or '<none>'!r} cidname={probe_cidname or '<none>'!r} "
+            f"from={probe_from or '<none>'!r}"
         )
 
         # R2: Klanker must already be bound and listening BEFORE Asterisk's
