@@ -213,6 +213,16 @@ class TelephonyConfig:
     #: -- never logs the passphrase/PIN, never runs on the success path. Off =
     #: byte-identical D-05e posture.
     gate_debug_log_heard: bool = False
+    #: Quick task 260717-o2q (per-DID gate policy Part A): the set of
+    #: resolved dialed DIDs (bare digits, the same ``dialed_did`` Approach C
+    #: already resolves in ``AsteriskCallController.on_stasis_start``) whose
+    #: §24 gate is OTP-only -- the concierge passphrase AND the concierge
+    #: DTMF PIN are BOTH suppressed; only the global ``333266`` announcement
+    #: code and the existing fail-closed timer apply. Empty (the default)
+    #: means every DID is concierge -- byte-identical to before this field
+    #: existed. A DID is a public phone number, never a credential, so it
+    #: lives safely in TOML.
+    otp_only_dids: tuple[str, ...] = ()
     # --- §23 caller-ID mint (Phase 12, D-02/D-04/D-05) ---
     tel_mint_url: str = ""
     tel_mint_env_var: str = "TELEPHONY_ENDPOINT_AUTH_TOKEN"
@@ -260,6 +270,7 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
 
     announcements = _parse_announcements(table.get("announcement"))
     cid_prefix_did_map = _parse_cid_prefix_dids(table.get("cid_prefix_dids"))
+    otp_only_dids = _parse_otp_only_dids(table.get("otp_only_dids"))
 
     return TelephonyConfig(
         enabled=bool(table.get("enabled", False)),
@@ -280,6 +291,7 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         tel_mint_env_var=str(table.get("tel_mint_env_var", "TELEPHONY_ENDPOINT_AUTH_TOKEN")),
         announcements=announcements,
         cid_prefix_did_map=cid_prefix_did_map,
+        otp_only_dids=otp_only_dids,
     )
 
 
@@ -367,6 +379,29 @@ def _parse_sms_dids(raw: object, i: int, field: str = "sms_dids") -> tuple[str, 
         raise ConfigError(
             f"telephony.announcement[{i}].{field} must be an array of DID strings"
         )
+    dids: list[str] = []
+    for entry in raw:
+        digits = re.sub(r"\D", "", str(entry))
+        if digits:
+            dids.append(digits)
+    return tuple(dids)
+
+
+def _parse_otp_only_dids(raw: object) -> tuple[str, ...]:
+    """Normalize the top-level ``[telephony].otp_only_dids`` value (quick task
+    260717-o2q) into an ordered tuple of digits-only DIDs. Absent / ``None``
+    ⇒ ``()`` (every DID is concierge, byte-identical to before this field
+    existed). A non-list is a hard config error. The top-level analogue of
+    :func:`_parse_sms_dids` -- same digit-normalization rule (each element
+    coerced to a string, stripped of every non-digit character, empties
+    dropped, ORDER preserved), just without the per-announcement index
+    argument since this field lives directly under ``[telephony]``, not
+    inside an ``[[telephony.announcement]]`` entry. A DID is a public phone
+    number, never a credential."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise ConfigError("telephony.otp_only_dids must be an array of DID strings")
     dids: list[str] = []
     for entry in raw:
         digits = re.sub(r"\D", "", str(entry))

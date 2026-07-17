@@ -42,7 +42,7 @@ import pytest
 from klanker_voice import quota
 from klanker_voice.call_runtime import CallSession
 from klanker_voice.config import load_config, load_knowledge_config
-from klanker_voice.telephony.config import TelephonyConfig
+from klanker_voice.telephony.config import AnnouncementEntry, TelephonyConfig
 from klanker_voice.telephony.controller import ActiveCall, AsteriskCallController
 
 # Reuse the test_call_runtime.py offline-pipeline test rig verbatim (D-10
@@ -889,6 +889,210 @@ async def test_gate_fail_closed_on_quota_denied_after_unlock(
     assert len(goodbye_calls) == 1
     assert ari.count("hangup", arg="chan-1") == 1
     assert controller.calls == {}
+
+
+# --- Quick task 260717-o2q: per-DID gate policy Part A ---------------------
+#
+# The two Las Vegas DIDs (dialed_did resolved via the Approach C CID-name-
+# prefix map) are OTP-only: the concierge passphrase + DTMF PIN do nothing;
+# only the global 333266 announcement code and the existing fail-closed
+# timer apply. Every other DID (dialed_did unresolved -- "<none>") stays
+# byte-identical to today's concierge + OTP behavior.
+
+
+def _o2q_announcement_entry(**overrides) -> AnnouncementEntry:
+    """Local minimal equivalent of test_telephony_controller.py's
+    ``_announcement_entry`` -- deliberately not cross-imported (plan
+    instruction)."""
+    base = dict(
+        code_env_var="CTF_ANNOUNCEMENT_CODE",
+        otp_url="https://auth.klankermaker.ai/use1/ctf/otp",
+        otp_env_var="CTF_OTP_AUTH_TOKEN",
+        line_template="Hey! O T P. {code}. That's {code}. Bye.",
+    )
+    base.update(overrides)
+    return AnnouncementEntry(**base)
+
+
+async def test_otp_only_did_passphrase_is_inert(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A call whose dialed_did resolves to a Vegas DID (otp_only_dids
+    seeded) ignores the concierge passphrase entirely: quota.start_gate and
+    greet_now are never called, and the gate stays locked even after all 4
+    passphrase words arrive."""
+    from pipecat.frames.frames import TranscriptionFrame
+    from pipecat.processors.frame_processor import FrameDirection
+
+    def _spy_start_gate(identity, **kwargs):
+        raise AssertionError("quota.start_gate must never be called for an OTP-only DID")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.quota.start_gate", _spy_start_gate)
+
+    async def _spy_greet_now(worker, context):
+        raise AssertionError("greet_now must never be called for an OTP-only DID")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(
+            cid_prefix_did_map={"KVD3234": "7254043234"},
+            otp_only_dids=("7254043234",),
+        ),
+        passphrase_words=frozenset({"purple", "falcon", "midnight", "compass"}),
+    )
+    ari.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD3234"
+
+    await controller.on_stasis_start(_stasis_event())
+
+    active_call = controller.calls["chan-1"]
+    assert active_call.dialed_did == "7254043234"
+    assert active_call.otp_only is True
+
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="the midnight compass", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="found a purple falcon", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+
+    assert active_call.gate.unlocked is False
+
+
+async def test_otp_only_did_concierge_pin_is_inert(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A call whose dialed_did resolves to a Vegas DID ignores the concierge
+    DTMF PIN entirely: entering the real PIN digit-by-digit never unlocks
+    and never calls quota.start_gate."""
+
+    def _spy_start_gate(identity, **kwargs):
+        raise AssertionError("quota.start_gate must never be called for an OTP-only DID")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.quota.start_gate", _spy_start_gate)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(
+            cid_prefix_did_map={"KVD3234": "7254043234"},
+            otp_only_dids=("7254043234",),
+        ),
+        access_pin="4242",
+    )
+    ari.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD3234"
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    assert active_call.otp_only is True
+
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+
+    assert active_call.gate.unlocked is False
+
+
+async def test_otp_only_did_announcement_code_still_dispatches(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """The global 333266 announcement code still dispatches
+    _gate_announcement on an OTP-only DID -- the takeover path is untouched
+    by concierge suppression."""
+    ANNOUNCEMENT_CODE = "333266"
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    entry = _o2q_announcement_entry()
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(
+            cid_prefix_did_map={"KVD3234": "7254043234"},
+            otp_only_dids=("7254043234",),
+            announcements=(entry,),
+        ),
+        announcement_codes={ANNOUNCEMENT_CODE: entry},
+    )
+    ari.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD3234"
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    assert active_call.otp_only is True
+
+    for digit in ANNOUNCEMENT_CODE:
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+
+    assert len(gate_announcement_calls) == 1
+    assert gate_announcement_calls[0][0] is active_call
+    assert gate_announcement_calls[0][1] is entry
+
+
+async def test_non_otp_only_did_stays_byte_identical(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A call whose dialed_did is unresolved (<none>) -- even with
+    otp_only_dids seeded -- resolves otp_only=False and unlocks the
+    concierge byte-identically to today: passphrase unlock grants a tier and
+    greets."""
+    from pipecat.frames.frames import TranscriptionFrame
+    from pipecat.processors.frame_processor import FrameDirection
+
+    identities: list[Any] = []
+
+    def _recording_start_gate(identity, **kwargs):
+        identities.append(identity)
+        return _gate_result()
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.quota.start_gate", _recording_start_gate
+    )
+    greet_calls: list[Any] = []
+
+    async def _spy_greet_now(worker, context):
+        greet_calls.append((worker, context))
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(
+            unlock_tier_id="kph-tier",
+            otp_only_dids=("7254043234",),  # seeded, but this call's DID never resolves
+        ),
+        passphrase_words=frozenset({"purple", "falcon", "midnight", "compass"}),
+    )
+    # No KLANKER_SIP_CIDNAME/KLANKER_SIP_TO set -- dialed_did resolves to "".
+
+    await controller.on_stasis_start(_stasis_event(caller_number="1001"))
+    active_call = controller.calls["chan-1"]
+    assert active_call.dialed_did == ""
+    assert active_call.otp_only is False
+
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="the midnight compass", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="found a purple falcon", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+
+    assert active_call.gate.unlocked is True
+    assert len(identities) == 1
+    assert identities[0].tier_id == "kph-tier"
+    assert len(greet_calls) == 1
 
 
 # --- Phase 15 Plan 03 (LEDG-01): PSTN ledger capture -----------------------

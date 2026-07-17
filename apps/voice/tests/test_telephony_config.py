@@ -411,3 +411,38 @@ def test_shipped_telephony_toml_maps_both_vegas_cid_prefixes(make_config_file):
         "KVD3234": "7254043234",
         "KVD3283": "7254043283",
     }
+
+
+# --- Quick task 260717-o2q: [telephony].otp_only_dids (per-DID gate policy Part A) ---
+
+
+def test_otp_only_dids_absent_defaults_empty(make_config_file):
+    """No `otp_only_dids` line -> `()` (every DID is concierge, byte-identical
+    to before this field existed)."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    assert load_telephony_config(path).otp_only_dids == ()
+
+
+def test_otp_only_dids_parses_and_normalizes(make_config_file):
+    """`otp_only_dids` normalizes to digits-only DIDs (same rule as
+    sms_dids/cid_prefix_dids values), order preserved."""
+    toml = VALID_TELEPHONY_TOML + (
+        '\notp_only_dids = ["725-404-3234", "+17254043283", "7254043234"]\n'
+    )
+    cfg = load_telephony_config(make_config_file(append=toml))
+    assert cfg.otp_only_dids == ("7254043234", "17254043283", "7254043234")
+
+
+def test_otp_only_dids_non_list_rejected(make_config_file):
+    """A scalar `otp_only_dids` (not an array) is a hard config error whose
+    message names the offending field."""
+    bad_toml = VALID_TELEPHONY_TOML + '\notp_only_dids = "7254043234"\n'
+    with pytest.raises(ConfigError, match="otp_only_dids"):
+        load_telephony_config(make_config_file(append=bad_toml))
+
+
+def test_shipped_telephony_toml_seeds_both_vegas_otp_only_dids(make_config_file):
+    """The shipped configs/telephony.toml seeds otp_only_dids with exactly the
+    two Las Vegas DIDs (per-DID gate policy Part A)."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    assert cfg.otp_only_dids == ("7254043234", "7254043283")
