@@ -158,6 +158,39 @@ class TestExtensionsConfInboundOnly:
             "KLANKER_SIP_TO must be set BEFORE Stasis() hands off the channel"
         )
 
+    def test_extensions_conf_captures_candidate_sip_headers(self):
+        """Per-DID SMS reply v2 diagnostic (quick task 260716-wgz, Step 1): the
+        To: header only carries the shared sub-account name, so the dialplan
+        must stash FIVE more candidate values -- P-Called-Party-ID, Diversion,
+        Remote-Party-ID, Contact (PJSIP_HEADER reads) and CALLERID(dnid) -- into
+        channel vars BEFORE Stasis so the controller can log which one carries
+        the real dialed DID. All positive substring greps; no new negative
+        invariant (none of these lines contains Dial( or a new context)."""
+        lines = _stripped_lines(EXTENSIONS_CONF)
+        stasis_idx = next((i for i, l in enumerate(lines) if "Stasis(" in l), None)
+        assert stasis_idx is not None, "extensions.conf must reach Stasis()"
+
+        # (var-name substring, source-function substring)
+        expected = [
+            ("Set(KLANKER_SIP_PCPID=", "PJSIP_HEADER(read,P-Called-Party-ID)"),
+            ("Set(KLANKER_SIP_DIVERSION=", "PJSIP_HEADER(read,Diversion)"),
+            ("Set(KLANKER_SIP_RPID=", "PJSIP_HEADER(read,Remote-Party-ID)"),
+            ("Set(KLANKER_SIP_CONTACT=", "PJSIP_HEADER(read,Contact)"),
+            ("Set(KLANKER_SIP_DNID=", "CALLERID(dnid)"),
+        ]
+        for var_frag, src_frag in expected:
+            idx = next(
+                (i for i, l in enumerate(lines) if var_frag in l and src_frag in l),
+                None,
+            )
+            assert idx is not None, (
+                f"extensions.conf must capture {src_frag} into a channel var "
+                f"({var_frag}...) for the per-DID SMS reply v2 header probe"
+            )
+            assert idx < stasis_idx, (
+                f"{var_frag} must be set BEFORE Stasis() hands off the channel"
+            )
+
     def test_extensions_conf_no_outbound_context_name(self):
         lines = _stripped_lines(EXTENSIONS_CONF)
         contexts = [
