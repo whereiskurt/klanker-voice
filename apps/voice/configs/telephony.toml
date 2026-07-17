@@ -97,6 +97,23 @@ unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (m
 # ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
 # TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.
 
+# Per-DID sub-account -> dialed-DID map (quick task 260716-hg5 follow-up --
+# design doc docs/superpowers/specs/2026-07-16-ctf-per-did-sms-reply-design.md).
+# Each Las Vegas DID has its OWN VoIP.ms sub-account (registered as its own leg
+# in pjsip.conf), so a call delivered over that leg arrives with
+# dialplan.exten == the sub-account SIP username below -- which maps 1:1 to the
+# dialed DID. The controller reads this map to text the caller FROM the exact
+# DID they dialed (per-DID SMS reply). DIDs on the SHARED 557010_klanker-pbx
+# sub-account are NOT listed here and fall back to the SIP To: header (which on
+# the shared sub-account resolves to nothing -> the sms_dids pool). Sub-account
+# names + DIDs are PUBLIC (the SIP PASSWORDS live in SSM, never here). The keys
+# are matched verbatim against dialplan.exten. LIVE-STEP: these sub-accounts
+# must be created (kv voipms create-subaccount) + the DIDs re-routed to them
+# (kv voipms route-did) + their SIP creds in SSM/task-def before this resolves.
+[telephony.subaccount_dids]
+"557010_vegas3234" = "7254043234"
+"557010_vegas3283" = "7254043283"
+
 # CTF phone-OTP announcement (quick task 260716-1g0, Revision 2 -- design doc
 # docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md,
 # "Revision 2 (2026-07-16) -- DTMF-code trigger, not DID" section). A caller

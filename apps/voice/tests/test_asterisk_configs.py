@@ -281,6 +281,30 @@ class TestVoipmsTrunkPosture:
             f"POP -- got {server_uri_lines[0]!r}"
         )
 
+    def test_per_did_subaccount_registrations_exist_and_target_toronto(self):
+        """Per-DID SMS reply (quick 260716-hg5 follow-up): each Las Vegas DID has
+        its OWN VoIP.ms sub-account registered as a SEPARATE leg, so the dialed
+        DID is distinguishable at the edge. Each must be a real registration
+        to Toronto with a placeholder-only (never literal) SIP credential."""
+        sections = _sections(PJSIP_CONF)
+        for sub in ("vegas3234", "vegas3283"):
+            reg = f"voipms-registration-{sub}"
+            auth = f"voipms-auth-{sub}"
+            assert reg in sections, f"pjsip.conf must declare a [{reg}] section"
+            assert auth in sections, f"pjsip.conf must declare a [{auth}] section"
+            body = sections[reg]
+            assert "type=registration" in body
+            server_uri_lines = [line for line in body if line.startswith("server_uri=")]
+            assert server_uri_lines and "toronto" in server_uri_lines[0].lower(), (
+                f"{reg} server_uri must target a Toronto VoIP.ms POP"
+            )
+            # SIP creds are ${VAR} placeholders only -- never a literal secret.
+            auth_body = sections[auth]
+            pw_lines = [line for line in auth_body if line.startswith("password=")]
+            assert pw_lines and pw_lines[0].startswith("password=${"), (
+                f"{auth} password must be a ${{VAR}} placeholder, never a literal (D-09)"
+            )
+
     def test_voipms_endpoint_context_is_inbound_only(self):
         sections = _sections(PJSIP_CONF)
         assert "voipms-endpoint" in sections, (

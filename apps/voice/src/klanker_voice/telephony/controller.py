@@ -768,22 +768,26 @@ class AsteriskCallController:
 
         await self._ari.answer(sip_channel_id)
 
-        # Per-DID SMS reply (quick task 260716-hg5 follow-up): the dialplan
-        # stashes the raw SIP ``To:`` header into the ``KLANKER_SIP_TO``
-        # channel variable BEFORE Stasis, because ``did`` above (dialplan.exten)
-        # is the shared sub-account NAME (557010_klanker-pbx) on a VoIP.ms
-        # sub-account, never the number the caller dialed. Read it now (the var
-        # persists past Answer()) and parse out the real dialed DID; ``""`` on
-        # any miss (feature falls back to the legacy pool). A DID is a PUBLIC
-        # number, so ``sip_to`` and ``dialed_did`` are safe to log at INFO --
-        # this is also the live verification signal that VoIP.ms actually
-        # carries the dialed DID in ``To:``. Read AFTER answer() so answer stays
-        # the first ARI REST call.
+        # Per-DID SMS reply (quick task 260716-hg5 follow-up): resolve the ACTUAL
+        # dialed DID. PRIMARY source is the per-DID sub-account map: when a DID
+        # has its OWN VoIP.ms sub-account, ``did`` above (dialplan.exten) IS that
+        # sub-account's SIP username (e.g. 557010_vegas3234), which maps 1:1 to a
+        # DID. FALLBACK is the SIP ``To:`` header (stashed into KLANKER_SIP_TO by
+        # the dialplan before Stasis) -- used for DIDs still on the SHARED
+        # sub-account, where exten is only the shared name (557010_klanker-pbx)
+        # and the To: header ALSO turns out to carry only that name (live-proven
+        # 2026-07-16 -- hence per-DID sub-accounts). ``""`` on a total miss (per-
+        # DID SMS then falls back to the legacy pool). Sub-account names + DIDs
+        # are PUBLIC, so all three are safe to log at INFO. Read AFTER answer()
+        # so answer stays the first ARI REST call; the KLANKER_SIP_TO var
+        # persists past Answer().
         sip_to = await self._ari.get_channel_var(sip_channel_id, "KLANKER_SIP_TO")
-        dialed_did = _dialed_did_from_sip_to(sip_to)
+        dialed_did = self._telephony_cfg.subaccount_did_map.get(did, "") or _dialed_did_from_sip_to(
+            sip_to
+        )
         logger.info(
             f"on_stasis_start: channel={sip_channel_id} dialed_did={dialed_did or '<none>'} "
-            f"sip_to={sip_to or '<none>'!r}"
+            f"exten={did!r} sip_to={sip_to or '<none>'!r}"
         )
 
         # R2: Klanker must already be bound and listening BEFORE Asterisk's

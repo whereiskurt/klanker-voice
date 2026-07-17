@@ -19,7 +19,7 @@ credential-looking field anywhere in ``pipeline.toml`` (not just inside
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from klanker_voice.config import ConfigError, _load_toml_data, _resolve_config_path
@@ -218,6 +218,19 @@ class TelephonyConfig:
     tel_mint_env_var: str = "TELEPHONY_ENDPOINT_AUTH_TOKEN"
     # --- CTF phone-OTP announcement DID(s) (quick task 260715-oq0) ---
     announcements: tuple[AnnouncementEntry, ...] = ()
+    # --- Per-DID sub-account -> dialed-DID map (quick task 260716-hg5 follow-up,
+    # design doc docs/superpowers/specs/2026-07-16-ctf-per-did-sms-reply-design.md).
+    # Maps a per-DID VoIP.ms sub-account SIP username (the ARI dialplan.exten on
+    # a call delivered over that sub-account's registered leg, e.g.
+    # "557010_vegas3234") to the bare-digits dialed DID ("7254043234"). This is
+    # how per-DID SMS reply resolves the ACTUAL dialed number once each DID has
+    # its OWN sub-account: the To: header carries only the sub-account name, so
+    # the controller maps exten -> DID here (To:-header parse stays as a
+    # fallback). Empty (the default) -> no map, byte-identical to before (every
+    # call resolves via the To: header only). Keys are matched verbatim against
+    # dialplan.exten; values are normalized to digits-only. Sub-account names and
+    # DIDs are public (never a credential), so they live safely in TOML.
+    subaccount_did_map: dict[str, str] = field(default_factory=dict)
 
 
 def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
@@ -249,6 +262,7 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         )
 
     announcements = _parse_announcements(table.get("announcement"))
+    subaccount_did_map = _parse_subaccount_dids(table.get("subaccount_dids"))
 
     return TelephonyConfig(
         enabled=bool(table.get("enabled", False)),
@@ -268,6 +282,7 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         tel_mint_url=str(table.get("tel_mint_url", "")),
         tel_mint_env_var=str(table.get("tel_mint_env_var", "TELEPHONY_ENDPOINT_AUTH_TOKEN")),
         announcements=announcements,
+        subaccount_did_map=subaccount_did_map,
     )
 
 
@@ -361,3 +376,32 @@ def _parse_sms_dids(raw: object, i: int, field: str = "sms_dids") -> tuple[str, 
         if digits:
             dids.append(digits)
     return tuple(dids)
+
+
+def _parse_subaccount_dids(raw: object) -> dict[str, str]:
+    """Parse the ``[telephony.subaccount_dids]`` table (quick task 260716-hg5
+    follow-up) into a ``{sub-account-username: bare-digit-DID}`` dict. Absent /
+    ``None`` ⇒ ``{}`` (no per-DID sub-account map -- every call resolves the
+    dialed DID via the SIP ``To:`` header only, byte-identical to before).
+
+    A non-table is a hard config error. Each KEY (a VoIP.ms sub-account SIP
+    username, matched verbatim against ``dialplan.exten``) is stripped of
+    surrounding whitespace; each VALUE is normalized to digits only (so
+    ``"725-404-3234"``/``"+17254043234"``/``"7254043234"`` all resolve to the
+    same DID). A key or value that normalizes to empty is dropped. The shared
+    credential-field gate (run over the whole file before this) has already
+    refused any credential-looking key -- sub-account names and DIDs are public,
+    never secrets."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            "telephony.subaccount_dids must be a table ([telephony.subaccount_dids])"
+        )
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        subaccount = str(key).strip()
+        did = re.sub(r"\D", "", str(value))
+        if subaccount and did:
+            out[subaccount] = did
+    return out

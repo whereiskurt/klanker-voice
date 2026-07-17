@@ -120,5 +120,60 @@ Once per-DID resolution is proven live, a trivial change empties `sms_dids`
 
 ## Out of scope
 
-MMS/QR, inbound-SMS/reply handling, per-DID sub-accounts (only needed if the
-`To:` header approach fails verification).
+MMS/QR, inbound-SMS/reply handling.
+
+---
+
+## UPDATE 2026-07-16 — Approach A proven DEAD; pivoted to Option A (per-DID sub-accounts)
+
+The live call proved the assumption false. CloudWatch:
+```
+on_stasis_start: dialed_did=<none> sip_to='<sip:557010_klanker-pbx@3.235.57.135>'
+```
+On the shared registration sub-account VoIP.ms puts the **sub-account name** in the
+`To:` header (and the Request-URI), never the dialed DID. There is no SIP-header
+path to the DID. The `KLANKER_SIP_TO` plumbing worked perfectly and stays as a
+harmless fallback, but the dialed DID must come from elsewhere.
+
+### Option A design (implemented)
+
+Give each Las Vegas DID its **own VoIP.ms sub-account** so the sub-account SIP
+username differs per DID — then `dialplan.exten` (already read at `StasisStart`)
+carries a DID-specific name that maps 1:1 to a DID.
+
+- **VoIP.ms:** `kv voipms create-subaccount --username vegas3234 --password '<pw>'`
+  (no `--allowed-ip` → registration from any IP, matching klanker-pbx; outbound
+  stays locked). SIP username becomes `557010_vegas3234`. Then
+  `kv voipms route-did 7254043234 --subaccount vegas3234` (and 3283).
+- **Asterisk `pjsip.conf`:** ADD one `[voipms-registration-vegas*]` + `[voipms-auth-vegas*]`
+  per sub-account (server_uri `toronto.voip.ms`, `${VOIPMS_SIP_*_VEGAS*}`
+  placeholders). The existing `klanker-pbx` registration and the shared
+  `voipms-endpoint`/`voipms-identify`/`voipms-aor` are **untouched** — inbound is
+  identified by POP source-IP into the one endpoint regardless of sub-account;
+  only the registration leg (which tells VoIP.ms where to deliver) differs.
+- **`entrypoint.sh`:** scrub the new SIP env vars before launching Python (D-04).
+- **SSM + task-def:** 4 new params (`/kmv/secrets/use1/voipms/sip_{username,password}_vegas{3234,3283}`)
+  wired as `service.hcl` container secrets (IAM already wildcards `voipms/*`).
+- **Controller/config:** `TelephonyConfig.subaccount_did_map` (`[telephony.subaccount_dids]`
+  TOML table) maps sub-account username → DID; `on_stasis_start` resolves
+  `dialed_did = subaccount_did_map.get(exten) or _dialed_did_from_sip_to(sip_to)`.
+  The existing `sms_reply_dids` enrollment + `_select_sms_send_dids` are unchanged.
+
+### Safe live-execution order (inbound must never break)
+
+1. Create the 2 sub-accounts (additive — zero effect on current routing).
+2. Create the 4 SSM params.
+3. Merge + deploy the code (registrations come **up alongside** the existing one;
+   all DIDs still route to klanker-pbx, so nothing changes yet).
+4. Confirm the 2 new registration legs are UP.
+5. **Only then** re-route `7254043234` and `7254043283` to their sub-accounts.
+6. Live-verify: call each, confirm the text arrives **from the dialed number** and
+   CloudWatch shows `dialed_did=7254043234` / `...3283` (resolved via the map).
+
+Rollback at any point: `kv voipms route-did <did> --subaccount klanker-pbx`.
+
+### Runbook impact
+
+`docs/operators/voipms-provisioning-runbook.md` documents a single sub-account +
+"order exactly one DID." Per-DID sub-accounts extend that; the runbook + its
+Secrets→SSM table should gain the per-DID sub-account + 4 new SSM params.
