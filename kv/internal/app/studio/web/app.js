@@ -56,11 +56,33 @@
  *     is gated in the UI: the button stays disabled until a changeset has
  *     been loaded for the exact name currently in the input, so an operator
  *     always reviews the diff immediately before deploying.
+ *
+ * Hash routing (quick-260716-0kt, extended by quick-260716-s1n): location.hash
+ * deep-links the console to a starting surface, both on initial page load
+ * (no flash of the default tab) and on live hashchange (link click / manual
+ * edit, no reload). #map, #rules, #knowledge, #keys, #deploy activate the
+ * matching tab; #dids activates the rules tab AND opens the DID manager
+ * modal (there is no standalone "dids" tab). An empty or unrecognized hash
+ * now falls through to #map — the default landing tab — rather than a
+ * no-op; index.html already ships the map tab marked active by default.
+ *
+ * Map tab (quick-260716-s1n, "routing at a glance"): a read-only, live-data
+ * port of the approved mockup (docs/superpowers/specs/2026-07-15-kv-studio-
+ * flow-mockup.html) — four lanes (callers/DIDs -> evaluator gate -> persona
+ * -> knowledge) built entirely from GET /api/config, quiet at idle, full
+ * route traced on hover/keyboard-focus. Every box deep-links to its
+ * EXISTING editor (switchTab + openRuleDrawer/openDidModal); this tab never
+ * writes anything and builds no new editor. See renderMap/buildMapWires/
+ * setMapActive below.
  */
 (function () {
   "use strict";
 
   var TAB_META = {
+    map: {
+      t: "Routing map",
+      d: "Who reaches which knowledge, and what unlocks it — hover or focus a caller to trace its route."
+    },
     rules: {
       t: "Routing rules",
       d: "First match wins, top to bottom. Each rule maps a caller + secret to time, knowledge and a persona."
@@ -478,20 +500,44 @@
       body.appendChild(tr);
 
       var unlocks = r.unlocks || [];
-      unlocks.forEach(function (u, ui) {
-        var isLast = i === rules.length - 1 && ui === unlocks.length - 1;
-        var ur = el("tr", "unlockrow" + (isLast ? " last" : ""));
+      if (unlocks.length) {
+        // Group this rule's spoken unlock phrases by the pack(s) they add, so
+        // the ~90 shared topic-map keywords collapse into a few chip clusters
+        // (one compact block per rule) instead of one full-width row per
+        // phrase — which scrolled for pages. Phrases dedupe within a pack.
+        var byPack = {};
+        var packOrder = [];
+        unlocks.forEach(function (u) {
+          (u.add || []).forEach(function (pid) {
+            if (!byPack[pid]) {
+              byPack[pid] = { seen: {}, phrases: [] };
+              packOrder.push(pid);
+            }
+            if (byPack[pid].seen[u.phrase]) return;
+            byPack[pid].seen[u.phrase] = true;
+            byPack[pid].phrases.push(u.phrase);
+          });
+        });
+
+        var ur = el("tr", "unlockrow" + (i === rules.length - 1 ? " last" : ""));
         var td = el("td");
         td.colSpan = 6;
-        var span = el("span", "unlock");
-        span.appendChild(document.createTextNode("⤷ mid-call, caller says "));
-        span.appendChild(text("span", "mono", "“" + u.phrase + "”"));
-        span.appendChild(document.createTextNode(" → unlock "));
-        span.appendChild(text("span", "mono", "+" + (u.add || []).join(", ")));
-        td.appendChild(span);
+        var block = el("div", "unlocks-block");
+        block.appendChild(text("div", "unlocks-hd", "⤷ unlocks mid-call when the caller says"));
+        packOrder.forEach(function (pid) {
+          var grp = el("div", "unlock-grp");
+          grp.appendChild(text("span", "unlock-pack mono", "+" + pid));
+          var chips = el("span", "unlock-chips");
+          byPack[pid].phrases.forEach(function (ph) {
+            chips.appendChild(text("span", "chip sm", ph));
+          });
+          grp.appendChild(chips);
+          block.appendChild(grp);
+        });
+        td.appendChild(block);
         ur.appendChild(td);
         body.appendChild(ur);
-      });
+      }
     });
   }
 
@@ -2135,6 +2181,726 @@
       when;
   }
 
+  /* ---------------- Map tab (routing-flow overview, quick-260716-s1n) ----------------
+   *
+   * Live-data port of the approved mockup (docs/superpowers/specs/2026-07-15-
+   * kv-studio-flow-mockup.html): four lanes — callers/DIDs -> evaluator gate
+   * -> persona -> knowledge packs — built entirely from GET /api/config.
+   * Read-only: every box deep-links to its EXISTING editor via switchTab +
+   * openRuleDrawer/openDidModal (Task 4); no inline editing lives here.
+   *
+   * Route model (module-scoped, rebuilt on every renderMap call):
+   *   mapRoutes       — ordered array of route descriptors (one per rule)
+   *   mapRouteById    — routeId -> route descriptor (for setMapActive)
+   *   mapNodeRoutes   — nodeId  -> { routeId: true, ... } ("set" of routes touching this node)
+   *   mapKeyRoutes    — keyName -> { routeId: true, ... } ("set" of routes gated by this key)
+   * Plain objects stand in for Set here (ES5 house style — no `new Set`).
+   *
+   * SVG wire drawing (buildMapWires) and hover/focus tracing (setMapActive)
+   * are added in Task 3; click deep-links are added in Task 4. This
+   * function only builds the NODES and the in-memory route model.
+   */
+  var mapRoutes = [];
+  var mapRouteById = {};
+  var mapNodeRoutes = {};
+  var mapKeyRoutes = {};
+  var mapGrantRoutes = {};
+
+  // whoGroupKey groups rules that share the same WHO identity into one
+  // caller box that fans out to multiple routes (mirrors the mockup's one
+  // caller -> several routes). "any"/"block" rules with no numbers all
+  // collapse to a single shared box per type — that is the honest v1
+  // reality (the console cannot see a rule's actual secret VALUE, only its
+  // ref/mode, so distinct "any" rules render identically here).
+  function whoGroupKey(who) {
+    var type = (who && who.type) || "any";
+    var numbers = (who && who.numbers) || [];
+    return type + "|" + numbers.slice().sort().join(",");
+  }
+
+  function mapAddNodeRoute(nodeId, routeId) {
+    if (!nodeId) return;
+    if (!mapNodeRoutes[nodeId]) mapNodeRoutes[nodeId] = {};
+    mapNodeRoutes[nodeId][routeId] = true;
+  }
+
+  function mapAddKeyRoute(keyName, routeId) {
+    if (!mapKeyRoutes[keyName]) mapKeyRoutes[keyName] = {};
+    mapKeyRoutes[keyName][routeId] = true;
+  }
+
+  function mapAddGrantRoute(grantKey, routeId) {
+    if (!mapGrantRoutes[grantKey]) mapGrantRoutes[grantKey] = {};
+    mapGrantRoutes[grantKey][routeId] = true;
+  }
+
+  // mapGrantKey is the stable identity of a grant's time limit — the
+  // formatted duration string (e.g. "30m", "24h") — so rules that grant the
+  // same session length collapse onto one chip inside the gate box. This is
+  // the "time limit the gate assigns" folded into the evaluator (replaces
+  // the old floating per-route duration tags that stacked over the gate).
+  function mapGrantKey(grant) {
+    return fmtMinutes(grant && grant.minutes);
+  }
+
+  // mapGateGrantChip builds one .grant pill for a distinct time limit the
+  // gate hands out — same shape/behavior as mapGateKeyChip so the gate reads
+  // as one self-contained box: what it checks (keys) + what it grants (time).
+  function mapGateGrantChip(grantKey) {
+    var chip = el("div", "grant");
+    chip.dataset.grant = grantKey;
+    chip.tabIndex = 0;
+    chip.appendChild(document.createTextNode(grantKey));
+    return chip;
+  }
+
+  // mapCallerNode builds one lane-1 box for a WHO group — a known number
+  // (or set of numbers), an "any other number" catch-all, or a blocked
+  // number — fanning out to every rule that shares its WHO identity.
+  function mapCallerNode(nodeId, who, ruleIds) {
+    var type = (who && who.type) || "any";
+    var n = el("div", "node caller");
+    n.id = "mapnode-" + nodeId;
+    n.dataset.node = nodeId;
+    n.dataset.kind = "caller";
+    n.dataset.primaryRule = ruleIds[0];
+    n.tabIndex = 0;
+
+    var row = el("div", "n-row");
+    row.appendChild(text("span", "ic " + whoIconClass(type), whoGlyph(type)));
+    var lbl = el("span", "lbl");
+    var numbers =
+      who && who.numbers && who.numbers.length
+        ? who.numbers.join(", ")
+        : type === "block"
+        ? "blocked"
+        : "unknown caller / any other number";
+    lbl.appendChild(document.createTextNode(numbers));
+    var subBits = [];
+    if (type === "block") subBits.push("blocked before the agent");
+    subBits.push(ruleIds.length + " route" + (ruleIds.length === 1 ? "" : "s"));
+    lbl.appendChild(text("small", "", subBits.join(" · ")));
+    row.appendChild(lbl);
+    n.appendChild(row);
+    return n;
+  }
+
+  // mapDidNode builds one lane-1 box for an owned DID/number that is NOT
+  // already represented by a rule's WHO (LOCKED decision: "surface owned
+  // DIDs ... tagged as a DID node" so its click routes to the DID modal,
+  // never the rule drawer). Reuses the "known"-caller icon convention —
+  // a DID is inherently a known number, just not yet bound to a rule.
+  function mapDidNode(nodeId, label, sub) {
+    var n = el("div", "node caller did");
+    n.id = "mapnode-" + nodeId;
+    n.dataset.node = nodeId;
+    n.dataset.kind = "did";
+    n.tabIndex = 0;
+
+    var row = el("div", "n-row");
+    row.appendChild(text("span", "ic num", "☎"));
+    var lbl = el("span", "lbl");
+    lbl.appendChild(document.createTextNode(label));
+    lbl.appendChild(text("small", "", sub));
+    row.appendChild(lbl);
+    n.appendChild(row);
+    return n;
+  }
+
+  function mapPersonaNode(nodeId, value, isOnlyPersona) {
+    var n = el("div", "node persona");
+    n.id = "mapnode-" + nodeId;
+    n.dataset.node = nodeId;
+    n.dataset.kind = "persona";
+
+    var row = el("div", "n-row");
+    var lbl = el("span", "lbl");
+    lbl.appendChild(document.createTextNode(value));
+    if (isOnlyPersona) lbl.appendChild(text("small", "", "single persona in v1"));
+    row.appendChild(lbl);
+    n.appendChild(row);
+    return n;
+  }
+
+  // mapPackNode builds one lane-4 box for a knowledge pack. hidden marks a
+  // pack reachable ONLY via an unlocks[] phrase — never in any rule's
+  // baseline knowledge[] — the LOCKED "visually distinguished" phrase-
+  // gated-only case (purple lamp, matches the mockup).
+  function mapPackNode(nodeId, pack, hidden) {
+    var n = el("div", "node pack" + (hidden ? " hidden" : ""));
+    n.id = "mapnode-" + nodeId;
+    n.dataset.node = nodeId;
+    n.dataset.kind = "pack";
+
+    var row = el("div", "n-row");
+    row.appendChild(el("span", "dot"));
+    var lbl = el("span", "lbl");
+    lbl.appendChild(document.createTextNode(pack.spokenName || pack.id));
+    lbl.appendChild(text("small", "", pack.pack || pack.id));
+    row.appendChild(lbl);
+    if (hidden) row.appendChild(lampEl("hidden", "hidden"));
+    n.appendChild(row);
+    return n;
+  }
+
+  // mapGateKeyChip builds one .key pill for a distinct gate secret (or the
+  // "no secret · open" case) — labelled the same way secretCell() labels a
+  // rule row's secret, so the Map and the Advanced table never disagree.
+  function mapGateKeyChip(keyName, secret) {
+    var chip = el("div", "key" + (keyName === "none" ? " none" : ""));
+    chip.dataset.key = keyName;
+    chip.tabIndex = 0;
+    if (keyName === "none") {
+      chip.appendChild(document.createTextNode("no secret · open"));
+      return chip;
+    }
+    chip.appendChild(text("span", "q", "“"));
+    chip.appendChild(document.createTextNode(secret.ref || "(no ref)"));
+    chip.appendChild(text("span", "q", "”"));
+    return chip;
+  }
+
+  // renderMapUnlocks builds the compact "Unlock phrases" sub-list below the
+  // 4-lane diagram: every distinct spoken phrase -> pack pair, deduplicated
+  // and sorted, so the (very repetitive — many rules share topic-map
+  // keywords) raw rule list collapses to a clean read. Hidden when there
+  // are zero distinct pairs.
+  function renderMapUnlocks(cfg) {
+    var mount = $("#mapUnlocks");
+    if (!mount) return;
+    mount.textContent = "";
+    mount.hidden = true;
+
+    var packNameById = {};
+    ((cfg && cfg.knowledge) || []).forEach(function (p) {
+      packNameById[p.id] = p.spokenName || p.id;
+    });
+
+    var seen = {};
+    var pairs = [];
+    ((cfg && cfg.rules) || []).forEach(function (r) {
+      (r.unlocks || []).forEach(function (u) {
+        (u.add || []).forEach(function (pid) {
+          var key = u.phrase + " " + pid;
+          if (seen[key]) return;
+          seen[key] = true;
+          pairs.push({
+            phrase: u.phrase,
+            packId: pid,
+            pack: packNameById[pid] || pid
+          });
+        });
+      });
+    });
+
+    if (!pairs.length) return;
+
+    pairs.sort(function (a, b) {
+      if (a.pack < b.pack) return -1;
+      if (a.pack > b.pack) return 1;
+      if (a.phrase < b.phrase) return -1;
+      if (a.phrase > b.phrase) return 1;
+      return 0;
+    });
+
+    var hd = el("div", "mu-hd");
+    hd.appendChild(text("span", "eyebrow", "Unlock phrases"));
+    hd.appendChild(
+      text(
+        "span",
+        "mu-count",
+        pairs.length + " spoken phrase" + (pairs.length === 1 ? "" : "s") + " that add a pack mid-call"
+      )
+    );
+    mount.appendChild(hd);
+
+    var list = el("div", "mu-list");
+    pairs.forEach(function (pair) {
+      var row = el("div", "mu-row");
+      row.appendChild(text("span", "mu-kw", "say"));
+      row.appendChild(text("span", "q", "“"));
+      row.appendChild(text("span", "mu-phrase", pair.phrase));
+      row.appendChild(text("span", "q", "”"));
+      row.appendChild(text("span", "mu-arrow", "→"));
+      row.appendChild(text("span", "mu-pack", pair.pack));
+      list.appendChild(row);
+    });
+    mount.appendChild(list);
+
+    mount.hidden = false;
+  }
+
+  function renderMap(cfg) {
+    renderMapUnlocks(cfg);
+    var emptyEl = $("#mapEmpty");
+    var svg = $("#mapWires");
+    var callersWrap = $("#map-callers");
+    var personasWrap = $("#map-personas");
+    var knowledgeWrap = $("#map-knowledge");
+    var gateKeysWrap = $("#mapGateKeys");
+    var gateGrantsWrap = $("#mapGateGrants");
+
+    mapRoutes = [];
+    mapRouteById = {};
+    mapNodeRoutes = {};
+    mapKeyRoutes = {};
+    mapGrantRoutes = {};
+
+    if (callersWrap) callersWrap.textContent = "";
+    if (personasWrap) personasWrap.textContent = "";
+    if (knowledgeWrap) knowledgeWrap.textContent = "";
+    if (gateKeysWrap) gateKeysWrap.textContent = "";
+    if (gateGrantsWrap) gateGrantsWrap.textContent = "";
+    if (svg) while (svg.firstChild) svg.removeChild(svg.firstChild);
+    $all("#panel-map .tag").forEach(function (t) {
+      t.parentNode.removeChild(t);
+    });
+
+    var rules = (cfg && cfg.rules) || [];
+    var degraded = !cfg || !!cfg.error || !rules.length;
+
+    if (degraded) {
+      if (emptyEl) {
+        emptyEl.hidden = false;
+        emptyEl.textContent = "";
+        var isErr = !!(cfg && cfg.error);
+        emptyEl.appendChild(text("div", "map-empty-i", isErr ? "⚠" : "◇"));
+        emptyEl.appendChild(
+          text("div", "map-empty-h", isErr ? "Live config unreachable" : "No routing rules yet")
+        );
+        emptyEl.appendChild(
+          text(
+            "div",
+            "map-empty-b",
+            isErr
+              ? "Fix the store error above, then reload — the map fills in once /api/config succeeds."
+              : "The map fills in as soon as rules exist in the live config."
+          )
+        );
+      }
+      return;
+    }
+    if (emptyEl) emptyEl.hidden = true;
+
+    /* ---- lane 1: callers + DIDs ---- */
+    var callerGroups = [];
+    var callerGroupByKey = {};
+    rules.forEach(function (r) {
+      var key = whoGroupKey(r.who);
+      var g = callerGroupByKey[key];
+      if (!g) {
+        g = { nodeId: "caller:" + callerGroups.length, who: r.who, ruleIds: [] };
+        callerGroupByKey[key] = g;
+        callerGroups.push(g);
+      }
+      g.ruleIds.push(r.id);
+    });
+    callerGroups.forEach(function (g) {
+      if (callersWrap) callersWrap.appendChild(mapCallerNode(g.nodeId, g.who, g.ruleIds));
+    });
+
+    var whoNumbersSeen = {};
+    rules.forEach(function (r) {
+      ((r.who && r.who.numbers) || []).forEach(function (num) {
+        whoNumbersSeen[num] = true;
+      });
+    });
+    var didSeen = {};
+    (cfg.dids || []).forEach(function (d) {
+      if (whoNumbersSeen[d.phone] || didSeen[d.phone]) return;
+      didSeen[d.phone] = true;
+      if (callersWrap) {
+        callersWrap.appendChild(
+          mapDidNode("did:" + d.phone, d.phone, "code " + d.code + " · tier " + d.tierId)
+        );
+      }
+    });
+    (cfg.inboundDids || []).forEach(function (d) {
+      if (whoNumbersSeen[d.did] || didSeen[d.did]) return;
+      didSeen[d.did] = true;
+      if (callersWrap) {
+        callersWrap.appendChild(mapDidNode("did:" + d.did, d.did, d.label || "inbound DID"));
+      }
+    });
+
+    /* ---- lane 3: personas (one node per DISTINCT persona value) ---- */
+    var personaGroups = [];
+    var personaNodeByValue = {};
+    rules.forEach(function (r) {
+      var val = r.persona || "(none)";
+      if (!personaNodeByValue[val]) {
+        personaNodeByValue[val] = "persona:" + personaGroups.length;
+        personaGroups.push({ value: val, nodeId: personaNodeByValue[val] });
+      }
+    });
+    personaGroups.forEach(function (p) {
+      if (personasWrap) {
+        personasWrap.appendChild(mapPersonaNode(p.nodeId, p.value, personaGroups.length === 1));
+      }
+    });
+
+    /* ---- lane 4: knowledge packs ---- */
+    var baselinePackIds = {};
+    rules.forEach(function (r) {
+      (r.knowledge || []).forEach(function (id) {
+        baselinePackIds[id] = true;
+      });
+    });
+    var unlockPackIds = {};
+    rules.forEach(function (r) {
+      (r.unlocks || []).forEach(function (u) {
+        (u.add || []).forEach(function (id) {
+          unlockPackIds[id] = true;
+        });
+      });
+    });
+    (cfg.knowledge || []).forEach(function (p) {
+      var hidden = !baselinePackIds[p.id] && !!unlockPackIds[p.id];
+      if (knowledgeWrap) knowledgeWrap.appendChild(mapPackNode("pack:" + p.id, p, hidden));
+    });
+
+    /* ---- lane 2: evaluator gate — distinct secret chips ---- */
+    var secretGroups = [];
+    var secretSeen = {};
+    var hasOpenRule = false;
+    rules.forEach(function (r) {
+      if (!r.secret || r.secret.mode === "none" || !r.secret.ref) {
+        hasOpenRule = true;
+        return;
+      }
+      var keyName = "secret:" + r.secret.ref + "|" + r.secret.mode;
+      if (!secretSeen[keyName]) {
+        secretSeen[keyName] = true;
+        secretGroups.push({ keyName: keyName, secret: r.secret });
+      }
+    });
+    secretGroups.forEach(function (g) {
+      if (gateKeysWrap) gateKeysWrap.appendChild(mapGateKeyChip(g.keyName, g.secret));
+    });
+    if (hasOpenRule && gateKeysWrap) {
+      gateKeysWrap.appendChild(mapGateKeyChip("none", null));
+    }
+
+    /* ---- lane 2: the time limits the gate grants (distinct, folded in) ---- */
+    var grantGroups = [];
+    var grantSeen = {};
+    rules.forEach(function (r) {
+      var gk = mapGrantKey(r.grant);
+      if (grantSeen[gk]) return;
+      grantSeen[gk] = true;
+      grantGroups.push(gk);
+    });
+    grantGroups.forEach(function (gk) {
+      if (gateGrantsWrap) gateGrantsWrap.appendChild(mapGateGrantChip(gk));
+    });
+
+    /* ---- route model: caller -> gate key -> persona -> packs ---- */
+    rules.forEach(function (r) {
+      var callerNodeId = callerGroupByKey[whoGroupKey(r.who)].nodeId;
+      var personaNodeId = personaNodeByValue[r.persona || "(none)"];
+      var keyName =
+        !r.secret || r.secret.mode === "none" || !r.secret.ref
+          ? "none"
+          : "secret:" + r.secret.ref + "|" + r.secret.mode;
+      var baselinePackNodeIds = (r.knowledge || []).map(function (id) {
+        return "pack:" + id;
+      });
+      var unlockEdges = (r.unlocks || []).map(function (u) {
+        return {
+          phrase: u.phrase,
+          packNodeIds: (u.add || []).map(function (id) {
+            return "pack:" + id;
+          })
+        };
+      });
+
+      var routeId = "route:" + r.id;
+      var nodesTouched = {};
+      nodesTouched[callerNodeId] = true;
+      nodesTouched[personaNodeId] = true;
+      baselinePackNodeIds.forEach(function (pid) {
+        nodesTouched[pid] = true;
+      });
+      unlockEdges.forEach(function (ue) {
+        ue.packNodeIds.forEach(function (pid) {
+          nodesTouched[pid] = true;
+        });
+      });
+
+      var route = {
+        id: routeId,
+        ruleId: r.id,
+        callerNodeId: callerNodeId,
+        personaNodeId: personaNodeId,
+        keyName: keyName,
+        minutes: r.grant && r.grant.minutes,
+        baselinePackNodeIds: baselinePackNodeIds,
+        unlockEdges: unlockEdges,
+        nodes: nodesTouched
+      };
+      mapRoutes.push(route);
+      mapRouteById[routeId] = route;
+
+      mapAddNodeRoute(callerNodeId, routeId);
+      mapAddNodeRoute(personaNodeId, routeId);
+      baselinePackNodeIds.forEach(function (pid) {
+        mapAddNodeRoute(pid, routeId);
+      });
+      unlockEdges.forEach(function (ue) {
+        ue.packNodeIds.forEach(function (pid) {
+          mapAddNodeRoute(pid, routeId);
+        });
+      });
+      mapAddKeyRoute(keyName, routeId);
+      mapAddGrantRoute(mapGrantKey(r.grant), routeId);
+    });
+
+    attachMapHoverHandlers();
+    attachMapClickHandlers();
+  }
+
+  /* ---- SVG wire drawing (bez-from-DOM-rects, ported from the mockup) ---- */
+
+  var MAP_SVG_NS = "http://www.w3.org/2000/svg";
+
+  function mapNodeEl(nodeId) {
+    return document.getElementById("mapnode-" + nodeId);
+  }
+
+  function mapPtRight(nodeEl, baseRect) {
+    var r = nodeEl.getBoundingClientRect();
+    return { x: r.right - baseRect.left, y: r.top - baseRect.top + r.height / 2 };
+  }
+
+  function mapPtLeft(nodeEl, baseRect) {
+    var r = nodeEl.getBoundingClientRect();
+    return { x: r.left - baseRect.left, y: r.top - baseRect.top + r.height / 2 };
+  }
+
+  function mapBez(a, b) {
+    var dx = Math.max(36, (b.x - a.x) * 0.45);
+    return "M" + a.x + "," + a.y + " C" + (a.x + dx) + "," + a.y + " " + (b.x - dx) + "," + b.y + " " + b.x + "," + b.y;
+  }
+
+  function mapMid(a, b) {
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  // buildMapWires draws every route's SVG path(s) + secret/duration and
+  // unlock tags fresh, measuring against live DOM rects. Guarded: rects are
+  // 0 while #panel-map is display:none, so this only runs when the Map
+  // panel is .active (switchTab and layoutMap's callers are responsible for
+  // calling this at the right time — see the "map" branch in switchTab
+  // below and the resize listener in the init block).
+  function buildMapWires() {
+    var panel = $("#panel-map");
+    var svg = $("#mapWires");
+    var stageEl = $("#panel-map .stage");
+    if (svg) {
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+    }
+    $all("#panel-map .tag").forEach(function (t) {
+      t.parentNode.removeChild(t);
+    });
+    if (!panel || !panel.classList.contains("active") || !svg || !stageEl || !mapRoutes.length) {
+      return;
+    }
+
+    var stageRect = stageEl.getBoundingClientRect();
+
+    mapRoutes.forEach(function (rt) {
+      var callerEl = mapNodeEl(rt.callerNodeId);
+      var personaEl = mapNodeEl(rt.personaNodeId);
+      if (!callerEl || !personaEl) return;
+
+      // caller -> persona (through the gate)
+      var a = mapPtRight(callerEl, stageRect);
+      var b = mapPtLeft(personaEl, stageRect);
+      var p1 = document.createElementNS(MAP_SVG_NS, "path");
+      p1.setAttribute("d", mapBez(a, b));
+      p1.dataset.route = rt.id;
+      svg.appendChild(p1);
+
+      // The secret + time limit now live INSIDE the gate box (the "Secrets it
+      // knows" key chips + the "Grants · time limit" chips), so there is no
+      // floating per-route tag over the gate anymore — the gate reads as one
+      // self-contained evaluator. Hover-trace still lights the matching key
+      // and grant chips inside the gate (see setMapActive).
+
+      // persona -> baseline packs
+      rt.baselinePackNodeIds.forEach(function (pid) {
+        var packEl = mapNodeEl(pid);
+        if (!packEl) return;
+        var pa = mapPtRight(personaEl, stageRect);
+        var pb = mapPtLeft(packEl, stageRect);
+        var p = document.createElementNS(MAP_SVG_NS, "path");
+        p.setAttribute("d", mapBez(pa, pb));
+        p.dataset.route = rt.id;
+        svg.appendChild(p);
+      });
+
+      // persona -> spoken-word unlock packs (dashed)
+      rt.unlockEdges.forEach(function (ue) {
+        ue.packNodeIds.forEach(function (pid) {
+          var packEl = mapNodeEl(pid);
+          if (!packEl) return;
+          var pa = mapPtRight(personaEl, stageRect);
+          var pb = mapPtLeft(packEl, stageRect);
+          var p = document.createElementNS(MAP_SVG_NS, "path");
+          p.setAttribute("d", mapBez(pa, pb));
+          p.classList.add("unlock");
+          p.dataset.route = rt.id;
+          svg.appendChild(p);
+        });
+      });
+    });
+  }
+
+  // setMapActive toggles the "quiet by default, trace on hover/focus"
+  // highlight (LOCKED "Wire behavior" decision). routeSet is a plain
+  // object of routeId -> true (or null/{} to clear). clearMapActive() is
+  // the null case.
+  function setMapActive(routeSet) {
+    var stageEl = $("#panel-map .stage");
+    var svg = $("#mapWires");
+    var active = !!(routeSet && Object.keys(routeSet).length);
+
+    if (stageEl) stageEl.classList.toggle("dimmed", active);
+    if (svg) svg.classList.toggle("dimmed", active);
+
+    var activeNodes = {};
+    var activeKeys = {};
+    var activeGrants = {};
+    if (active) {
+      Object.keys(routeSet).forEach(function (rid) {
+        var route = mapRouteById[rid];
+        if (!route) return;
+        Object.keys(route.nodes).forEach(function (n) {
+          activeNodes[n] = true;
+        });
+        activeKeys[route.keyName] = true;
+        activeGrants[fmtMinutes(route.minutes)] = true;
+      });
+    }
+
+    $all("#panel-map .node").forEach(function (n) {
+      n.classList.toggle("active", !!activeNodes[n.dataset.node]);
+    });
+    $all("#mapWires path").forEach(function (p) {
+      p.classList.toggle("active", active && !!routeSet[p.dataset.route]);
+    });
+    $all("#mapGate .key").forEach(function (k) {
+      k.classList.toggle("active", active && !!activeKeys[k.dataset.key]);
+    });
+    $all("#mapGateGrants .grant").forEach(function (g) {
+      g.classList.toggle("active", active && !!activeGrants[g.dataset.grant]);
+    });
+    var gateEl = $("#mapGate");
+    if (gateEl) gateEl.classList.toggle("active", active);
+  }
+
+  function clearMapActive() {
+    setMapActive(null);
+  }
+
+  // attachMapHoverHandlers binds mouseenter/mouseleave to every freshly
+  // rendered node + gate key chip, plus focus/blur on the tabIndex=0
+  // caller/DID boxes so keyboard focus triggers the identical trace
+  // (LOCKED accessibility discretion — mirrors the rules table's
+  // tr.tabIndex = 0 pattern). Called at the end of renderMap, so it always
+  // binds to the current DOM (renderMap rebuilds every lane from scratch —
+  // no double-binding risk).
+  function attachMapHoverHandlers() {
+    $all("#panel-map .node").forEach(function (n) {
+      var routeSet = mapNodeRoutes[n.dataset.node] || {};
+      n.addEventListener("mouseenter", function () {
+        setMapActive(routeSet);
+      });
+      n.addEventListener("mouseleave", clearMapActive);
+      if (n.dataset.kind === "caller" || n.dataset.kind === "did") {
+        n.addEventListener("focus", function () {
+          setMapActive(routeSet);
+        });
+        n.addEventListener("blur", clearMapActive);
+      }
+    });
+    $all("#mapGate .key").forEach(function (k) {
+      var routeSet = mapKeyRoutes[k.dataset.key] || {};
+      k.addEventListener("mouseenter", function () {
+        setMapActive(routeSet);
+      });
+      k.addEventListener("mouseleave", clearMapActive);
+      k.addEventListener("focus", function () {
+        setMapActive(routeSet);
+      });
+      k.addEventListener("blur", clearMapActive);
+    });
+    $all("#mapGateGrants .grant").forEach(function (g) {
+      var routeSet = mapGrantRoutes[g.dataset.grant] || {};
+      g.addEventListener("mouseenter", function () {
+        setMapActive(routeSet);
+      });
+      g.addEventListener("mouseleave", clearMapActive);
+      g.addEventListener("focus", function () {
+        setMapActive(routeSet);
+      });
+      g.addEventListener("blur", clearMapActive);
+    });
+  }
+
+  // attachMapClickHandlers wires the LOCKED "Click a box" deep-links. The
+  // Map is READ-ONLY — every click reuses switchTab + an EXISTING opener;
+  // no new editor is built here. Click and mouseenter/focus coexist fine
+  // (nothing here calls preventDefault or stops propagation in a way that
+  // would block the tab switch).
+  function attachMapClickHandlers() {
+    $all("#panel-map .node.caller").forEach(function (n) {
+      if (n.dataset.kind === "did") {
+        // a DID box -> the DID manager modal, consistent with #dids
+        // (never the rule drawer — this number isn't bound to a rule yet).
+        n.addEventListener("click", function () {
+          openDidModal();
+        });
+      } else {
+        var ruleId = n.dataset.primaryRule;
+        n.addEventListener("click", function () {
+          switchTab("rules");
+          if (ruleId) openRuleDrawer(ruleId);
+        });
+      }
+    });
+    // Persona is a read-only projection of the same per-rule field the
+    // Advanced table edits under GRANT/PERSONA — route it to the same tab
+    // the mockup's persona box deep-links to (no standalone persona editor
+    // exists in this build).
+    $all("#panel-map .node.persona").forEach(function (n) {
+      n.addEventListener("click", function () {
+        switchTab("rules");
+      });
+    });
+    $all("#panel-map .node.pack").forEach(function (n) {
+      n.addEventListener("click", function () {
+        switchTab("knowledge");
+      });
+    });
+    $all("#mapGate .key").forEach(function (k) {
+      k.addEventListener("click", function () {
+        switchTab("keys");
+      });
+    });
+    // NOTE: the outer #mapGate box itself is static markup (never cleared/
+    // rebuilt by renderMap, unlike its .key children) — its click listener
+    // is bound exactly once from the DOMContentLoaded init block below,
+    // not here, so repeated renderMap calls never double-bind it.
+  }
+
+  // layoutMap recomputes the wires on the next animation frame — the
+  // Map's resize/tab-switch recompute strategy (rects are only correct
+  // once the browser has laid out the now-visible/resized panel).
+  function layoutMap() {
+    window.requestAnimationFrame(buildMapWires);
+  }
+
   /* ---------------- top-level render ---------------- */
 
   function render(cfg) {
@@ -2146,6 +2912,7 @@
     }
 
     hideError();
+    renderMap(cfg);
     renderSummary(cfg);
     renderRules(cfg);
     renderDids(cfg);
@@ -2154,6 +2921,14 @@
     renderProviderKeys();
     updateNavCounts(cfg);
     updateMetaStamp(cfg);
+
+    // Recompute the Map's wires now that its nodes exist — a no-op unless
+    // #panel-map is currently .active (buildMapWires guards on that). The
+    // two short-delay fallbacks match the mockup: fonts/late layout can
+    // still shift DOM rects after the first requestAnimationFrame.
+    layoutMap();
+    setTimeout(layoutMap, 60);
+    setTimeout(layoutMap, 300);
   }
 
   /* ---------------- tabs ---------------- */
@@ -2183,13 +2958,55 @@
       }
       updateDeployGate();
     }
+
+    // KEY LINK: DOM rects are 0 while #panel-map is display:none, so the
+    // wires only measure correctly once the panel is .active — (re)build
+    // them the moment an operator switches into the Map.
+    if (tab === "map") {
+      layoutMap();
+    }
+  }
+
+  /* ---------------- hash routing ---------------- */
+
+  // hashToTab maps a location.hash fragment to a route descriptor. Pure —
+  // takes hash as an argument rather than reading location.hash itself, so
+  // it stays trivially testable/reasoned about. There is no "dids" tab
+  // (DIDs live in a modal — see the DID manager modal section above), so
+  // "#dids" routes to the rules tab with openDids: true instead of a tab
+  // name of its own. An EMPTY or UNRECOGNIZED hash now falls through to the
+  // Map tab — the new default landing route (quick-260716-s1n) — rather
+  // than a null no-op; index.html already ships #panel-map as .active, so
+  // that fallback is a visual no-op on first paint and only matters when
+  // returning from a live hashchange to an unknown fragment.
+  function hashToTab(hash) {
+    var h = String(hash || "").replace(/^#/, "").toLowerCase().trim();
+    if (h === "map") return { tab: "map", openDids: false };
+    if (h === "rules") return { tab: "rules", openDids: false };
+    if (h === "knowledge") return { tab: "knowledge", openDids: false };
+    if (h === "keys") return { tab: "keys", openDids: false };
+    if (h === "deploy") return { tab: "deploy", openDids: false };
+    if (h === "dids") return { tab: "rules", openDids: true };
+    return { tab: "map", openDids: false };
+  }
+
+  // applyHashRoute reads the live location.hash and dispatches it. openModal
+  // gates whether a "#dids" route opens the DID modal immediately — initial
+  // boot passes false and defers the modal until after load() resolves (so
+  // it always opens against fresh config data); a live "hashchange" passes
+  // true since data is already loaded by then.
+  function applyHashRoute(openModal) {
+    var route = hashToTab(location.hash);
+    if (!route) return;
+    switchTab(route.tab);
+    if (route.openDids && openModal) openDidModal();
   }
 
   /* ---------------- data load ---------------- */
 
   function load() {
     hideError();
-    fetch("/api/config")
+    return fetch("/api/config")
       .then(function (resp) {
         if (!resp.ok) {
           return resp
@@ -2222,6 +3039,14 @@
   /* ---------------- init ---------------- */
 
   document.addEventListener("DOMContentLoaded", function () {
+    // Route the tab synchronously off the initial hash (index.html already
+    // ships the map tab marked .active, so an empty/unknown route resolves
+    // to "map" — see hashToTab) BEFORE the data load kicks off, so there's
+    // no visible flash of the default tab on a deep link like #knowledge or
+    // #dids.
+    var initialRoute = hashToTab(location.hash);
+    applyHashRoute(false);
+
     var nav = $("#nav");
     if (nav) {
       nav.addEventListener("click", function (e) {
@@ -2231,6 +3056,29 @@
     }
     var reloadBtn = $("#reloadBtn");
     if (reloadBtn) reloadBtn.addEventListener("click", load);
+
+    // ---- Map tab wiring (quick-260716-s1n) ----
+    // The evaluator gate box (#mapGate) is static markup — unlike its
+    // .key children, renderMap never clears/rebuilds it — so its click
+    // deep-link (LOCKED "Click a box": gate -> Keys & secrets) is bound
+    // exactly once here rather than in attachMapClickHandlers, which runs
+    // on every render and would otherwise stack duplicate listeners.
+    var mapGateEl = $("#mapGate");
+    if (mapGateEl) {
+      mapGateEl.tabIndex = 0;
+      mapGateEl.addEventListener("click", function (e) {
+        // A key-chip click already handles itself; don't double-fire when
+        // the click bubbles up from a chip.
+        if (e.target && e.target.closest && e.target.closest(".key")) return;
+        switchTab("keys");
+      });
+      mapGateEl.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          switchTab("keys");
+        }
+      });
+    }
 
     // ---- rule-editor drawer wiring ----
     var newRuleBtn = $("#newRuleBtn");
@@ -2303,6 +3151,29 @@
       else if (didModalEl && !didModalEl.hidden) closeDidModal();
     });
 
-    load();
+    // Live hash edits/link clicks re-route without a reload. By the time
+    // this fires, initial load() has long since resolved, so #dids can
+    // open the DID modal immediately (openModal: true).
+    window.addEventListener("hashchange", function () {
+      applyHashRoute(true);
+    });
+
+    // Recompute the Map's wires from live DOM rects on resize (debounced),
+    // only while the Map panel is actually visible.
+    var mapResizeTimer = null;
+    window.addEventListener("resize", function () {
+      if (mapResizeTimer) clearTimeout(mapResizeTimer);
+      mapResizeTimer = setTimeout(function () {
+        var panel = $("#panel-map");
+        if (panel && panel.classList.contains("active")) layoutMap();
+      }, 120);
+    });
+
+    // Open the DID modal only after config data has loaded — openDidModal()
+    // fetches DIDs itself, but gating it behind load() keeps the "#dids"
+    // deep link from racing the initial /api/config fetch on first paint.
+    load().then(function () {
+      if (initialRoute && initialRoute.openDids) openDidModal();
+    });
   });
 })();
