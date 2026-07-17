@@ -227,10 +227,12 @@ ANNOUNCEMENT_BYE_COPY = "Good luck! Hack the planet!"
 
 #: Grace-period budget (seconds) reserved for the panic-readout gag tail
 #: ("Did you get that? ... No?" + the accelerating digit passes + the
-#: abrupt "BYYYYYEEEE!") on top of the base announcement grace and the
-#: slow x2 digit-pause time, so ``_gate_announcement``'s teardown never
-#: cuts the gag off mid-playback.
-ANNOUNCEMENT_GAG_TAIL_SECONDS = 8.0
+#: additional pre-punchline pause + the sign-off) on top of the base
+#: announcement grace and the slow x2 digit-pause time, so
+#: ``_gate_announcement``'s teardown never cuts the gag off mid-playback.
+#: Bumped 8.0 -> 10.0 (2026-07-16) to cover the new ANNOUNCEMENT_PUNCHLINE_PAUSE
+#: beat before "Just kidding...".
+ANNOUNCEMENT_GAG_TAIL_SECONDS = 10.0
 
 #: --- CTF OTP SMS-during-call (quick task 260716-hg5) -------------------------
 #: The design doc docs/superpowers/specs/2026-07-16-ctf-otp-sms-during-call-
@@ -274,8 +276,19 @@ ANNOUNCEMENT_SMS_BODY_TEMPLATE = (
 #: The spoken closing beat that REPLACES ``ANNOUNCEMENT_BYE_COPY`` ONLY when the
 #: caller was actually texted (sms-eligible). The panic-readout tease is
 #: unchanged; this is the payoff. Plain punctuation only -- NO markup tags (the
-#: streaming ElevenLabs path reads markup aloud). Tunable.
-ANNOUNCEMENT_SMS_PUNCHLINE_COPY = "just kidding — check your phone. Good luck! Hack the planet!"
+#: streaming ElevenLabs path reads markup aloud). Tunable. (7-bit ASCII: the
+#: prior em-dash was fine for TTS but this is cleaner and matches the operator's
+#: exact wording.)
+ANNOUNCEMENT_SMS_PUNCHLINE_COPY = "Just kidding. Check your phone. Hack the planet!"
+
+#: An ADDITIONAL dramatic pause inserted AFTER the last accelerated digit and
+#: BEFORE the "Just kidding..." punchline (operator request 2026-07-16) -- a
+#: deliberate beat so the "just kidding" lands. Applied ONLY to the sms-eligible
+#: punchline (the legacy ``ANNOUNCEMENT_BYE_COPY`` keeps its abrupt cut). Plain
+#: punctuation only (period + ellipses that TTS renders as SILENCE and never
+#: speaks) -- NEVER markup tags. Tunable: add/remove ellipses to lengthen the
+#: beat. Its spoken time is covered by ``ANNOUNCEMENT_GAG_TAIL_SECONDS`` below.
+ANNOUNCEMENT_PUNCHLINE_PAUSE = ". ... ... "
 
 #: Bound on the raw trailing ARI DTMF digit buffer (quick task 260716-1g0)
 #: used ONLY for announcement-code suffix matching -- separate from
@@ -381,7 +394,17 @@ def _build_announcement_script(template: str, code: str, sms_eligible: bool = Fa
     (``ANNOUNCEMENT_BYE_COPY``) -- no "check your phone" promise for a caller
     we could not text. A standalone, pure, module-level function so it's
     unit-testable without a call (no controller/ARI/pipeline dependency)."""
-    closing = ANNOUNCEMENT_SMS_PUNCHLINE_COPY if sms_eligible else ANNOUNCEMENT_BYE_COPY
+    # Operator request 2026-07-16: for the sms-eligible payoff, add a dramatic
+    # pause AFTER the last accelerated digit and THEN the "Just kidding..."
+    # punchline. The legacy bye keeps its abrupt cut (no pause). The pause is
+    # plain-punctuation silence prepended to the closing, so it lands between
+    # the last digit and the punchline in ``_build_accel_tail``'s
+    # ``{accel} {closing}`` join.
+    closing = (
+        ANNOUNCEMENT_PUNCHLINE_PAUSE + ANNOUNCEMENT_SMS_PUNCHLINE_COPY
+        if sms_eligible
+        else ANNOUNCEMENT_BYE_COPY
+    )
     return template.replace("{code}", _pace_digits_slow(code)) + " " + _build_accel_tail(code, closing)
 
 
