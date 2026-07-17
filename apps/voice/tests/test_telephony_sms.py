@@ -21,6 +21,7 @@ import pytest
 from klanker_voice.telephony.config import AnnouncementEntry
 from klanker_voice.telephony.controller import (
     ANNOUNCEMENT_BYE_COPY,
+    ANNOUNCEMENT_PUNCHLINE_PAUSE,
     ANNOUNCEMENT_SMS_PUNCHLINE_COPY,
     _build_announcement_script,
     _dialed_did_from_sip_to,
@@ -155,10 +156,23 @@ def test_script_eligible_swaps_in_check_your_phone_punchline():
     eligible = _build_announcement_script(template, "123456", True)
     legacy = _build_announcement_script(template, "123456", False)
     assert ANNOUNCEMENT_SMS_PUNCHLINE_COPY in eligible
-    assert "check your phone" in eligible
-    assert "check your phone" not in legacy
+    assert "Check your phone" in eligible
+    assert "Check your phone" not in legacy
     assert "<break" not in eligible and "/>" not in eligible
     assert "123456" not in eligible
+
+
+def test_script_eligible_pauses_before_punchline():
+    """Operator request 2026-07-16: an additional dramatic pause lands AFTER the
+    last accelerated digit and immediately BEFORE the "Just kidding..."
+    punchline -- only on the sms-eligible payoff, never the legacy bye. The
+    pause is plain-punctuation silence (no markup)."""
+    eligible = _build_announcement_script("Hey! {code}.", "123456", True)
+    legacy = _build_announcement_script("Hey! {code}.", "123456", False)
+    # the pause is prepended directly onto the punchline (pause THEN "Just kidding")
+    assert ANNOUNCEMENT_PUNCHLINE_PAUSE + ANNOUNCEMENT_SMS_PUNCHLINE_COPY in eligible
+    assert ANNOUNCEMENT_PUNCHLINE_PAUSE not in legacy
+    assert "<break" not in eligible  # pause is punctuation, never markup
 
 
 # --- _send_sms_via_relay (POST to auth relay, faked transport) ---------------
