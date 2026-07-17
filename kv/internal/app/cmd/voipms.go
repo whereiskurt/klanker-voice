@@ -64,6 +64,13 @@ const (
 	// numbers the public dials to reach the agent (§25 inbound surface).
 	// Params: none required for a full-account listing.
 	voipmsMethodGetDIDsInfo = "getDIDsInfo"
+
+	// VERIFIED: writes a DID's settings. setDIDInfo is FULL-REPLACE, not a
+	// partial update — every accepted field it doesn't receive is reset to
+	// its default, so callers must always re-send a full getDIDsInfo
+	// snapshot (see setVoipmsDIDPrefix). Param names mirror getDIDsInfo's
+	// response field names 1:1.
+	voipmsMethodSetDIDInfo = "setDIDInfo"
 )
 
 // --------------------------------------------------------------------------
@@ -418,10 +425,173 @@ func didRecordFromMap(m map[string]any) InboundDIDRecord {
 }
 
 // --------------------------------------------------------------------------
+// Caller-ID prefix tooling (Part B, docs/superpowers/specs/
+// 2026-07-17-per-did-gate-policy-and-cid-tooling.md). Automates the
+// hand-run setDIDInfo dance for enrolling a DID's callerid_prefix, baking
+// in the live-proven gotchas: full-snapshot preserve (setDIDInfo is
+// full-replace), forced cnam=0, a verify readback, and bounded retry
+// against the flaky VoIP.ms Cloudflare front.
+
+// voipmsStringField reads a string field from a decoded VoIP.ms JSON map,
+// using the same defensive coercion didRecordFromMap uses (string, else
+// fmt.Sprint) — shared by the DID-snapshot helpers below.
+func voipmsStringField(m map[string]any, key string) string {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
+}
+
+// voipmsDoWithRetry calls vc.do up to 3 times, retrying ONLY transport-layer
+// failures — VoIP.ms's Cloudflare front intermittently 522s from some
+// egress (T-pcy-03). A clean *voipmsStatusError (a real API-level rejection
+// like no_did) is returned immediately, never retried: hammering a
+// legitimate rejection wastes calls and could mask a real problem as
+// flakiness. Never logs params/URL/creds — do()'s own *url.Error unwrap
+// already guards that, and this wrapper adds no logging of its own.
+func voipmsDoWithRetry(ctx context.Context, vc *voipmsClient, method string, params url.Values) (map[string]any, error) {
+	const maxAttempts = 3
+	backoffs := []time.Duration{500 * time.Millisecond, 1 * time.Second}
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		out, err := vc.do(ctx, method, params)
+		if err == nil {
+			return out, nil
+		}
+		var statusErr *voipmsStatusError
+		if errors.As(err, &statusErr) {
+			// A real API-level rejection — do not retry.
+			return out, err
+		}
+		lastErr = err
+		if attempt < maxAttempts-1 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoffs[attempt]):
+			}
+		}
+	}
+	return nil, lastErr
+}
+
+// getVoipmsDIDInfo returns the FULL raw snapshot map for a single DID via
+// voipmsMethodGetDIDsInfo (scoped with a `did` param), defensively handling
+// both the array and single-bare-object `dids` shapes exactly like
+// ListInboundDIDs. The full map is returned — not InboundDIDRecord —
+// because setVoipmsDIDPrefix needs every field to safely re-send the
+// full-replace setDIDInfo call.
+func getVoipmsDIDInfo(ctx context.Context, vc *voipmsClient, did string) (map[string]any, error) {
+	if did == "" {
+		return nil, fmt.Errorf("did must not be blank")
+	}
+	params := url.Values{}
+	params.Set("did", did)
+	out, err := voipmsDoWithRetry(ctx, vc, voipmsMethodGetDIDsInfo, params)
+	if err != nil {
+		return nil, err
+	}
+	switch dids := out["dids"].(type) {
+	case []any:
+		for _, item := range dids {
+			if m, ok := item.(map[string]any); ok {
+				if voipmsStringField(m, "did") == did {
+					return m, nil
+				}
+			}
+		}
+	case map[string]any:
+		if voipmsStringField(dids, "did") == did {
+			return dids, nil
+		}
+	}
+	return nil, fmt.Errorf("DID %s not found", did)
+}
+
+// voipmsDIDPreserveFields lists the getDIDsInfo snapshot fields forwarded
+// verbatim to setDIDInfo. setDIDInfo is FULL-REPLACE: any accepted field
+// omitted here is silently wiped server-side — this is the live-proven trap
+// the design spec's Part B exists to guard against.
+var voipmsDIDPreserveFields = []string{
+	"did",
+	"routing",
+	"pop",
+	"dialtime",
+	"billing_type",
+	"description",
+	"note",
+	"failover_busy",
+	"failover_unreachable",
+	"failover_noanswer",
+	"voicemail",
+	"canada_routing",
+}
+
+// setVoipmsDIDPrefix sets (or clears, when prefix == "") the caller-ID name
+// prefix on did via a full-replace setDIDInfo call:
+//  1. snapshot the DID via getVoipmsDIDInfo.
+//  2. forward every voipmsDIDPreserveFields field present+non-empty in the
+//     snapshot, so no other live DID setting (routing/pop/dialtime/
+//     billing_type/failover_*/...) is silently wiped.
+//  3. FORCE cnam=0 (overriding any snapshot cnam=1) — cnam=1 makes VoIP.ms
+//     overwrite the caller-ID NAME via CNAM lookup, so the prefix never
+//     rides through (the live-proven silent-failure guard, DID 3283).
+//  4. set callerid_prefix=prefix (may be "" for the clear path) and call
+//     setDIDInfo.
+//  5. readback via getVoipmsDIDInfo and verify routing was preserved AND
+//     callerid_prefix landed — this catches a cnam-clobbered prefix even
+//     when the API itself reported success.
+func setVoipmsDIDPrefix(ctx context.Context, vc *voipmsClient, did, prefix string) error {
+	snapshot, err := getVoipmsDIDInfo(ctx, vc, did)
+	if err != nil {
+		return fmt.Errorf("snapshot DID %s before setting caller-ID prefix: %w", did, err)
+	}
+
+	params := url.Values{}
+	for _, key := range voipmsDIDPreserveFields {
+		if v := voipmsStringField(snapshot, key); v != "" {
+			params.Set(key, v)
+		}
+	}
+	// FORCE cnam=0 (overriding any snapshot cnam) — cnam=1 makes VoIP.ms
+	// overwrite the caller-ID NAME via CNAM lookup so the prefix set below
+	// never rides through (live-proven silent failure on DID 3283).
+	params.Set("cnam", "0")
+	// prefix may be "" — that's the clear-cid-prefix path.
+	params.Set("callerid_prefix", prefix)
+
+	if _, err := voipmsDoWithRetry(ctx, vc, voipmsMethodSetDIDInfo, params); err != nil {
+		return fmt.Errorf("set caller-ID prefix on DID %s: %w", did, err)
+	}
+
+	readback, err := getVoipmsDIDInfo(ctx, vc, did)
+	if err != nil {
+		return fmt.Errorf("verify DID %s after setting caller-ID prefix: %w", did, err)
+	}
+	wantRouting := voipmsStringField(snapshot, "routing")
+	gotRouting := voipmsStringField(readback, "routing")
+	if wantRouting == "" || gotRouting != wantRouting {
+		return fmt.Errorf(
+			"DID %s readback shows routing %q, want preserved routing %q — refusing to trust the caller-ID prefix change",
+			did, gotRouting, wantRouting)
+	}
+	if got := voipmsStringField(readback, "callerid_prefix"); got != prefix {
+		return fmt.Errorf("DID %s readback shows caller-ID prefix %q, want %q", did, got, prefix)
+	}
+	return nil
+}
+
+// --------------------------------------------------------------------------
 // Cobra command tree.
 
 // NewVoipmsCmd builds the "kv voipms" parent command, mirroring NewCodeCmd's
-// structure. Sub-commands: balance, route-did, set-caps, create-subaccount.
+// structure. Sub-commands: balance, route-did, set-caps, create-subaccount,
+// set-cid-prefix, clear-cid-prefix.
 func NewVoipmsCmd(cfg *Config) *cobra.Command {
 	voipmsCmd := &cobra.Command{
 		Use:   "voipms",
@@ -520,6 +690,44 @@ func NewVoipmsCmd(cfg *Config) *cobra.Command {
 	createSub.Flags().StringVar(&subPassword, "password", "", "subaccount SIP password (required; generate a strong unique value)")
 	createSub.Flags().StringVar(&subAllowedIP, "allowed-ip", "", "IP to restrict the subaccount to (edge egress IP)")
 	voipmsCmd.AddCommand(createSub)
+
+	setCidPrefix := &cobra.Command{
+		Use:   "set-cid-prefix <did> <tag>",
+		Short: "Set the caller-ID name prefix on a DID (full-snapshot preserve, cnam forced 0)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(c *cobra.Command, args []string) error {
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
+			if err != nil {
+				return err
+			}
+			vc := newVoipmsClient(creds)
+			if err := setVoipmsDIDPrefix(c.Context(), vc, args[0], args[1]); err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "set caller-ID prefix %q on DID %s (cnam forced 0, routing preserved)\n", args[1], args[0])
+			return nil
+		},
+	}
+	voipmsCmd.AddCommand(setCidPrefix)
+
+	clearCidPrefix := &cobra.Command{
+		Use:   "clear-cid-prefix <did>",
+		Short: "Clear the caller-ID name prefix on a DID (full-snapshot preserve, cnam forced 0)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
+			if err != nil {
+				return err
+			}
+			vc := newVoipmsClient(creds)
+			if err := setVoipmsDIDPrefix(c.Context(), vc, args[0], ""); err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "cleared caller-ID prefix on DID %s\n", args[0])
+			return nil
+		},
+	}
+	voipmsCmd.AddCommand(clearCidPrefix)
 
 	// cfg is accepted (mirroring NewCodeCmd's signature / root.go's uniform
 	// registration call) though unused today — no DynamoDB/table access is

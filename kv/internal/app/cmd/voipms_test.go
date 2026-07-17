@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -449,6 +450,239 @@ func TestListInboundDIDs_FailureStatusIsError(t *testing.T) {
 
 	if _, err := ListInboundDIDs(t.Context(), vc); err == nil {
 		t.Fatal("ListInboundDIDs() with status=failure returned nil error, want an error")
+	}
+}
+
+// --------------------------------------------------------------------------
+// Caller-ID prefix tooling (Part B) — setVoipmsDIDPrefix / set-cid-prefix /
+// clear-cid-prefix.
+
+// newFakeCidPrefixServer builds a fake VoIP.ms server serving getDIDsInfo
+// (snapshot + readback) and setDIDInfo for a single canned DID, branching on
+// the `method` query param. It tracks the last setDIDInfo callerid_prefix
+// and cnam it received and reflects them back on subsequent getDIDsInfo
+// responses (closure state), so setVoipmsDIDPrefix's readback verification
+// sees the value it just set. It also returns pointers so the test can
+// inspect the captured setDIDInfo query and the getDIDsInfo call count.
+func newFakeCidPrefixServer(t *testing.T) (vc *voipmsClient, setDIDInfoQuery *url.Values, getDIDsInfoCalls *int) {
+	t.Helper()
+	setDIDInfoQuery = &url.Values{}
+	getDIDsInfoCalls = new(int)
+
+	// Initial snapshot state: cnam=1 (so forcing to 0 is observable) and a
+	// distinctive routing/pop/dialtime/billing_type so preservation is
+	// observable. callerid_prefix starts empty and is updated by a
+	// setDIDInfo call, closure-captured across requests.
+	lastPrefix := ""
+	lastCnam := "1"
+
+	vc, _ = newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		method := r.URL.Query().Get("method")
+		w.Header().Set("Content-Type", "application/json")
+		switch method {
+		case voipmsMethodGetDIDsInfo:
+			*getDIDsInfoCalls++
+			_, _ = w.Write([]byte(`{"status":"success","dids":{` +
+				`"did":"7254043234",` +
+				`"description":"Las Vegas",` +
+				`"routing":"account:557010_klanker-pbx",` +
+				`"pop":"5",` +
+				`"dialtime":"60",` +
+				`"cnam":"` + lastCnam + `",` +
+				`"billing_type":"1",` +
+				`"callerid_prefix":"` + lastPrefix + `"}}`))
+		case voipmsMethodSetDIDInfo:
+			q := r.URL.Query()
+			*setDIDInfoQuery = q
+			lastPrefix = q.Get("callerid_prefix")
+			lastCnam = q.Get("cnam")
+			_, _ = w.Write([]byte(`{"status":"success"}`))
+		default:
+			t.Fatalf("unexpected method %q hit the fake CID-prefix server", method)
+		}
+	})
+	return vc, setDIDInfoQuery, getDIDsInfoCalls
+}
+
+// TestVoipmsSetCidPrefix_AssemblesFullSnapshotForcesCnam0 asserts
+// setVoipmsDIDPrefix forwards the snapshot preserve fields, forces cnam=0
+// even though the snapshot cnam was "1", sets callerid_prefix to the
+// requested tag, and runs the readback (>=2 getDIDsInfo calls).
+func TestVoipmsSetCidPrefix_AssemblesFullSnapshotForcesCnam0(t *testing.T) {
+	vc, setDIDInfoQuery, getDIDsInfoCalls := newFakeCidPrefixServer(t)
+
+	if err := setVoipmsDIDPrefix(t.Context(), vc, "7254043234", "KVD3234"); err != nil {
+		t.Fatalf("setVoipmsDIDPrefix() error: %v", err)
+	}
+
+	q := *setDIDInfoQuery
+	if got := q.Get("method"); got != voipmsMethodSetDIDInfo {
+		t.Errorf("setDIDInfo method = %q, want %q", got, voipmsMethodSetDIDInfo)
+	}
+	if got := q.Get("did"); got != "7254043234" {
+		t.Errorf("did param = %q, want %q", got, "7254043234")
+	}
+	if got := q.Get("routing"); got != "account:557010_klanker-pbx" {
+		t.Errorf("routing param = %q, want preserved snapshot value %q", got, "account:557010_klanker-pbx")
+	}
+	if got := q.Get("pop"); got != "5" {
+		t.Errorf("pop param = %q, want preserved snapshot value %q", got, "5")
+	}
+	if got := q.Get("dialtime"); got != "60" {
+		t.Errorf("dialtime param = %q, want preserved snapshot value %q", got, "60")
+	}
+	if got := q.Get("billing_type"); got != "1" {
+		t.Errorf("billing_type param = %q, want preserved snapshot value %q", got, "1")
+	}
+	if got := q.Get("cnam"); got != "0" {
+		t.Errorf("cnam param = %q, want forced %q (snapshot cnam was \"1\")", got, "0")
+	}
+	if got := q.Get("callerid_prefix"); got != "KVD3234" {
+		t.Errorf("callerid_prefix param = %q, want %q", got, "KVD3234")
+	}
+	if *getDIDsInfoCalls < 2 {
+		t.Errorf("getDIDsInfo calls = %d, want >= 2 (snapshot + readback)", *getDIDsInfoCalls)
+	}
+}
+
+// TestVoipmsClearCidPrefix_EmptiesPrefixPreservesRest asserts
+// setVoipmsDIDPrefix(..., "") (the clear-cid-prefix path) sends an empty
+// but present callerid_prefix, forces cnam=0, and still preserves
+// routing/pop.
+func TestVoipmsClearCidPrefix_EmptiesPrefixPreservesRest(t *testing.T) {
+	vc, setDIDInfoQuery, _ := newFakeCidPrefixServer(t)
+
+	if err := setVoipmsDIDPrefix(t.Context(), vc, "7254043234", ""); err != nil {
+		t.Fatalf("setVoipmsDIDPrefix() error: %v", err)
+	}
+
+	q := *setDIDInfoQuery
+	if _, present := q["callerid_prefix"]; !present {
+		t.Fatal("callerid_prefix param is absent, want it present and empty")
+	}
+	if got := q.Get("callerid_prefix"); got != "" {
+		t.Errorf("callerid_prefix param = %q, want empty", got)
+	}
+	if got := q.Get("cnam"); got != "0" {
+		t.Errorf("cnam param = %q, want forced %q", got, "0")
+	}
+	if got := q.Get("routing"); got != "account:557010_klanker-pbx" {
+		t.Errorf("routing param = %q, want preserved snapshot value %q", got, "account:557010_klanker-pbx")
+	}
+	if got := q.Get("pop"); got != "5" {
+		t.Errorf("pop param = %q, want preserved snapshot value %q", got, "5")
+	}
+}
+
+// TestGetVoipmsDIDInfo_RejectsBlankDid asserts a blank DID never reaches the
+// network layer (mirrors TestVoipmsRouteDidRejectsBlankDid).
+func TestGetVoipmsDIDInfo_RejectsBlankDid(t *testing.T) {
+	called := false
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	if _, err := getVoipmsDIDInfo(t.Context(), vc, ""); err == nil {
+		t.Fatal("getVoipmsDIDInfo(\"\") returned nil error, want an error")
+	}
+	if called {
+		t.Fatal("getVoipmsDIDInfo(\"\") made an HTTP call, want it to reject before the network")
+	}
+}
+
+// TestGetVoipmsDIDInfo_NotFound asserts a DID absent from the response
+// yields a clear not-found error, not a nil map / silent success.
+func TestGetVoipmsDIDInfo_NotFound(t *testing.T) {
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":{"did":"14165551234","routing":"sip:klanker-pbx"}}`))
+	})
+	if _, err := getVoipmsDIDInfo(t.Context(), vc, "7254043234"); err == nil {
+		t.Fatal("getVoipmsDIDInfo() for a DID absent from the response returned nil error, want an error")
+	}
+}
+
+// TestVoipmsDoWithRetry_RetriesTransportFailureThenSucceeds asserts the
+// bounded retry wrapper retries a transport-layer failure and succeeds once
+// the server recovers, without exceeding the N=3 attempt bound.
+func TestVoipmsDoWithRetry_RetriesTransportFailureThenSucceeds(t *testing.T) {
+	attempts := 0
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 2 {
+			// Simulate a transient Cloudflare-522-shaped failure: close the
+			// connection without a response rather than returning any body.
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("ResponseWriter does not support hijacking")
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Fatalf("hijack: %v", err)
+			}
+			conn.Close()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success"}`))
+	})
+
+	out, err := voipmsDoWithRetry(t.Context(), vc, "someMethod", url.Values{})
+	if err != nil {
+		t.Fatalf("voipmsDoWithRetry() error: %v", err)
+	}
+	if status, _ := out["status"].(string); status != "success" {
+		t.Errorf("status = %v, want success", out["status"])
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want 2 (one transient failure then success)", attempts)
+	}
+}
+
+// TestVoipmsDoWithRetry_DoesNotRetryStatusError asserts a clean
+// *voipmsStatusError (a real API rejection) is returned immediately —
+// never retried.
+func TestVoipmsDoWithRetry_DoesNotRetryStatusError(t *testing.T) {
+	attempts := 0
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"failure","error":"no_did"}`))
+	})
+
+	_, err := voipmsDoWithRetry(t.Context(), vc, "someMethod", url.Values{})
+	if err == nil {
+		t.Fatal("voipmsDoWithRetry() with status=failure returned nil error, want an error")
+	}
+	var statusErr *voipmsStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("voipmsDoWithRetry() error = %v (%T), want a *voipmsStatusError", err, err)
+	}
+	if attempts != 1 {
+		t.Errorf("attempts = %d, want 1 (a clean API rejection must not be retried)", attempts)
+	}
+}
+
+// TestVoipmsCidPrefixSubcommandsRegistered asserts `kv voipms` registers
+// set-cid-prefix and clear-cid-prefix alongside the existing sub-commands.
+func TestVoipmsCidPrefixSubcommandsRegistered(t *testing.T) {
+	cfg := &Config{}
+	voipmsCmd := NewVoipmsCmd(cfg)
+
+	want := map[string]bool{
+		"set-cid-prefix":   false,
+		"clear-cid-prefix": false,
+	}
+	for _, sub := range voipmsCmd.Commands() {
+		name := sub.Name()
+		if _, ok := want[name]; ok {
+			want[name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("kv voipms is missing expected sub-command %q", name)
+		}
 	}
 }
 
