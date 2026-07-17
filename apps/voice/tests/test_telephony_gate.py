@@ -532,3 +532,75 @@ async def test_debug_log_on_never_reconstructs_unspoken_secret_words(loguru_capl
     # the three secret words the caller never uttered are absent
     for unspoken in ("falcon", "midnight", "compass"):
         assert unspoken not in text
+
+
+# --- Quick task 260717-o2q: concierge_unlock_enabled (per-DID gate policy Part A) ---
+
+
+async def test_concierge_disabled_passphrase_never_unlocks():
+    """concierge_unlock_enabled=False: all 4 passphrase words arriving in a
+    TranscriptionFrame never unlocks -- on_unlock never fires, the gate stays
+    locked."""
+    gate, unlock_calls, _ = _gate(concierge_unlock_enabled=False)
+
+    frames = [
+        TranscriptionFrame(text="purple falcon midnight compass", user_id="", timestamp=""),
+    ]
+
+    down, _ = await run_test(gate, frames_to_send=frames, expected_down_frames=[])
+
+    assert down == []
+    assert unlock_calls == []
+    assert gate.unlocked is False
+
+
+async def test_concierge_disabled_explicit_unlock_passphrase_and_dtmf_are_noops():
+    """concierge_unlock_enabled=False: an explicit await gate.unlock("passphrase")
+    and await gate.unlock("dtmf") are both no-ops -- unlocked stays False."""
+    gate, unlock_calls, _ = _gate(concierge_unlock_enabled=False)
+
+    await gate.unlock("passphrase")
+    await gate.unlock("dtmf")
+
+    assert unlock_calls == []
+    assert gate.unlocked is False
+    assert gate._resolved is False
+
+
+async def test_concierge_disabled_cancel_for_takeover_still_resolves():
+    """concierge_unlock_enabled=False: cancel_for_takeover("announcement")
+    STILL resolves the gate -- the 333266 takeover path is untouched by the
+    concierge-suppression flag."""
+    gate, unlock_calls, fail_closed_calls = _gate(
+        concierge_unlock_enabled=False, gate_window_seconds=0.05
+    )
+
+    gate.cancel_for_takeover("announcement")
+
+    assert gate._resolved is True
+    assert gate.unlocked is False
+    assert unlock_calls == []
+
+    # The fail-closed timer can never race the takeover afterward either.
+    gate.start_timer()
+    await asyncio.sleep(0.15)
+    assert fail_closed_calls == []
+
+
+async def test_concierge_enabled_default_true_byte_identical():
+    """The default (concierge_unlock_enabled=True, unspecified) is
+    byte-identical to every pre-260717-o2q behavior: passphrase match
+    unlocks, and an explicit unlock("dtmf") unlocks too."""
+    gate, unlock_calls, _ = _gate()  # default concierge_unlock_enabled=True
+
+    frames = [
+        TranscriptionFrame(text="purple falcon midnight compass", user_id="", timestamp=""),
+    ]
+    await run_test(gate, frames_to_send=frames)
+    assert unlock_calls == ["unlocked"]
+    assert gate.unlocked is True
+
+    gate2, unlock_calls2, _ = _gate()
+    await gate2.unlock("dtmf")
+    assert unlock_calls2 == ["unlocked"]
+    assert gate2.unlocked is True

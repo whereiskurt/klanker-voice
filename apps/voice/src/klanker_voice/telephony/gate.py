@@ -185,6 +185,7 @@ class GateProcessor(FrameProcessor):
         on_fail_closed: FailClosedCallback,
         caller_id: str | None = None,
         debug_log_heard: bool = False,
+        concierge_unlock_enabled: bool = True,
         name: str | None = None,
     ) -> None:
         if name is not None:
@@ -197,6 +198,13 @@ class GateProcessor(FrameProcessor):
         #: fail-closed path logs the caller_id + the heard tokens for accent/STT
         #: debugging. Default False keeps the D-05e posture byte-identical.
         self._debug_log_heard = debug_log_heard
+        #: Quick task 260717-o2q (per-DID gate policy Part A): when False,
+        #: the concierge passphrase (spoken) AND concierge DTMF PIN factors
+        #: are BOTH suppressed -- only ``cancel_for_takeover`` (the 333266
+        #: announcement takeover) and the fail-closed timer can still resolve
+        #: the gate. Default True is byte-identical to every pre-260717-o2q
+        #: behavior.
+        self._concierge_unlock_enabled = concierge_unlock_enabled
         self._secret_words: set[str] = {
             w.strip().lower() for w in passphrase_words if w and w.strip()
         }
@@ -266,7 +274,15 @@ class GateProcessor(FrameProcessor):
         ``gate_mode="either"`` -- or after fail-closed already fired, is a
         no-op). Callable both internally (passphrase match, from
         :meth:`process_frame`) and externally (the controller's DTMF path,
-        D-05b: PIN comparison never touches the pipeline)."""
+        D-05b: PIN comparison never touches the pipeline).
+
+        Quick task 260717-o2q: when ``concierge_unlock_enabled`` is False,
+        ``method in ("passphrase", "dtmf")`` is a no-op -- neither factor
+        can ever open the gate. Any other ``method`` value is unaffected.
+        This never touches ``cancel_for_takeover``, which resolves the gate
+        via a wholly separate code path and stays enabled regardless."""
+        if not self._concierge_unlock_enabled and method in ("passphrase", "dtmf"):
+            return
         if self._resolved:
             return
         self._resolved = True
@@ -334,7 +350,12 @@ class GateProcessor(FrameProcessor):
             return
 
         if isinstance(frame, TranscriptionFrame):
-            if frame.text and frame.text.strip():
+            # Quick task 260717-o2q: when the concierge passphrase factor is
+            # suppressed, skip tokenizing/accumulating and skip the match
+            # attempt entirely -- do not even build a token set toward a
+            # match that can never unlock. The frame is still swallowed
+            # below, byte-identical to the locked-window redaction boundary.
+            if self._concierge_unlock_enabled and frame.text and frame.text.strip():
                 self._accumulated_tokens |= _tokenize(frame.text)
                 if match_passphrase(self._accumulated_tokens, self._secret_words):
                     await self.unlock("passphrase")

@@ -620,6 +620,12 @@ class ActiveCall:
     #: one, used for per-DID SMS reply. ``""`` when the ``To:`` header carried
     #: no resolvable NANP DID (parse miss).
     dialed_did: str = ""
+    #: Quick task 260717-o2q (per-DID gate policy Part A): True when
+    #: ``dialed_did`` is in ``telephony_cfg.otp_only_dids`` -- the concierge
+    #: passphrase/PIN are suppressed for this call, only the 333266
+    #: announcement + fail-closed apply. Set once, in ``on_stasis_start``,
+    #: right after ``dialed_did`` is resolved.
+    otp_only: bool = False
     closed: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     #: Phase 11 Plan 06 (D-05): the §24 gate for this call, or ``None`` when
@@ -874,6 +880,12 @@ class AsteriskCallController:
             )
             return
 
+        # Quick task 260717-o2q (per-DID gate policy Part A): resolve the
+        # OTP-only flag from the already-resolved dialed_did BEFORE the gate
+        # is built. An unresolved dialed_did ("") is never in the set, so it
+        # always resolves to otp_only=False -- the default concierge bucket.
+        otp_only = dialed_did in self._telephony_cfg.otp_only_dids
+
         await self._finish_stasis_start_gated(
             sip_channel_id=sip_channel_id,
             caller_id=caller_id,
@@ -884,6 +896,7 @@ class AsteriskCallController:
             external_media_channel_id=external_media_channel_id,
             transport=transport,
             identity=identity,
+            otp_only=otp_only,
         )
 
     def _register_pickup_cue(self, transport: TelephonyTransport, call_session: CallSession) -> None:
@@ -1056,6 +1069,7 @@ class AsteriskCallController:
         external_media_channel_id: str,
         transport: TelephonyTransport,
         identity: CallIdentity,
+        otp_only: bool = False,
     ) -> None:
         """The §24 silent answer-gate (D-05, Plan 06): build the persistent
         pipeline with an inline ``GateProcessor`` NOW (using a zeroed
@@ -1084,6 +1098,16 @@ class AsteriskCallController:
         unconfigured (empty, the default), the mint step is skipped
         entirely and ``grant_tier_id`` is the legacy static
         ``unlock_tier_id`` -- byte-identical to Phase 11's behavior.
+
+        Quick task 260717-o2q (per-DID gate policy Part A): ``otp_only``
+        (resolved by the caller, ``on_stasis_start``, from ``dialed_did in
+        telephony_cfg.otp_only_dids``) builds the ``GateProcessor`` with
+        ``concierge_unlock_enabled=not otp_only`` -- the concierge passphrase
+        + DTMF PIN are both suppressed for this call, and ``otp_only`` is
+        recorded on the resulting ``ActiveCall`` so
+        :meth:`on_channel_dtmf_received` can also skip the PIN branch.
+        Nothing else in this method changes: mint, grant_tier_id, the
+        fail-closed timer start, and the pickup cue all stay byte-identical.
         """
         normalized_caller_id = _normalize_e164(caller_id)
         mint_configured = bool(self._telephony_cfg.tel_mint_url)
@@ -1143,6 +1167,10 @@ class AsteriskCallController:
             # telephony.gate_debug_log_heard is true.
             caller_id=caller_id,
             debug_log_heard=self._telephony_cfg.gate_debug_log_heard,
+            # Quick task 260717-o2q: an OTP-only dialed DID suppresses BOTH
+            # concierge unlock factors (passphrase + DTMF PIN) -- only the
+            # 333266 announcement takeover + fail-closed timer apply.
+            concierge_unlock_enabled=not otp_only,
         )
 
         call_session = await create_call_session(
@@ -1167,6 +1195,7 @@ class AsteriskCallController:
             caller_id=caller_id,
             did=did,
             dialed_did=dialed_did,
+            otp_only=otp_only,
             created_at=time.time(),
             gate=gate,
             grant_tier_id=grant_tier_id,
@@ -1399,7 +1428,15 @@ class AsteriskCallController:
         test the raw trailing digit buffer (suffix semantics, a fat-fingered
         prefix before the code still matches) against every armed
         announcement code; a match dispatches to :meth:`_gate_announcement`
-        instead of unlocking the concierge."""
+        instead of unlocking the concierge.
+
+        Quick task 260717-o2q (per-DID gate policy Part A): when
+        ``active_call.otp_only`` is True, the PIN branch (accumulate +
+        match-and-return) is SKIPPED entirely -- the concierge DTMF PIN can
+        never unlock an OTP-only DID. ``dtmf_raw`` is still appended and the
+        announcement-code loop still runs for every call (otp_only or not),
+        so 333266 keeps working on OTP-only DIDs exactly as it does on
+        every other DID."""
         if self._telephony_cfg.gate_mode not in ("dtmf", "either"):
             return
         channel_id = _normalize_token((event.get("channel", {}) or {}).get("id"))
@@ -1408,12 +1445,13 @@ class AsteriskCallController:
         if active_call is None or active_call.gate is None or not digit:
             return
         active_call.dtmf_raw = (active_call.dtmf_raw + digit)[-DTMF_RAW_MAX_DIGITS:]
-        active_call.dtmf_buffer, matched = accumulate_dtmf(
-            active_call.dtmf_buffer, digit, self._pin
-        )
-        if matched:
-            await active_call.gate.unlock("dtmf")
-            return
+        if not active_call.otp_only:
+            active_call.dtmf_buffer, matched = accumulate_dtmf(
+                active_call.dtmf_buffer, digit, self._pin
+            )
+            if matched:
+                await active_call.gate.unlock("dtmf")
+                return
         for code, entry in self._announcements_by_code.items():
             if code and active_call.dtmf_raw.endswith(code):
                 await self._gate_announcement(active_call, entry)
