@@ -232,6 +232,17 @@ class TelephonyConfig:
     # DIDs are public (never a credential), so they live safely in TOML.
     subaccount_did_map: dict[str, str] = field(default_factory=dict)
 
+    #: Per-DID SMS reply via Approach C (quick 260717-buf, live-confirmed
+    #: 2026-07-17): maps a VoIP.ms per-DID "Caller ID name prefix" tag (set via
+    #: setDIDInfo ``callerid_prefix``, arriving in the SIP From display name ->
+    #: ``${CALLERID(name)}``) to the bare-digits dialed DID. On the shared
+    #: sub-account the To: header carries only the sub-account name, but a per-DID
+    #: prefix rides in CALLERID(name), so the controller matches a tag here
+    #: (anchored at the START of CALLERID(name)) to resolve the dialed DID with NO
+    #: routing change. Empty (default) -> byte-identical to before (To:-only).
+    #: Tags + DIDs are public (never a credential), so they live safely in TOML.
+    cid_prefix_did_map: dict[str, str] = field(default_factory=dict)
+
 
 def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
     """Parse and validate the ``[telephony]`` table into a ``TelephonyConfig``.
@@ -263,6 +274,7 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
 
     announcements = _parse_announcements(table.get("announcement"))
     subaccount_did_map = _parse_subaccount_dids(table.get("subaccount_dids"))
+    cid_prefix_did_map = _parse_cid_prefix_dids(table.get("cid_prefix_dids"))
 
     return TelephonyConfig(
         enabled=bool(table.get("enabled", False)),
@@ -283,6 +295,7 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         tel_mint_env_var=str(table.get("tel_mint_env_var", "TELEPHONY_ENDPOINT_AUTH_TOKEN")),
         announcements=announcements,
         subaccount_did_map=subaccount_did_map,
+        cid_prefix_did_map=cid_prefix_did_map,
     )
 
 
@@ -404,4 +417,32 @@ def _parse_subaccount_dids(raw: object) -> dict[str, str]:
         did = re.sub(r"\D", "", str(value))
         if subaccount and did:
             out[subaccount] = did
+    return out
+
+
+def _parse_cid_prefix_dids(raw: object) -> dict[str, str]:
+    """Parse the ``[telephony.cid_prefix_dids]`` table (quick 260717-buf,
+    Approach C) into a ``{callerid-name-prefix-tag: bare-digit-DID}`` dict.
+    Absent / ``None`` ⇒ ``{}`` (no CID-name-prefix map -- the dialed DID resolves
+    via the sub-account map / SIP ``To:`` header only, byte-identical to before).
+
+    A non-table is a hard config error. Each KEY (a VoIP.ms per-DID
+    ``callerid_prefix`` tag, matched anchored at the START of ``CALLERID(name)``)
+    is stripped of surrounding whitespace; each VALUE is normalized to digits
+    only (``"725-404-3234"``/``"+17254043234"``/``"7254043234"`` → same DID). A
+    key or value that normalizes to empty is dropped. The shared credential-field
+    gate has already refused any credential-looking key -- CID prefix tags and
+    DIDs are public, never secrets."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            "telephony.cid_prefix_dids must be a table ([telephony.cid_prefix_dids])"
+        )
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        tag = str(key).strip()
+        did = re.sub(r"\D", "", str(value))
+        if tag and did:
+            out[tag] = did
     return out
