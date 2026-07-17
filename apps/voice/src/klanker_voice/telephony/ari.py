@@ -160,6 +160,27 @@ class AriClient:
         """``POST /ari/bridges/{bridge_id}/addChannel``."""
         await self._request("POST", f"/ari/bridges/{bridge_id}/addChannel", channel=channel_id)
 
+    async def get_channel_var(self, channel_id: str, variable: str) -> str:
+        """``GET /ari/channels/{id}/variable?variable=NAME`` -> the channel
+        variable's value, or ``""`` for an unset/missing variable or ANY
+        error (never raises).
+
+        Used to surface a dialplan-captured SIP header (e.g. the ``To:``
+        header stashed as ``KLANKER_SIP_TO`` by extensions.conf) into the
+        controller so per-DID logic can read the ACTUAL dialed number --
+        which the ARI ``StasisStart`` event never carries on a shared
+        VoIP.ms sub-account (``dialplan.exten`` there is the sub-account
+        name, not the DID). Fails soft (``""``): a missing variable simply
+        means "dialed DID unknown", which every caller must handle anyway."""
+        try:
+            data = await self._request(
+                "GET", f"/ari/channels/{channel_id}/variable", variable=variable
+            )
+        except AriError:
+            return ""
+        value = data.get("value")
+        return value if isinstance(value, str) else ""
+
     async def hangup(self, channel_id: str) -> None:
         """``DELETE /ari/channels/{id}``."""
         await self._request("DELETE", f"/ari/channels/{channel_id}")

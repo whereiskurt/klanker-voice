@@ -123,6 +123,17 @@ line_template = "Hey! Let me get you that O T P. {code}. That's {code}."
 # (verified via getDIDsInfo); enable SMS on the others in the portal + append
 # them here for fallback depth.
 sms_dids = ["6134805878"]
+# Per-DID reply (quick task 260716-hg5 follow-up -- design doc docs/superpowers/
+# specs/2026-07-16-ctf-per-did-sms-reply-design.md): each ENROLLED dialed DID
+# replies FROM ITSELF, not from the shared sms_dids pool. The controller reads
+# the actual dialed number from the SIP To: header (surfaced by the dialplan as
+# KLANKER_SIP_TO) and: enrolled dialed DID -> text from THAT DID; a resolved-
+# but-unenrolled DID (e.g. 613) -> NO text (keeps 613 reserved/unburned even
+# though the announcement is DID-agnostic); an unresolved dialed DID (To: parse
+# miss) -> falls back to sms_dids above so the feature is never stranded while
+# the header mechanism is verified live. Both Las Vegas DIDs are enrolled
+# (SMS-enabled 2026-07-16); add more here as they are SMS-enabled in the portal.
+sms_reply_dids = ["7254043234", "7254043283"]
 # The SMS is sent by POSTing to the auth app's internal /ctf/sms relay (quick
 # 260716-hg5 follow-up), NOT by calling VoIP.ms from here: VoIP.ms's API is
 # IP-allowlisted and this task's Fargate egress IP is ephemeral, while auth

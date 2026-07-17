@@ -330,8 +330,41 @@ def test_announcement_sms_relay_url_absent_defaults_empty(make_config_file):
 
 def test_shipped_telephony_toml_arms_sms_did_and_relay(make_config_file):
     """The shipped configs/telephony.toml announcement entry carries the live
-    SMS-enabled sending DID (6134805878) and the auth /ctf/sms relay URL."""
+    SMS-enabled sending DID (6134805878), the auth /ctf/sms relay URL, and the
+    per-DID reply enrollment for both Las Vegas DIDs."""
     telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
     cfg = load_telephony_config(telephony_toml_path)
     assert cfg.announcements[0].sms_dids == ("6134805878",)
     assert cfg.announcements[0].sms_relay_url == "https://auth.klankermaker.ai/use1/ctf/sms"
+    assert cfg.announcements[0].sms_reply_dids == ("7254043234", "7254043283")
+
+
+# --- Quick task 260716-hg5 follow-up: [[telephony.announcement]].sms_reply_dids
+
+
+def test_announcement_sms_reply_dids_absent_defaults_empty(make_config_file):
+    """No `sms_reply_dids` line -> `()` (per-DID reply OFF; pure legacy pool
+    behavior), byte-identical to the pre-per-DID announcement shape."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].sms_reply_dids == ()
+
+
+def test_announcement_sms_reply_dids_parses_and_normalizes(make_config_file):
+    """`sms_reply_dids` normalizes to digits-only DIDs (same rule as sms_dids),
+    order preserved, junk/empties dropped."""
+    reply_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + (
+        '\nsms_reply_dids = ["725-404-3234", "+17254043283", "  "]\n'
+    )
+    path = make_config_file(append=VALID_TELEPHONY_TOML + reply_toml)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].sms_reply_dids == ("7254043234", "17254043283")
+
+
+def test_announcement_sms_reply_dids_non_list_rejected(make_config_file):
+    """A scalar `sms_reply_dids` (not an array) is a hard config error whose
+    message names the offending field."""
+    bad_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + '\nsms_reply_dids = "7254043234"\n'
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="sms_reply_dids"):
+        load_telephony_config(path)

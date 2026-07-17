@@ -18,10 +18,13 @@ from typing import Any
 
 import pytest
 
+from klanker_voice.telephony.config import AnnouncementEntry
 from klanker_voice.telephony.controller import (
     ANNOUNCEMENT_BYE_COPY,
     ANNOUNCEMENT_SMS_PUNCHLINE_COPY,
     _build_announcement_script,
+    _dialed_did_from_sip_to,
+    _select_sms_send_dids,
     _send_sms_via_relay,
     _sms_dst_from_caller,
 )
@@ -372,3 +375,154 @@ async def test_hook_log_discipline_no_secret_leak(
     blob = "\n".join(captured)
     assert captured, "expected at least one log record during the announcement"
     assert "778899" not in blob  # OTP never logged by the SMS path
+
+
+# --- Per-DID reply: _dialed_did_from_sip_to (SIP To: header parser) ----------
+
+
+@pytest.mark.parametrize(
+    "sip_to,expected",
+    [
+        # VoIP.ms inbound To: header carries the dialed DID in the sip: URI user
+        ("<sip:17254043234@toronto.voip.ms>", "7254043234"),
+        ('"Las Vegas" <sip:+17254043283@toronto.voip.ms>;tag=abc123', "7254043283"),
+        ("<sip:7254043234@toronto.voip.ms>", "7254043234"),        # bare 10-digit user
+        ("17254043234", "7254043234"),                              # no URI, just the number
+        # the shared sub-account name is NOT a resolvable DID -> unknown ("")
+        ("<sip:557010_klanker-pbx@toronto.voip.ms>", ""),
+        ("", ""),                                                    # header absent
+        (None, ""),                                                  # never raises
+        ("<sip:+445551234567@toronto.voip.ms>", ""),                # non-NA -> unknown
+    ],
+)
+def test_dialed_did_from_sip_to(sip_to, expected):
+    assert _dialed_did_from_sip_to(sip_to) == expected
+
+
+# --- Per-DID reply: _select_sms_send_dids (sender selection) -----------------
+
+
+def _reply_entry(**overrides) -> AnnouncementEntry:
+    return _announcement_entry(
+        sms_dids=("6134805878",),
+        sms_reply_dids=("7254043234", "7254043283"),
+        sms_relay_url=RELAY_URL,
+        **overrides,
+    )
+
+
+def test_select_send_dids_enrolled_replies_from_dialed_did():
+    entry = _reply_entry()
+    assert _select_sms_send_dids(entry, "7254043234") == ("7254043234",)
+    assert _select_sms_send_dids(entry, "7254043283") == ("7254043283",)
+
+
+def test_select_send_dids_resolved_but_unenrolled_sends_nothing():
+    # a resolved-but-not-enrolled DID (e.g. reserved 613) gets NO text, even
+    # though the announcement trigger itself is DID-agnostic.
+    assert _select_sms_send_dids(_reply_entry(), "6134805878") == ()
+
+
+def test_select_send_dids_unresolved_falls_back_to_legacy_pool():
+    # To: parse miss (dialed DID unknown) -> the legacy pool, so the feature is
+    # never stranded while the header mechanism is being verified live.
+    assert _select_sms_send_dids(_reply_entry(), "") == ("6134805878",)
+
+
+def test_select_send_dids_no_enrollment_is_byte_identical_legacy_pool():
+    legacy = _announcement_entry(sms_dids=("6134805878",), sms_relay_url=RELAY_URL)
+    # with no sms_reply_dids, the dialed DID is irrelevant -> always the pool.
+    assert _select_sms_send_dids(legacy, "7254043234") == ("6134805878",)
+    assert _select_sms_send_dids(legacy, "") == ("6134805878",)
+
+
+# --- Per-DID reply: end-to-end through _gate_announcement --------------------
+
+
+async def test_hook_per_did_enrolled_texts_from_dialed_did(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A call to an ENROLLED dialed DID (surfaced via the KLANKER_SIP_TO channel
+    var) is texted FROM that same DID -- not from the shared pool."""
+    _stub_common(monkeypatch)
+    sent: list[tuple[Any, ...]] = []
+
+    async def _fake_relay(url, headers, to, message, dids):
+        sent.append((url, headers, to, message, dids))
+        return True
+
+    monkeypatch.setattr("klanker_voice.telephony.controller._send_sms_via_relay", _fake_relay)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        announcement_codes={ANNOUNCEMENT_CODE: _reply_entry()},
+    )
+    ari.channel_vars["KLANKER_SIP_TO"] = "<sip:17254043283@toronto.voip.ms>"
+
+    await controller.on_stasis_start(_stasis_event(caller_number="5197101515"))
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert len(sent) == 1
+    assert sent[0][4] == ("7254043283",)  # texted FROM the dialed DID
+    assert sent[0][2] == "5197101515"      # to the caller's own ANI
+
+
+async def test_hook_per_did_unenrolled_did_sends_nothing(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A call to a resolved-but-UNENROLLED DID (e.g. reserved 613) gets no text
+    and the legacy sign-off -- reserving that DID even though the trigger is
+    DID-agnostic."""
+    goodbye = _stub_common(monkeypatch)
+
+    async def _fail_relay(*a, **k):
+        raise AssertionError("relay must not run for an unenrolled dialed DID")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller._send_sms_via_relay", _fail_relay)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        announcement_codes={ANNOUNCEMENT_CODE: _reply_entry()},
+    )
+    ari.channel_vars["KLANKER_SIP_TO"] = "<sip:16134805878@toronto.voip.ms>"
+
+    await controller.on_stasis_start(_stasis_event(caller_number="5197101515"))
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert len(goodbye) == 1
+    assert ANNOUNCEMENT_BYE_COPY in goodbye[0]
+    assert ANNOUNCEMENT_SMS_PUNCHLINE_COPY not in goodbye[0]
+
+
+async def test_hook_per_did_unresolved_falls_back_to_pool(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """When the To: header carries no resolvable DID (e.g. the shared
+    sub-account name), the send falls back to the legacy pool so the feature is
+    not stranded."""
+    _stub_common(monkeypatch)
+    sent: list[tuple[Any, ...]] = []
+
+    async def _fake_relay(url, headers, to, message, dids):
+        sent.append((url, headers, to, message, dids))
+        return True
+
+    monkeypatch.setattr("klanker_voice.telephony.controller._send_sms_via_relay", _fake_relay)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        announcement_codes={ANNOUNCEMENT_CODE: _reply_entry()},
+    )
+    ari.channel_vars["KLANKER_SIP_TO"] = "<sip:557010_klanker-pbx@toronto.voip.ms>"
+
+    await controller.on_stasis_start(_stasis_event(caller_number="5197101515"))
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert len(sent) == 1
+    assert sent[0][4] == ("6134805878",)  # legacy pool fallback

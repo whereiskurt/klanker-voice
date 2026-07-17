@@ -138,6 +138,26 @@ class TestExtensionsConfInboundOnly:
             "extensions.conf must hand the call to Stasis(klanker)"
         )
 
+    def test_extensions_conf_captures_dialed_did_before_stasis(self):
+        """Per-DID SMS reply (quick task 260716-hg5 follow-up): the dialplan
+        must stash the SIP To: header into KLANKER_SIP_TO so the controller can
+        read the ACTUAL dialed DID (not the shared sub-account name) via ARI --
+        and it must do so BEFORE Stasis() takes over the channel."""
+        lines = _stripped_lines(EXTENSIONS_CONF)
+        capture_idx = next(
+            (i for i, l in enumerate(lines)
+             if "Set(KLANKER_SIP_TO=" in l and "PJSIP_HEADER(read,To)" in l),
+            None,
+        )
+        assert capture_idx is not None, (
+            "extensions.conf must capture ${PJSIP_HEADER(read,To)} into "
+            "KLANKER_SIP_TO for per-DID SMS reply"
+        )
+        stasis_idx = next((i for i, l in enumerate(lines) if "Stasis(" in l), None)
+        assert stasis_idx is not None and capture_idx < stasis_idx, (
+            "KLANKER_SIP_TO must be set BEFORE Stasis() hands off the channel"
+        )
+
     def test_extensions_conf_no_outbound_context_name(self):
         lines = _stripped_lines(EXTENSIONS_CONF)
         contexts = [
