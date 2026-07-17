@@ -368,3 +368,45 @@ def test_announcement_sms_reply_dids_non_list_rejected(make_config_file):
     path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
     with pytest.raises(ConfigError, match="sms_reply_dids"):
         load_telephony_config(path)
+
+
+# --- Quick task 260716-hg5 follow-up: [telephony.subaccount_dids] per-DID map
+
+
+def test_subaccount_dids_absent_defaults_empty(make_config_file):
+    """No [telephony.subaccount_dids] table -> {} (per-DID sub-account map OFF;
+    every call resolves the dialed DID via the To: header only)."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    assert load_telephony_config(path).subaccount_did_map == {}
+
+
+def test_subaccount_dids_parses_and_normalizes(make_config_file):
+    """Keys (sub-account SIP usernames) are kept verbatim; values (DIDs) are
+    normalized to digits-only."""
+    toml = VALID_TELEPHONY_TOML + (
+        "\n[telephony.subaccount_dids]\n"
+        '"557010_vegas3234" = "725-404-3234"\n'
+        '"557010_vegas3283" = "+17254043283"\n'
+    )
+    cfg = load_telephony_config(make_config_file(append=toml))
+    assert cfg.subaccount_did_map == {
+        "557010_vegas3234": "7254043234",
+        "557010_vegas3283": "17254043283",
+    }
+
+
+def test_subaccount_dids_non_table_rejected(make_config_file):
+    """A scalar `subaccount_dids` (not a table) is a hard config error."""
+    bad_toml = VALID_TELEPHONY_TOML + '\nsubaccount_dids = "not-a-table"\n'
+    with pytest.raises(ConfigError, match="subaccount_dids"):
+        load_telephony_config(make_config_file(append=bad_toml))
+
+
+def test_shipped_telephony_toml_maps_both_vegas_subaccounts(make_config_file):
+    """The shipped configs/telephony.toml maps both Las Vegas sub-account SIP
+    usernames to their DIDs (per-DID reply resolution)."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    assert cfg.subaccount_did_map == {
+        "557010_vegas3234": "7254043234",
+        "557010_vegas3283": "7254043283",
+    }

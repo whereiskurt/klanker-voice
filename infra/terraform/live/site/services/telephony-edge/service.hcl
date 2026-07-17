@@ -187,6 +187,32 @@ locals {
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/sip_password"
           },
           {
+            # Per-DID sub-account SIP creds (quick 260716-hg5 follow-up --
+            # per-DID SMS reply). Each Las Vegas DID has its OWN VoIP.ms
+            # sub-account; Asterisk registers each leg (pjsip.conf
+            # [voipms-registration-vegas*]) so the dialed DID is distinguishable
+            # at the edge. Rendered into pjsip.conf at container start and
+            # SCRUBBED from the env before the Python controller runs
+            # (entrypoint.sh), exactly like the klanker-pbx SIP creds above. IAM
+            # already grants ssm:GetParameter on /kmv/secrets/use1/voipms/*; the
+            # four params below must be created (aws ssm put-parameter) before
+            # this task-def revision deploys. Values SSM-only, never in git.
+            name      = "VOIPMS_SIP_USERNAME_VEGAS3234"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/sip_username_vegas3234"
+          },
+          {
+            name      = "VOIPMS_SIP_PASSWORD_VEGAS3234"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/sip_password_vegas3234"
+          },
+          {
+            name      = "VOIPMS_SIP_USERNAME_VEGAS3283"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/sip_username_vegas3283"
+          },
+          {
+            name      = "VOIPMS_SIP_PASSWORD_VEGAS3283"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/voipms/sip_password_vegas3283"
+          },
+          {
             # VoIP.ms REST API creds (quick 260716-hg5): consumed by the Python
             # controller's SMS-during-call path (_send_sms -> sendSMS) to text
             # the caller a written copy of the CTF OTP. DISTINCT from the SIP
