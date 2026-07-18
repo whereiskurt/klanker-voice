@@ -276,8 +276,17 @@ SMS_SEND_TIMEOUT_SECONDS = 12.0
 #: character here 7-bit ASCII. (The ``{code}`` braces are GSM-7 EXTENDED but are
 #: substituted away before the send, so the wire message is pure basic GSM-7.)
 ANNOUNCEMENT_SMS_BODY_TEMPLATE = (
-    "CTF flag redemption: https://q.defcon.run/c?v={code}"
+    "Here: https://q.defcon.run/c?v={code}"
 )
+
+#: The SECOND, STATIC SMS sent to the caller (quick task 260718-9el) -- fires
+#: right after the URL body via :func:`_send_sms_sequence`, in a SEPARATE
+#: message, with NO ``{code}`` substitution. Presently a placeholder closing
+#: beat; the operator may later replace it with a chained next-step clue for
+#: the CTF player. MUST stay pure 7-bit GSM-7 ASCII for the same
+#: UCS-2-silent-drop reason documented on ``ANNOUNCEMENT_SMS_BODY_TEMPLATE``
+#: above. NEVER logged.
+ANNOUNCEMENT_SMS_SECOND_BODY = "Hack the planet!"
 
 #: The spoken closing beat that REPLACES ``ANNOUNCEMENT_BYE_COPY`` ONLY when the
 #: caller was actually texted (sms-eligible). The panic-readout tease is
@@ -569,6 +578,33 @@ async def _send_sms_via_relay(
         logger.warning("sms relay: request failed (transport/parse error)")
         return False
     return isinstance(data, dict) and data.get("sent") is True
+
+
+async def _send_sms_sequence(
+    url: str, headers: dict[str, str], dst: str, bodies: tuple[str, ...], dids: tuple[str, ...]
+) -> None:
+    """Send ``bodies`` as SEPARATE, SEQUENTIAL SMS messages via
+    :func:`_send_sms_via_relay`, one call per body, IN ORDER (quick task
+    260718-9el -- split the single OTP text into a URL message followed by a
+    static second beat). Every send shares the same ``url``/``headers``/
+    ``dst``/``dids``.
+
+    A failed (or unexpectedly raising) first send MUST NOT prevent the
+    second: the loop never short-circuits on a ``False`` return, and each
+    iteration is individually wrapped so nothing can escape this coroutine
+    even if ``_send_sms_via_relay``'s own never-raise contract were ever
+    violated. Fire-and-forget by design -- callers park this on
+    ``asyncio.create_task`` and never await its result; it deliberately
+    returns nothing.
+
+    Logging discipline (§13/T-260718-01): emits NO new log line of its own --
+    it inherits ``_send_sms_via_relay``'s generic-marker-only logging for
+    each individual send, never the body/dst/dids/bearer."""
+    for body in bodies:
+        try:
+            await _send_sms_via_relay(url, headers, dst, body, dids)
+        except Exception:  # noqa: BLE001 -- defensive: never let one failed send abort the sequence
+            pass
 
 
 def _bypass_gate_result() -> quota.GateResult:
@@ -1362,7 +1398,8 @@ class AsteriskCallController:
             await self._close_active_call(active_call, "announcement otp fetch failed")
             return
 
-        # Quick task 260716-hg5 (+ follow-up: relay via auth): text the caller a
+        # Quick task 260716-hg5 (+ follow-up: relay via auth; quick task
+        # 260718-9el: split into two sequential sends): text the caller a
         # written copy of the OTP, fired NOW (before the readout) so it lands
         # before the spoken "check your phone" punchline. sms-eligible ONLY when
         # the entry configures a sending-DID pool AND a relay URL AND the caller
@@ -1370,13 +1407,16 @@ class AsteriskCallController:
         # attempt. The build-and-POST goes to auth's /ctf/sms relay (auth sends
         # via VoIP.ms from the stable whitelisted NAT EIP; telephony-edge's
         # ephemeral Fargate IP is not on the VoIP.ms API allowlist). Bearer
-        # reuses the same CTF_OTP_AUTH_TOKEN the OTP fetch uses. The send is
+        # reuses the same CTF_OTP_AUTH_TOKEN the OTP fetch uses. TWO messages
+        # are now sent SEQUENTIALLY in that one task -- the URL first, then the
+        # static "Hack the planet!" beat -- via ``_send_sms_sequence``, which
+        # never short-circuits on a failed first send. The send is
         # fire-and-forget: launched via ``create_task``, its handle parked on the
         # ``ActiveCall`` purely to keep a strong reference (it finishes within
         # the grace sleep below), and NEVER awaited on the teardown path -- a
         # slow/failing relay can never hang the PSTN line, and
-        # ``_send_sms_via_relay`` never raises. Never logs the OTP, body, dst,
-        # DIDs, or bearer (T-OTP-04/§13).
+        # ``_send_sms_sequence``/``_send_sms_via_relay`` never raise. Never logs
+        # the OTP, body, dst, DIDs, or bearer (T-OTP-04/§13).
         # Per-DID reply (quick task 260716-hg5 follow-up): choose the sending
         # DID(s) from the ACTUAL dialed DID (parsed from the SIP To: header at
         # StasisStart) when ``sms_reply_dids`` enrolls it -- so an enrolled DID
@@ -1388,12 +1428,13 @@ class AsteriskCallController:
         send_dids = _select_sms_send_dids(entry, active_call.dialed_did)
         sms_eligible = bool(send_dids) and bool(entry.sms_relay_url) and bool(dst)
         if sms_eligible:
-            body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)
+            url_body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)
+            bodies = (url_body, ANNOUNCEMENT_SMS_SECOND_BODY)
             bearer = os.environ.get(entry.otp_env_var, "") if entry.otp_env_var else ""
             relay_headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
             active_call.sms_task = asyncio.create_task(
-                _send_sms_via_relay(
-                    entry.sms_relay_url, relay_headers, dst, body, send_dids
+                _send_sms_sequence(
+                    entry.sms_relay_url, relay_headers, dst, bodies, send_dids
                 )
             )
 
