@@ -261,9 +261,10 @@ ANNOUNCEMENT_GAG_TAIL_SECONDS = 18.0
 #: readout grace to complete.
 SMS_SEND_TIMEOUT_SECONDS = 12.0
 
-#: The SMS body. Uses the PLAIN code (not the digit-spaced spoken form) so it is
-#: copy/paste-able. Flavor + expiry note because the TOTP rolls every ~120s.
-#: Tunable. NEVER logged (it contains the live OTP).
+#: The SMS body: a titled flag-redemption URL that embeds the OTP as the ``?v=``
+#: query param, so the caller redeems by opening the link instead of relaying the
+#: raw code. Uses the PLAIN code (not the digit-spaced spoken form) so the URL is
+#: well-formed. Tunable. NEVER logged (the URL contains the live OTP).
 #:
 #: CRITICAL -- 7-bit GSM charset ONLY, NO non-ASCII characters (quick task
 #: 260716-hg5 follow-up, live-proven 2026-07-16): a single non-GSM character
@@ -275,7 +276,7 @@ SMS_SEND_TIMEOUT_SECONDS = 12.0
 #: character here 7-bit ASCII. (The ``{code}`` braces are GSM-7 EXTENDED but are
 #: substituted away before the send, so the wire message is pure basic GSM-7.)
 ANNOUNCEMENT_SMS_BODY_TEMPLATE = (
-    "CTF proof code: {code} - expires in about 2 min. Relay it fast. Hack the planet!"
+    "CTF flag redemption: https://q.defcon.run/c?v={code}"
 )
 
 #: The spoken closing beat that REPLACES ``ANNOUNCEMENT_BYE_COPY`` ONLY when the
