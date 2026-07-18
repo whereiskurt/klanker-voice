@@ -22,11 +22,14 @@ from klanker_voice.telephony.config import AnnouncementEntry
 from klanker_voice.telephony.controller import (
     ANNOUNCEMENT_BYE_COPY,
     ANNOUNCEMENT_PUNCHLINE_PAUSE,
+    ANNOUNCEMENT_SMS_BODY_TEMPLATE,
     ANNOUNCEMENT_SMS_PUNCHLINE_COPY,
+    ANNOUNCEMENT_SMS_SECOND_BODY,
     _build_announcement_script,
     _dialed_did_from_cidname,
     _dialed_did_from_sip_to,
     _select_sms_send_dids,
+    _send_sms_sequence,
     _send_sms_via_relay,
     _sms_dst_from_caller,
 )
@@ -132,12 +135,19 @@ def test_sms_body_is_gsm7_ascii_safe():
     non-GSM char (em-dash, curly quote, …) forces UCS-2 and the VoIP.ms->
     NA-mobile route SILENTLY DROPS UCS-2 while the send still reports success.
     Check the FORMATTED body (the {code} braces are substituted away)."""
-    from klanker_voice.telephony.controller import ANNOUNCEMENT_SMS_BODY_TEMPLATE
-
     body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code="482913")
     non_ascii = [c for c in body if ord(c) >= 128]
     assert non_ascii == [], f"SMS body has non-GSM-7 (UCS-2-forcing) chars: {non_ascii!r}"
     assert "{" not in body and "}" not in body
+
+
+def test_sms_second_body_is_gsm7_ascii_safe():
+    """The SECOND (static) SMS body must be pure 7-bit ASCII for the same
+    UCS-2-silent-drop reason, and carries no {code} substitution marker."""
+    non_ascii = [c for c in ANNOUNCEMENT_SMS_SECOND_BODY if ord(c) >= 128]
+    assert non_ascii == [], f"second SMS body has non-GSM-7 chars: {non_ascii!r}"
+    assert "{" not in ANNOUNCEMENT_SMS_SECOND_BODY and "}" not in ANNOUNCEMENT_SMS_SECOND_BODY
+    assert ANNOUNCEMENT_SMS_SECOND_BODY == "Hack the planet!"
 
 
 # --- _build_announcement_script branch ---------------------------------------
@@ -216,6 +226,56 @@ async def test_relay_false_on_empty_inputs_no_post(monkeypatch):
     assert _FakeSession.last_url is None  # short-circuited before any POST
 
 
+# --- _send_sms_sequence (order + never-short-circuit + never-raise) ----------
+
+
+async def test_send_sms_sequence_sends_bodies_in_order(monkeypatch):
+    captured: list[str] = []
+
+    async def _capture_relay(url, headers, dst, message, dids):
+        captured.append(message)
+        return True
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._send_sms_via_relay", _capture_relay
+    )
+    await _send_sms_sequence(RELAY_URL, {}, "5197101515", ("m1", "m2"), DIDS)
+    assert captured == ["m1", "m2"]
+
+
+async def test_send_sms_sequence_first_failure_does_not_block_second(monkeypatch):
+    captured: list[str] = []
+    calls = {"n": 0}
+
+    async def _flaky_relay(url, headers, dst, message, dids):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("simulated first-send explosion")
+        captured.append(message)
+        return True
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._send_sms_via_relay", _flaky_relay
+    )
+    await _send_sms_sequence(RELAY_URL, {}, "5197101515", ("m1", "m2"), DIDS)
+    assert calls["n"] == 2
+    assert captured == ["m2"]
+
+
+async def test_send_sms_sequence_first_false_return_does_not_block_second(monkeypatch):
+    captured: list[str] = []
+
+    async def _false_then_true_relay(url, headers, dst, message, dids):
+        captured.append(message)
+        return message != "m1"
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._send_sms_via_relay", _false_then_true_relay
+    )
+    await _send_sms_sequence(RELAY_URL, {}, "5197101515", ("m1", "m2"), DIDS)
+    assert captured == ["m1", "m2"]
+
+
 # --- _gate_announcement fire-early scheduling hook ---------------------------
 
 
@@ -248,7 +308,7 @@ def _sms_entry(**overrides):
     return _announcement_entry(sms_dids=("6134805878",), sms_relay_url=RELAY_URL, **overrides)
 
 
-async def test_hook_eligible_posts_one_relay_call_and_speaks_punchline(
+async def test_hook_eligible_posts_two_relay_calls_and_speaks_punchline(
     make_config_file, stub_provider_keys, fake_aws, monkeypatch
 ):
     goodbye = _stub_common(monkeypatch)
@@ -272,12 +332,15 @@ async def test_hook_eligible_posts_one_relay_call_and_speaks_punchline(
     for event in _dial(ANNOUNCEMENT_CODE):
         await controller.on_channel_dtmf_received(event)
 
-    assert len(sent) == 1
-    url, headers, to, message, dids = sent[0]
-    assert url == RELAY_URL
-    assert to == "5197101515"
-    assert "483920" in message              # the plain, copy-pasteable OTP
-    assert dids == ("6134805878",)
+    assert len(sent) == 2
+    url0, headers0, to0, message0, dids0 = sent[0]
+    url1, headers1, to1, message1, dids1 = sent[1]
+    assert message0 == "Here: https://q.defcon.run/c?v=483920"  # OTP URL first
+    assert "483920" in message0              # the plain, copy-pasteable OTP
+    assert message1 == "Hack the planet!"    # static second body, second
+    assert url0 == url1 == RELAY_URL
+    assert to0 == to1 == "5197101515"
+    assert dids0 == dids1 == ("6134805878",)
     assert len(goodbye) == 1
     assert ANNOUNCEMENT_SMS_PUNCHLINE_COPY in goodbye[0]
     assert controller.calls == {}
@@ -512,9 +575,11 @@ async def test_hook_per_did_enrolled_texts_from_dialed_did(
     for event in _dial(ANNOUNCEMENT_CODE):
         await controller.on_channel_dtmf_received(event)
 
-    assert len(sent) == 1
-    assert sent[0][4] == ("7254043283",)  # texted FROM the dialed DID
-    assert sent[0][2] == "5197101515"      # to the caller's own ANI
+    assert len(sent) == 2
+    assert sent[0][4] == sent[1][4] == ("7254043283",)  # texted FROM the dialed DID
+    assert sent[0][2] == sent[1][2] == "5197101515"      # to the caller's own ANI
+    assert sent[0][3].startswith("Here: https://q.defcon.run/c?v=")  # URL first
+    assert sent[1][3] == "Hack the planet!"                          # static second
 
 
 async def test_hook_per_did_unenrolled_did_sends_nothing(
@@ -572,5 +637,5 @@ async def test_hook_per_did_unresolved_falls_back_to_pool(
     for event in _dial(ANNOUNCEMENT_CODE):
         await controller.on_channel_dtmf_received(event)
 
-    assert len(sent) == 1
-    assert sent[0][4] == ("6134805878",)  # legacy pool fallback
+    assert len(sent) == 2
+    assert sent[0][4] == sent[1][4] == ("6134805878",)  # legacy pool fallback
