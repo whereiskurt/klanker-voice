@@ -162,28 +162,98 @@ def test_script_ineligible_is_byte_identical_to_legacy():
     assert ANNOUNCEMENT_SMS_PUNCHLINE_COPY not in default
 
 
-def test_script_eligible_swaps_in_check_your_phone_punchline():
+def test_script_eligible_swaps_in_sms_on_the_way_punchline():
     template = "Hey! {code}. That's {code}."
     eligible = _build_announcement_script(template, "123456", True)
     legacy = _build_announcement_script(template, "123456", False)
     assert ANNOUNCEMENT_SMS_PUNCHLINE_COPY in eligible
-    assert "Check your phone" in eligible
-    assert "Check your phone" not in legacy
-    assert "<break" not in eligible and "/>" not in eligible
+    assert "SMS on the way" in eligible
+    assert "SMS on the way" not in legacy
+    assert "<" not in eligible and ">" not in eligible
     assert "123456" not in eligible
 
 
 def test_script_eligible_pauses_before_punchline():
-    """Operator request 2026-07-16: an additional dramatic pause lands AFTER the
-    last accelerated digit and immediately BEFORE the "Just kidding..."
-    punchline -- only on the sms-eligible payoff, never the legacy bye. The
+    """The long six-group pre-reveal pause lands immediately BEFORE the
+    reveal/punchline on BOTH paths (v6 gag rework, quick task 260722-ri1) --
+    the eligible payoff closes with the pause + "SMS on the way..."; the
+    legacy path closes with the pause + "Just kidding. " + the bye copy. The
     pause is plain-punctuation silence (no markup)."""
     eligible = _build_announcement_script("Hey! {code}.", "123456", True)
     legacy = _build_announcement_script("Hey! {code}.", "123456", False)
-    # the pause is prepended directly onto the punchline (pause THEN "Just kidding")
     assert ANNOUNCEMENT_PUNCHLINE_PAUSE + ANNOUNCEMENT_SMS_PUNCHLINE_COPY in eligible
-    assert ANNOUNCEMENT_PUNCHLINE_PAUSE not in legacy
-    assert "<break" not in eligible  # pause is punctuation, never markup
+    assert eligible.rstrip().endswith(
+        ANNOUNCEMENT_PUNCHLINE_PAUSE + ANNOUNCEMENT_SMS_PUNCHLINE_COPY
+    )
+    assert ANNOUNCEMENT_PUNCHLINE_PAUSE in legacy
+    assert legacy.rstrip().endswith(
+        ANNOUNCEMENT_PUNCHLINE_PAUSE + "Just kidding. " + ANNOUNCEMENT_BYE_COPY
+    )
+    assert "<" not in eligible and ">" not in eligible  # pause is punctuation, never markup
+
+
+# --- v6 gag structure: determinism + digit-multiset invariants (260722-ri1) --
+
+
+def test_v6_gag_is_deterministic_for_a_fixed_code():
+    """Same code -> byte-identical output every call (T-RI1-03: seeded
+    random.Random(code), no call-path global randomness)."""
+    template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
+    first = _build_announcement_script(template, "830429", True)
+    second = _build_announcement_script(template, "830429", True)
+    assert first == second
+
+    # comma-paced opener, then the space-paced re-read
+    assert first.startswith(
+        "Hey! Let me get that one time password for you. Ready? . ... "
+        "8, 3, 0, 4, 2, 9. That's 8 3 0 4 2 9."
+    )
+    # reveal punchline lands at the very end
+    assert first.rstrip().endswith(ANNOUNCEMENT_SMS_PUNCHLINE_COPY)
+
+
+def test_v6_gag_segment_b_shuffle_differs_from_true_order():
+    """Segment B (the shuffled last-three digits, right after 'Did you get
+    that? ... ' + Segment A) must differ from the caller's true last-three
+    digit order -- otherwise the "wheels-come-off" jumble would just read the
+    real code back."""
+    code = "830429"
+    line = _build_announcement_script("Hey! {code}.", code, False)
+    true_last_three_spaced = " ".join(code[-3:])
+    # the true last-three sequence must not appear immediately after Segment A
+    seg_a_marker = "8, 3, 0, "
+    idx = line.index(seg_a_marker) + len(seg_a_marker)
+    assert not line[idx:].startswith(true_last_three_spaced)
+
+
+def test_v6_gag_every_digit_is_from_the_codes_own_multiset():
+    """Every digit character in the assembled script (including the jumble)
+    must be a member of the code's own digit multiset -- never a foreign
+    digit (T-RI1 truth: 'the jumble is derived from the live OTP')."""
+    code = "830429"
+    line = _build_announcement_script("Hey! {code}. That's {code_fast}.", code, True)
+    code_digit_set = set(code)
+    line_digit_set = {ch for ch in line if ch.isdigit()}
+    assert line_digit_set <= code_digit_set
+
+
+def test_v6_gag_non_sms_fallback_never_says_sms():
+    """A caller who could NOT be texted never hears 'SMS on the way' -- no
+    false promise (T-RI1-02)."""
+    line = _build_announcement_script("Hey! {code}.", "830429", False)
+    assert "SMS" not in line
+    assert ANNOUNCEMENT_BYE_COPY in line
+
+
+def test_v6_gag_has_no_markup_regression_guard():
+    """No angle-bracket markup ever appears in the assembled script -- the
+    streaming ElevenLabs path reads markup tags ALOUD."""
+    for sms_eligible in (True, False):
+        line = _build_announcement_script(
+            "Hey! {code}. That's {code_fast}.", "830429", sms_eligible
+        )
+        assert "<" not in line
+        assert ">" not in line
 
 
 # --- _send_sms_via_relay (POST to auth relay, faked transport) ---------------
