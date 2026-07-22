@@ -115,6 +115,7 @@ otp_only_dids = ["7254043234", "7254043283"]
 [telephony.cid_prefix_dids]
 "KVD3234" = "7254043234"
 "KVD3283" = "7254043283"
+"KVD8283" = "7254048283"
 
 # CTF phone-OTP announcement (quick task 260716-1g0, Revision 2 -- design doc
 # docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md,
@@ -154,8 +155,8 @@ sms_dids = []
 # the dead SIP To: header stays only as a last-ditch fallback. Selection:
 # enrolled dialed DID -> text from THAT DID; a resolved-but-unenrolled DID -> NO
 # text; an unresolved dialed DID -> the (now empty) sms_dids pool -> no text.
-# Both Las Vegas DIDs are enrolled (SMS-enabled 2026-07-16).
-sms_reply_dids = ["7254043234", "7254043283"]
+# All three Las Vegas DIDs are enrolled (SMS-enabled 2026-07-16, 2026-07-21).
+sms_reply_dids = ["7254043234", "7254043283", "7254048283"]
 # The SMS is sent by POSTing to the auth app's internal /ctf/sms relay (quick
 # 260716-hg5 follow-up), NOT by calling VoIP.ms from here: VoIP.ms's API is
 # IP-allowlisted and this task's Fargate egress IP is ephemeral, while auth

@@ -331,13 +331,13 @@ def test_announcement_sms_relay_url_absent_defaults_empty(make_config_file):
 def test_shipped_telephony_toml_arms_sms_did_and_relay(make_config_file):
     """The shipped configs/telephony.toml announcement entry has an EMPTY sms_dids
     fallback pool (quick 260717-buf reserves 613 -- unresolved dialed DID sends no
-    text), the auth /ctf/sms relay URL, and per-DID reply enrollment for both
+    text), the auth /ctf/sms relay URL, and per-DID reply enrollment for all three
     Las Vegas DIDs (which now resolve via the CALLERID(name) prefix map)."""
     telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
     cfg = load_telephony_config(telephony_toml_path)
     assert cfg.announcements[0].sms_dids == ()
     assert cfg.announcements[0].sms_relay_url == "https://auth.klankermaker.ai/use1/ctf/sms"
-    assert cfg.announcements[0].sms_reply_dids == ("7254043234", "7254043283")
+    assert cfg.announcements[0].sms_reply_dids == ("7254043234", "7254043283", "7254048283")
 
 
 # --- Quick task 260716-hg5 follow-up: [[telephony.announcement]].sms_reply_dids
@@ -404,12 +404,13 @@ def test_cid_prefix_dids_non_table_rejected(make_config_file):
 
 
 def test_shipped_telephony_toml_maps_both_vegas_cid_prefixes(make_config_file):
-    """The shipped configs/telephony.toml maps both Las Vegas CID-name-prefix
+    """The shipped configs/telephony.toml maps all three Las Vegas CID-name-prefix
     tags to their DIDs (Approach C per-DID reply resolution)."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
     assert cfg.cid_prefix_did_map == {
         "KVD3234": "7254043234",
         "KVD3283": "7254043283",
+        "KVD8283": "7254048283",
     }
 
 
