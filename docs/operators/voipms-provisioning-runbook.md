@@ -120,6 +120,14 @@ step here, now or later, that turns it on.
 5. Order exactly **one** DID. This project does not need, and should not
    provision, more than one public inbound number.
 
+CLI alternative to the portal search-and-order steps above: run
+`kv voipms search-dids --state <ST> --ratecenter "<CENTER>"` (omit
+`--ratecenter` to first list a state's rate centers) to find a number, then
+`kv voipms order-did <did>` — its defaults (`routing=account:557010_klanker-pbx`,
+`pop=45`, `dialtime=60`, `cnam=0`, per-minute billing) are exactly what was
+used ordering the live Vegas DID. `kv voipms cancel-did <did> --yes`
+permanently releases a DID back to the VoIP.ms pool.
+
 ### 7. Route the DID to `klanker-pbx` via `kv voipms route-did`
 
 ```bash
