@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"text/tabwriter"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -71,6 +72,25 @@ const (
 	// snapshot (see setVoipmsDIDPrefix). Param names mirror getDIDsInfo's
 	// response field names 1:1.
 	voipmsMethodSetDIDInfo = "setDIDInfo"
+
+	// VERIFIED live 2026-07-21 provisioning the Vegas 725-404-8283 DID:
+	// searches available USA DIDs. Params: `state` (required), `ratecenter`
+	// (optional — narrows to one rate center).
+	voipmsMethodGetDIDsUSA = "getDIDsUSA"
+
+	// VERIFIED live 2026-07-21 provisioning the Vegas 725-404-8283 DID:
+	// lists a state's USA rate centers (used to discover the `ratecenter`
+	// value getDIDsUSA accepts). Param: `state` (required).
+	voipmsMethodGetRateCentersUSA = "getRateCentersUSA"
+
+	// VERIFIED live 2026-07-21 provisioning the Vegas 725-404-8283 DID:
+	// orders a DID. Params: `did`, `routing`, `pop`, `dialtime`, `cnam`,
+	// `billing_type`.
+	voipmsMethodOrderDID = "orderDID"
+
+	// VERIFIED live 2026-07-21: cancels (permanently releases) a DID back
+	// to the VoIP.ms pool. Param: `did`.
+	voipmsMethodCancelDID = "cancelDID"
 )
 
 // --------------------------------------------------------------------------
@@ -587,18 +607,170 @@ func setVoipmsDIDPrefix(ctx context.Context, vc *voipmsClient, did, prefix strin
 }
 
 // --------------------------------------------------------------------------
+// DID search/order/cancel (D-03 close-out, TE5-01) — wraps getDIDsUSA/
+// getRateCentersUSA/orderDID/cancelDID, the exact method/param shapes
+// exercised live 2026-07-21 provisioning the Vegas 725-404-8283 DID.
+
+// AvailableDIDRecord is one DID returned by getVoipmsDIDsUSA — an available
+// number an operator can order, not yet provisioned on the account.
+type AvailableDIDRecord struct {
+	DID              string `json:"did"`
+	RateCenter       string `json:"ratecenter"`
+	State            string `json:"state"`
+	PerMinuteMonthly string `json:"perminute_monthly"`
+	PerMinuteRate    string `json:"perminute_minute"`
+	SMS              string `json:"sms"`
+	MMS              string `json:"mms"`
+}
+
+// RateCenterRecord is one USA rate center returned by getRateCentersUSA.
+type RateCenterRecord struct {
+	RateCenter string `json:"ratecenter"`
+	Available  string `json:"available"`
+}
+
+// availableDIDRecordFromMap reads one AvailableDIDRecord's fields from a
+// decoded JSON map, reusing voipmsStringField's defensive coercion.
+func availableDIDRecordFromMap(m map[string]any) AvailableDIDRecord {
+	return AvailableDIDRecord{
+		DID:              voipmsStringField(m, "did"),
+		RateCenter:       voipmsStringField(m, "ratecenter"),
+		State:            voipmsStringField(m, "state"),
+		PerMinuteMonthly: voipmsStringField(m, "perminute_monthly"),
+		PerMinuteRate:    voipmsStringField(m, "perminute_minute"),
+		SMS:              voipmsStringField(m, "sms"),
+		MMS:              voipmsStringField(m, "mms"),
+	}
+}
+
+// rateCenterRecordFromMap reads one RateCenterRecord's fields from a decoded
+// JSON map, reusing voipmsStringField's defensive coercion.
+func rateCenterRecordFromMap(m map[string]any) RateCenterRecord {
+	return RateCenterRecord{
+		RateCenter: voipmsStringField(m, "ratecenter"),
+		Available:  voipmsStringField(m, "available"),
+	}
+}
+
+// searchVoipmsDIDsUSA searches available USA DIDs via voipmsMethodGetDIDsUSA,
+// scoped to state and (when non-empty) ratecenter. Defensively parses both
+// the array and single-bare-object "dids" shapes, mirroring ListInboundDIDs.
+func searchVoipmsDIDsUSA(ctx context.Context, vc *voipmsClient, state, ratecenter string) ([]AvailableDIDRecord, error) {
+	if state == "" {
+		return nil, fmt.Errorf("state must not be blank")
+	}
+	params := url.Values{}
+	params.Set("state", state)
+	if ratecenter != "" {
+		params.Set("ratecenter", ratecenter)
+	}
+	out, err := vc.do(ctx, voipmsMethodGetDIDsUSA, params)
+	if err != nil {
+		return nil, err
+	}
+	records := []AvailableDIDRecord{}
+	switch dids := out["dids"].(type) {
+	case []any:
+		for _, item := range dids {
+			if m, ok := item.(map[string]any); ok {
+				records = append(records, availableDIDRecordFromMap(m))
+			}
+		}
+	case map[string]any:
+		records = append(records, availableDIDRecordFromMap(dids))
+	}
+	return records, nil
+}
+
+// getVoipmsRateCentersUSA lists a state's USA rate centers via
+// voipmsMethodGetRateCentersUSA, letting an operator discover the
+// `ratecenter` value searchVoipmsDIDsUSA accepts. Defensively parses both
+// the array and single-bare-object "ratecenters" shapes.
+func getVoipmsRateCentersUSA(ctx context.Context, vc *voipmsClient, state string) ([]RateCenterRecord, error) {
+	if state == "" {
+		return nil, fmt.Errorf("state must not be blank")
+	}
+	params := url.Values{}
+	params.Set("state", state)
+	out, err := vc.do(ctx, voipmsMethodGetRateCentersUSA, params)
+	if err != nil {
+		return nil, err
+	}
+	records := []RateCenterRecord{}
+	switch centers := out["ratecenters"].(type) {
+	case []any:
+		for _, item := range centers {
+			if m, ok := item.(map[string]any); ok {
+				records = append(records, rateCenterRecordFromMap(m))
+			}
+		}
+	case map[string]any:
+		records = append(records, rateCenterRecordFromMap(centers))
+	}
+	return records, nil
+}
+
+// orderDIDOptions carries the orderDID params beyond the DID itself, so the
+// cobra layer can pass flag values straight in.
+type orderDIDOptions struct {
+	Routing     string
+	POP         string
+	Dialtime    string
+	CNAM        string
+	BillingType string
+}
+
+// orderVoipmsDID orders did via voipmsMethodOrderDID with the routing/pop/
+// dialtime/cnam/billing_type params from opts. Returns nil on status=success;
+// otherwise the do()-surfaced error (carrying the safe API status, e.g.
+// did_limit_reached — never the request URL or credentials).
+func orderVoipmsDID(ctx context.Context, vc *voipmsClient, did string, opts orderDIDOptions) error {
+	if did == "" {
+		return fmt.Errorf("did must not be blank")
+	}
+	params := url.Values{}
+	params.Set("did", did)
+	params.Set("routing", opts.Routing)
+	params.Set("pop", opts.POP)
+	params.Set("dialtime", opts.Dialtime)
+	params.Set("cnam", opts.CNAM)
+	params.Set("billing_type", opts.BillingType)
+	if _, err := vc.do(ctx, voipmsMethodOrderDID, params); err != nil {
+		return fmt.Errorf("order DID %s: %w", did, err)
+	}
+	return nil
+}
+
+// cancelVoipmsDID permanently releases did back to the VoIP.ms pool via
+// voipmsMethodCancelDID. Rejects a blank did before any network call — the
+// cobra layer additionally gates this behind --yes (see NewVoipmsCmd).
+func cancelVoipmsDID(ctx context.Context, vc *voipmsClient, did string) error {
+	if did == "" {
+		return fmt.Errorf("did must not be blank")
+	}
+	params := url.Values{}
+	params.Set("did", did)
+	if _, err := vc.do(ctx, voipmsMethodCancelDID, params); err != nil {
+		return fmt.Errorf("cancel DID %s: %w", did, err)
+	}
+	return nil
+}
+
+// --------------------------------------------------------------------------
 // Cobra command tree.
 
 // NewVoipmsCmd builds the "kv voipms" parent command, mirroring NewCodeCmd's
 // structure. Sub-commands: balance, route-did, set-caps, create-subaccount,
-// set-cid-prefix, clear-cid-prefix.
+// set-cid-prefix, clear-cid-prefix, search-dids, order-did, cancel-did.
 func NewVoipmsCmd(cfg *Config) *cobra.Command {
 	voipmsCmd := &cobra.Command{
 		Use:   "voipms",
 		Short: "Automate the API-drivable VoIP.ms provisioning steps (D-03)",
 		Long: "kv voipms wraps the repeatable, API-drivable VoIP.ms provisioning steps:\n" +
 			"reading account balance, routing a DID to the klanker-pbx subaccount,\n" +
-			"and (optionally) creating the subaccount. Per-call caps are NOT\n" +
+			"(optionally) creating the subaccount, and the full DID lifecycle —\n" +
+			"searching available numbers (search-dids), ordering one (order-did),\n" +
+			"and permanently releasing one (cancel-did). Per-call caps are NOT\n" +
 			"API-drivable (see `kv voipms set-caps` for where they are enforced).\n\n" +
 			"Portal-only security steps (2FA, international/premium lock, balance\n" +
 			"alerts, API IP-whitelist) are NOT automated here — see\n" +
@@ -728,6 +900,111 @@ func NewVoipmsCmd(cfg *Config) *cobra.Command {
 		},
 	}
 	voipmsCmd.AddCommand(clearCidPrefix)
+
+	var searchState, searchRatecenter string
+	searchDids := &cobra.Command{
+		Use:   "search-dids",
+		Short: "Search available USA DIDs, or list a state's rate centers",
+		Long: "Without --ratecenter, lists the USA rate centers available in --state\n" +
+			"so an operator can pick one. With --ratecenter, lists the available\n" +
+			"DIDs (with pricing) in that state/rate-center combination.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			if searchState == "" {
+				return fmt.Errorf("--state is required")
+			}
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
+			if err != nil {
+				return err
+			}
+			vc := newVoipmsClient(creds)
+			out := c.OutOrStdout()
+			if searchRatecenter == "" {
+				centers, err := getVoipmsRateCentersUSA(c.Context(), vc, searchState)
+				if err != nil {
+					return err
+				}
+				w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+				fmt.Fprintln(w, "RATECENTER\tAVAILABLE")
+				for _, r := range centers {
+					fmt.Fprintf(w, "%s\t%s\n", r.RateCenter, r.Available)
+				}
+				return w.Flush()
+			}
+			dids, err := searchVoipmsDIDsUSA(c.Context(), vc, searchState, searchRatecenter)
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(w, "DID\tRATECENTER\tPER-MIN/MO\tPER-MIN\tSMS\tMMS")
+			for _, r := range dids {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.DID, r.RateCenter, r.PerMinuteMonthly, r.PerMinuteRate, r.SMS, r.MMS)
+			}
+			return w.Flush()
+		},
+	}
+	searchDids.Flags().StringVar(&searchState, "state", "", "US state abbreviation to search (required)")
+	searchDids.Flags().StringVar(&searchRatecenter, "ratecenter", "", "rate center to search for available DIDs (omit to list rate centers for --state)")
+	voipmsCmd.AddCommand(searchDids)
+
+	var orderRouting, orderPOP, orderDialtime, orderCNAM, orderBillingType string
+	orderDid := &cobra.Command{
+		Use:   "order-did <did>",
+		Short: "Order a DID using today's live-proven defaults",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
+			if err != nil {
+				return err
+			}
+			vc := newVoipmsClient(creds)
+			opts := orderDIDOptions{
+				Routing:     orderRouting,
+				POP:         orderPOP,
+				Dialtime:    orderDialtime,
+				CNAM:        orderCNAM,
+				BillingType: orderBillingType,
+			}
+			if err := orderVoipmsDID(c.Context(), vc, args[0], opts); err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "ordered DID %s (routing=%s pop=%s)\n", args[0], orderRouting, orderPOP)
+			return nil
+		},
+	}
+	orderDid.Flags().StringVar(&orderRouting, "routing", "account:557010_klanker-pbx", "routing target for the new DID")
+	orderDid.Flags().StringVar(&orderPOP, "pop", "45", "VoIP.ms POP id to order the DID on")
+	orderDid.Flags().StringVar(&orderDialtime, "dialtime", "60", "dial timeout (seconds) before failover")
+	orderDid.Flags().StringVar(&orderCNAM, "cnam", "0", "enable CNAM (Caller ID Name) lookup (0/1)")
+	orderDid.Flags().StringVar(&orderBillingType, "billing-type", "1", "billing type (1=per-minute)")
+	voipmsCmd.AddCommand(orderDid)
+
+	var cancelYes bool
+	cancelDid := &cobra.Command{
+		Use:   "cancel-did <did>",
+		Short: "Permanently release a DID back to the VoIP.ms pool (irreversible)",
+		Long: "cancel-did releases a DID number back to the VoIP.ms pool. This is\n" +
+			"IRREVERSIBLE — the number cannot be reclaimed once cancelled. Requires\n" +
+			"--yes to proceed; refuses otherwise.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if !cancelYes {
+				return fmt.Errorf("cancel-did permanently releases DID %s back to the VoIP.ms pool — pass --yes to confirm", args[0])
+			}
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
+			if err != nil {
+				return err
+			}
+			vc := newVoipmsClient(creds)
+			if err := cancelVoipmsDID(c.Context(), vc, args[0]); err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "cancelled DID %s (released to the VoIP.ms pool)\n", args[0])
+			return nil
+		},
+	}
+	cancelDid.Flags().BoolVar(&cancelYes, "yes", false, "confirm the irreversible DID release")
+	voipmsCmd.AddCommand(cancelDid)
 
 	// cfg is accepted (mirroring NewCodeCmd's signature / root.go's uniform
 	// registration call) though unused today — no DynamoDB/table access is
