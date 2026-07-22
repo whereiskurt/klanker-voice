@@ -687,6 +687,353 @@ func TestVoipmsCidPrefixSubcommandsRegistered(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// searchVoipmsDIDsUSA / getVoipmsRateCentersUSA / orderVoipmsDID /
+// cancelVoipmsDID — the DID search/order/cancel lifecycle (TE5-01).
+
+// TestSearchVoipmsDIDsUSA_ArrayShape asserts searchVoipmsDIDsUSA sends
+// method=getDIDsUSA with state+ratecenter params and parses a canned "dids"
+// array into the expected records.
+func TestSearchVoipmsDIDsUSA_ArrayShape(t *testing.T) {
+	var gotQuery url.Values
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":[
+			{"did":"17254040001","ratecenter":"LAS VEGAS","state":"NV","perminute_monthly":"1.00","perminute_minute":"0.01","sms":"1","mms":"0"},
+			{"did":"17254040002","ratecenter":"LAS VEGAS","state":"NV","perminute_monthly":"1.00","perminute_minute":"0.01","sms":"1","mms":"0"}
+		]}`))
+	})
+
+	got, err := searchVoipmsDIDsUSA(t.Context(), vc, "NV", "LAS VEGAS")
+	if err != nil {
+		t.Fatalf("searchVoipmsDIDsUSA() error: %v", err)
+	}
+	if got := gotQuery.Get("method"); got != voipmsMethodGetDIDsUSA {
+		t.Errorf("method = %q, want %q", got, voipmsMethodGetDIDsUSA)
+	}
+	if got := gotQuery.Get("state"); got != "NV" {
+		t.Errorf("state param = %q, want %q", got, "NV")
+	}
+	if got := gotQuery.Get("ratecenter"); got != "LAS VEGAS" {
+		t.Errorf("ratecenter param = %q, want %q", got, "LAS VEGAS")
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	want := AvailableDIDRecord{DID: "17254040001", RateCenter: "LAS VEGAS", State: "NV", PerMinuteMonthly: "1.00", PerMinuteRate: "0.01", SMS: "1", MMS: "0"}
+	if got[0] != want {
+		t.Errorf("got[0] = %+v, want %+v", got[0], want)
+	}
+}
+
+// TestSearchVoipmsDIDsUSA_SingleObjectShape asserts the VoIP.ms single-result
+// quirk (dids is a bare object, not an array) yields exactly one record.
+func TestSearchVoipmsDIDsUSA_SingleObjectShape(t *testing.T) {
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":{"did":"17254040001","ratecenter":"LAS VEGAS","state":"NV","perminute_monthly":"1.00","perminute_minute":"0.01","sms":"1","mms":"0"}}`))
+	})
+
+	got, err := searchVoipmsDIDsUSA(t.Context(), vc, "NV", "LAS VEGAS")
+	if err != nil {
+		t.Fatalf("searchVoipmsDIDsUSA() error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	if got[0].DID != "17254040001" {
+		t.Errorf("got[0].DID = %q, want %q", got[0].DID, "17254040001")
+	}
+}
+
+// TestSearchVoipmsDIDsUSA_NoRatecenterOmitsParam asserts that when
+// ratecenter is empty, the ratecenter param is never sent.
+func TestSearchVoipmsDIDsUSA_NoRatecenterOmitsParam(t *testing.T) {
+	var gotQuery url.Values
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":[]}`))
+	})
+
+	if _, err := searchVoipmsDIDsUSA(t.Context(), vc, "NV", ""); err != nil {
+		t.Fatalf("searchVoipmsDIDsUSA() error: %v", err)
+	}
+	if _, present := gotQuery["ratecenter"]; present {
+		t.Errorf("ratecenter param present = %q, want it omitted when blank", gotQuery.Get("ratecenter"))
+	}
+}
+
+// TestSearchVoipmsDIDsUSA_RejectsBlankState asserts a blank state never
+// reaches the network layer.
+func TestSearchVoipmsDIDsUSA_RejectsBlankState(t *testing.T) {
+	called := false
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	if _, err := searchVoipmsDIDsUSA(t.Context(), vc, "", "LAS VEGAS"); err == nil {
+		t.Fatal("searchVoipmsDIDsUSA(\"\") returned nil error, want an error")
+	}
+	if called {
+		t.Fatal("searchVoipmsDIDsUSA(\"\") made an HTTP call, want it to reject before the network")
+	}
+}
+
+// TestSearchVoipmsDIDsUSA_FailureStatusIsError asserts a status=failure
+// envelope surfaces as a Go error.
+func TestSearchVoipmsDIDsUSA_FailureStatusIsError(t *testing.T) {
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"failure","error":"invalid_credentials"}`))
+	})
+
+	if _, err := searchVoipmsDIDsUSA(t.Context(), vc, "NV", "LAS VEGAS"); err == nil {
+		t.Fatal("searchVoipmsDIDsUSA() with status=failure returned nil error, want an error")
+	}
+}
+
+// TestGetVoipmsRateCentersUSA_BuildsRequest asserts getVoipmsRateCentersUSA
+// sends method=getRateCentersUSA with the state param and parses the
+// "ratecenters" array.
+func TestGetVoipmsRateCentersUSA_BuildsRequest(t *testing.T) {
+	var gotQuery url.Values
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","ratecenters":[
+			{"ratecenter":"LAS VEGAS","available":"1"},
+			{"ratecenter":"HENDERSON","available":"1"}
+		]}`))
+	})
+
+	got, err := getVoipmsRateCentersUSA(t.Context(), vc, "NV")
+	if err != nil {
+		t.Fatalf("getVoipmsRateCentersUSA() error: %v", err)
+	}
+	if got := gotQuery.Get("method"); got != voipmsMethodGetRateCentersUSA {
+		t.Errorf("method = %q, want %q", got, voipmsMethodGetRateCentersUSA)
+	}
+	if got := gotQuery.Get("state"); got != "NV" {
+		t.Errorf("state param = %q, want %q", got, "NV")
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	want := RateCenterRecord{RateCenter: "LAS VEGAS", Available: "1"}
+	if got[0] != want {
+		t.Errorf("got[0] = %+v, want %+v", got[0], want)
+	}
+}
+
+// TestGetVoipmsRateCentersUSA_RejectsBlankState asserts a blank state never
+// reaches the network layer.
+func TestGetVoipmsRateCentersUSA_RejectsBlankState(t *testing.T) {
+	called := false
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	if _, err := getVoipmsRateCentersUSA(t.Context(), vc, ""); err == nil {
+		t.Fatal("getVoipmsRateCentersUSA(\"\") returned nil error, want an error")
+	}
+	if called {
+		t.Fatal("getVoipmsRateCentersUSA(\"\") made an HTTP call, want it to reject before the network")
+	}
+}
+
+// TestOrderVoipmsDID_BuildsRequest is table-driven: it asserts orderVoipmsDID
+// serializes did/routing/pop/dialtime/cnam/billing_type from opts, and that a
+// {"status":"did_limit_reached",...} failure envelope surfaces as an error
+// whose message carries the status enum but leaks no credential (mirroring
+// TestResolveVoipmsCreds_SSMFallbackError's redaction assertion style).
+func TestOrderVoipmsDID_BuildsRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		responseJS string
+		wantErr    bool
+		wantErrSub string
+	}{
+		{
+			name:       "success",
+			responseJS: `{"status":"success"}`,
+			wantErr:    false,
+		},
+		{
+			name:       "did_limit_reached",
+			responseJS: `{"status":"did_limit_reached","message":"account DID limit reached"}`,
+			wantErr:    true,
+			wantErrSub: "did_limit_reached",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotQuery url.Values
+			vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.Query()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.responseJS))
+			})
+
+			opts := orderDIDOptions{
+				Routing:     "account:557010_klanker-pbx",
+				POP:         "45",
+				Dialtime:    "60",
+				CNAM:        "0",
+				BillingType: "1",
+			}
+			err := orderVoipmsDID(t.Context(), vc, "17254048283", opts)
+
+			if got := gotQuery.Get("method"); got != voipmsMethodOrderDID {
+				t.Errorf("method = %q, want %q", got, voipmsMethodOrderDID)
+			}
+			if got := gotQuery.Get("did"); got != "17254048283" {
+				t.Errorf("did param = %q, want %q", got, "17254048283")
+			}
+			if got := gotQuery.Get("routing"); got != "account:557010_klanker-pbx" {
+				t.Errorf("routing param = %q, want %q", got, "account:557010_klanker-pbx")
+			}
+			if got := gotQuery.Get("pop"); got != "45" {
+				t.Errorf("pop param = %q, want %q", got, "45")
+			}
+			if got := gotQuery.Get("dialtime"); got != "60" {
+				t.Errorf("dialtime param = %q, want %q", got, "60")
+			}
+			if got := gotQuery.Get("cnam"); got != "0" {
+				t.Errorf("cnam param = %q, want %q", got, "0")
+			}
+			if got := gotQuery.Get("billing_type"); got != "1" {
+				t.Errorf("billing_type param = %q, want %q", got, "1")
+			}
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("orderVoipmsDID() returned nil error, want an error")
+				}
+				msg := err.Error()
+				if !strings.Contains(msg, tt.wantErrSub) {
+					t.Errorf("orderVoipmsDID() error = %q, want it to contain %q", msg, tt.wantErrSub)
+				}
+				if strings.Contains(msg, "test-pass") || strings.Contains(msg, "api_password") {
+					t.Errorf("orderVoipmsDID() error leaked a credential: %q", msg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("orderVoipmsDID() error: %v", err)
+			}
+		})
+	}
+}
+
+// TestOrderVoipmsDID_RejectsBlankDid asserts a blank DID never reaches the
+// network layer.
+func TestOrderVoipmsDID_RejectsBlankDid(t *testing.T) {
+	called := false
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := orderVoipmsDID(t.Context(), vc, "", orderDIDOptions{}); err == nil {
+		t.Fatal("orderVoipmsDID(\"\") returned nil error, want an error")
+	}
+	if called {
+		t.Fatal("orderVoipmsDID(\"\") made an HTTP call, want it to reject before the network")
+	}
+}
+
+// TestCancelVoipmsDID_BuildsRequest asserts cancelVoipmsDID sends
+// method=cancelDID with the did param on success.
+func TestCancelVoipmsDID_BuildsRequest(t *testing.T) {
+	var gotQuery url.Values
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success"}`))
+	})
+
+	if err := cancelVoipmsDID(t.Context(), vc, "17254048283"); err != nil {
+		t.Fatalf("cancelVoipmsDID() error: %v", err)
+	}
+	if got := gotQuery.Get("method"); got != voipmsMethodCancelDID {
+		t.Errorf("method = %q, want %q", got, voipmsMethodCancelDID)
+	}
+	if got := gotQuery.Get("did"); got != "17254048283" {
+		t.Errorf("did param = %q, want %q", got, "17254048283")
+	}
+}
+
+// TestCancelVoipmsDID_RejectsBlankDid asserts a blank DID never reaches the
+// network layer (mirrors TestVoipmsRouteDidRejectsBlankDid).
+func TestCancelVoipmsDID_RejectsBlankDid(t *testing.T) {
+	called := false
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	if err := cancelVoipmsDID(t.Context(), vc, ""); err == nil {
+		t.Fatal("cancelVoipmsDID(\"\") returned nil error, want an error")
+	}
+	if called {
+		t.Fatal("cancelVoipmsDID(\"\") made an HTTP call, want it to reject before the network")
+	}
+}
+
+// --------------------------------------------------------------------------
+// search-dids / order-did / cancel-did subcommand registration (TE5-01).
+
+// TestVoipmsSearchOrderCancelSubcommandsRegistered extends
+// TestVoipmsCmdHelpListsSubcommands to assert search-dids, order-did, and
+// cancel-did are registered alongside the existing sub-commands.
+func TestVoipmsSearchOrderCancelSubcommandsRegistered(t *testing.T) {
+	cfg := &Config{}
+	voipmsCmd := NewVoipmsCmd(cfg)
+
+	want := map[string]bool{
+		"search-dids": false,
+		"order-did":   false,
+		"cancel-did":  false,
+	}
+	for _, sub := range voipmsCmd.Commands() {
+		name := sub.Name()
+		if _, ok := want[name]; ok {
+			want[name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("kv voipms is missing expected sub-command %q", name)
+		}
+	}
+}
+
+// TestVoipmsCancelDidRefusesWithoutYes asserts cancel-did's RunE returns an
+// error and makes no HTTP call when --yes is not set — the guard against an
+// accidental irreversible DID release.
+func TestVoipmsCancelDidRefusesWithoutYes(t *testing.T) {
+	t.Setenv("VOIPMS_API_USERNAME", "test-user")
+	t.Setenv("VOIPMS_API_PASSWORD", "test-pass")
+
+	cfg := &Config{}
+	voipmsCmd := NewVoipmsCmd(cfg)
+	for _, sub := range voipmsCmd.Commands() {
+		if sub.Name() != "cancel-did" {
+			continue
+		}
+		err := sub.RunE(sub, []string{"17254048283"})
+		if err == nil {
+			t.Fatal("cancel-did without --yes returned nil error, want an error")
+		}
+		if !strings.Contains(err.Error(), "--yes") {
+			t.Errorf("cancel-did error = %q, want it to mention --yes", err)
+		}
+		return
+	}
+	t.Fatal("cancel-did sub-command not found")
+}
+
+// --------------------------------------------------------------------------
 // resolveVoipmsCreds — env-first, SSM-fallback credential resolution (D-04).
 
 // TestResolveVoipmsCreds_EnvWins asserts that when both VOIPMS_API_USERNAME
