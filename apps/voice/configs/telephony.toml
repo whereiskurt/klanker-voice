@@ -131,7 +131,7 @@ otp_only_dids = ["7254043234", "7254043283"]
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"     # NAME only; token VALUE from env/SSM at call time (D-09)
 code_env_var = "CTF_ANNOUNCEMENT_CODE"  # NAME only; trigger VALUE lives in SSM (/kmv/secrets/use1/ctf/announcement_code), never TOML (D-09)
-line_template = "Hey! Let me get you that O T P. {code}. That's {code}."
+line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
 # did = "7254043234"   # informational only -- NOT visible at the edge (all DIDs arrive as the sub-account 557010_klanker-pbx)
 # SMS-during-call (quick task 260716-hg5 -- design doc docs/superpowers/specs/
 # 2026-07-16-ctf-otp-sms-during-call-design.md): text the caller a written copy
