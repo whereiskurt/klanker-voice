@@ -116,6 +116,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import re
 import time
 import uuid
@@ -196,48 +197,54 @@ CTF_OTP_FETCH_TIMEOUT_SECONDS = 3.0
 #: spoken-twice readout is never cut off mid-number.
 ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS = 12.0
 
-#: How each digit of the slow, write-it-down OTP read is separated so the
-#: caller can copy it (the operator asked for it to "slow WAY down").
-#: IMPORTANT: this uses ONLY plain punctuation (period + ellipsis) that TTS
-#: renders as a PAUSE and never speaks aloud. An earlier version used
-#: ElevenLabs ``<break time="Xs" />`` tags, but the streaming ElevenLabs path
-#: pipecat uses does NOT interpret them -- it read the tag markup ALOUD
-#: ("borked" readout). NEVER put angle-bracket markup in a spoken line here.
-#: Tunable -- add more dots / periods for a slower read.
-ANNOUNCEMENT_SLOW_DIGIT_SEP = ". ... "
+#: How each digit of the comma-paced "reasonable pace" OTP read is separated
+#: (v6 gag rework, quick task 260722-ri1, operator-approved audition take)
+#: so the caller can copy it down. IMPORTANT: this uses ONLY plain
+#: punctuation (comma + space) that TTS renders as a brief pause and never
+#: speaks aloud. An earlier version used ElevenLabs ``<break time="Xs" />``
+#: tags, but the streaming ElevenLabs path pipecat uses does NOT interpret
+#: them -- it read the tag markup ALOUD ("borked" readout). NEVER put
+#: angle-bracket markup in a spoken line here. Feeds the ``{code}``
+#: placeholder AND Segment A of the gag tail. Tunable.
+ANNOUNCEMENT_SLOW_DIGIT_SEP = ", "
 
-#: Rough spoken time (seconds) per digit in the slow read, used ONLY to size
-#: the teardown grace so the spoken-twice read is never cut off.
-ANNOUNCEMENT_SLOW_DIGIT_SECONDS = 0.9
+#: How each digit of the FASTER, space-paced re-read is separated (v6 gag
+#: rework, quick task 260722-ri1) -- feeds the ``{code_fast}`` placeholder
+#: and every jumble segment (B/C/D) in :func:`_build_accel_tail`. Plain
+#: punctuation only (a bare space) -- NEVER markup tags.
+ANNOUNCEMENT_FAST_DIGIT_SEP = " "
 
-#: The panic-readout gag's accelerating passes (quick task 260716-2px; extended
-#: to 6 passes 2026-07-17 per operator: "say it 5-6x really fast, disorienting
-#: but with a rhythm"), as PLAIN-PUNCTUATION separators (again: NO markup tags),
-#: rendered in order after the slow x2 read. One comma-paced pass to seat the
-#: digits, then FIVE fast space-paced passes -- the same six digits rattling by
-#: back-to-back is the disorienting rhythm. Every separator is NON-empty so the
-#: digits stay separated and ElevenLabs never reads the code as one number.
-#: Tunable: add/remove entries to change the pass count; keep them non-empty.
-ANNOUNCEMENT_ACCEL_SEPS: tuple[str, ...] = (", ", " ", " ", " ", " ", " ")
+#: Rough spoken time (seconds) per digit in EITHER paced read, used ONLY to
+#: size the teardown grace so the two paced reads are never cut off.
+#: Reduced 0.9 -> 0.4 (v6 gag rework, quick task 260722-ri1): the comma pace
+#: is far faster than the old very-slow "write it down" read it replaces.
+ANNOUNCEMENT_SLOW_DIGIT_SECONDS = 0.4
 
-#: Spoken copy for the panic-readout gag tail (quick task 260716-2px):
-#: after the slow x2 OTP read, the agent asks if the caller got it, denies
-#: them a moment, re-reads the digits in accelerating passes, then cuts
-#: straight into a sign-off and hangs up immediately (the accel-to-sign-off
-#: cut is abrupt -- no pause punctuation before it).
+#: Spoken copy for the v6 announcement gag tail (quick task 260722-ri1,
+#: operator-approved audition take -- replaces the prior 6-fast-pass
+#: "accelerating rattle" gag from quick task 260716-2px/260716-3xx): after
+#: the two paced OTP reads (comma-paced ``{code}``, then space-paced
+#: ``{code_fast}``), the agent asks if the caller got it, then reads a
+#: deterministic "wheels-come-off" digit derangement jumble built ONLY from
+#: the code's own digits (Segment A: first three digits, comma-paced;
+#: Segment B: the last three digits, shuffled + space-paced, guaranteed to
+#: differ from the true order; Segment C: all six digits, shuffled +
+#: space-paced, guaranteed to differ from the true code; Segment D: a
+#: 14-digit space-paced runaway drawn from the code's own digit multiset),
+#: then a long six-group pre-reveal pause, then the punchline/sign-off.
 ANNOUNCEMENT_DIDYOUGET_COPY = "Did you get that?"
-ANNOUNCEMENT_NO_COPY = "No?"
 ANNOUNCEMENT_BYE_COPY = "Good luck! Hack the planet!"
 
-#: Grace-period budget (seconds) reserved for the panic-readout gag tail
-#: ("Did you get that? ... No?" + the accelerating digit passes + the
-#: additional pre-punchline pause + the sign-off) on top of the base
-#: announcement grace and the slow x2 digit-pause time, so
-#: ``_gate_announcement``'s teardown never cuts the gag off mid-playback.
-#: Bumped 8.0 -> 10.0 (2026-07-16) to cover the ANNOUNCEMENT_PUNCHLINE_PAUSE
-#: beat before "Just kidding...", then 10.0 -> 18.0 (2026-07-17) to cover the
-#: 6-pass fast digit readout (ANNOUNCEMENT_ACCEL_SEPS grew 2 -> 6 passes).
-ANNOUNCEMENT_GAG_TAIL_SECONDS = 18.0
+#: Grace-period budget (seconds) reserved for the v6 gag tail (quick task
+#: 260722-ri1) -- "Did you get that? ..." + the A/B/C/D jumble (~26 total
+#: space/comma-paced spoken digits) + the six-group pre-reveal pause + the
+#: reveal/sign-off -- on top of the base announcement grace and the two
+#: paced-read digit-pause time, so ``_gate_announcement``'s teardown never
+#: cuts the gag off mid-playback. The operator-auditioned v6 clip ran ~18s
+#: total with the tail roughly half of that; grace only bounds teardown
+#: (never audible to the caller), so a generous 16.0s is set here rather
+#: than shaving it tight.
+ANNOUNCEMENT_GAG_TAIL_SECONDS = 16.0
 
 #: --- CTF OTP SMS-during-call (quick task 260716-hg5) -------------------------
 #: The design doc docs/superpowers/specs/2026-07-16-ctf-otp-sms-during-call-
@@ -289,21 +296,23 @@ ANNOUNCEMENT_SMS_BODY_TEMPLATE = (
 ANNOUNCEMENT_SMS_SECOND_BODY = "Hack the planet!"
 
 #: The spoken closing beat that REPLACES ``ANNOUNCEMENT_BYE_COPY`` ONLY when the
-#: caller was actually texted (sms-eligible). The panic-readout tease is
-#: unchanged; this is the payoff. Plain punctuation only -- NO markup tags (the
-#: streaming ElevenLabs path reads markup aloud). Tunable. (7-bit ASCII: the
-#: prior em-dash was fine for TTS but this is cleaner and matches the operator's
-#: exact wording.)
-ANNOUNCEMENT_SMS_PUNCHLINE_COPY = "Just kidding. Check your phone. Hack the planet!"
+#: caller was actually texted (sms-eligible). The jumble tease is unchanged;
+#: this is the payoff. Plain punctuation only -- NO markup tags (the streaming
+#: ElevenLabs path reads markup aloud). Re-worded for the v6 gag rework (quick
+#: task 260722-ri1, operator-approved audition take). 7-bit ASCII throughout.
+ANNOUNCEMENT_SMS_PUNCHLINE_COPY = "Just kidding. SMS on the way. Hack the planet."
 
-#: An ADDITIONAL dramatic pause inserted AFTER the last accelerated digit and
-#: BEFORE the "Just kidding..." punchline (operator request 2026-07-16) -- a
-#: deliberate beat so the "just kidding" lands. Applied ONLY to the sms-eligible
-#: punchline (the legacy ``ANNOUNCEMENT_BYE_COPY`` keeps its abrupt cut). Plain
-#: punctuation only (period + ellipses that TTS renders as SILENCE and never
-#: speaks) -- NEVER markup tags. Tunable: add/remove ellipses to lengthen the
-#: beat. Its spoken time is covered by ``ANNOUNCEMENT_GAG_TAIL_SECONDS`` below.
-ANNOUNCEMENT_PUNCHLINE_PAUSE = ". ... ... "
+#: The long six-group pre-reveal pause (v6 gag rework, quick task 260722-ri1,
+#: operator-approved audition take -- was a shorter two-ellipsis beat before
+#: this rework) inserted AFTER the last runaway digit (Segment D) and BEFORE
+#: the reveal/punchline -- a deliberate long beat so the "just kidding" lands.
+#: Now applies to BOTH closings (the sms-eligible payoff AND the legacy bye)
+#: -- unlike the prior version, which paused only for the sms-eligible path.
+#: Plain punctuation only (period + six "... " ellipsis groups that TTS
+#: renders as SILENCE and never speaks) -- NEVER markup tags. Operator-tuned;
+#: do not shorten. Its spoken time is covered by
+#: ``ANNOUNCEMENT_GAG_TAIL_SECONDS`` below.
+ANNOUNCEMENT_PUNCHLINE_PAUSE = ". ... ... ... ... ... ... "
 
 #: Bound on the raw trailing ARI DTMF digit buffer (quick task 260716-1g0)
 #: used ONLY for announcement-code suffix matching -- separate from
@@ -364,63 +373,114 @@ async def _fetch_tel_token(url: str, headers: dict[str, str]) -> str | None:
 
 
 def _pace_digits_slow(code: str) -> str:
-    """Digit-space ``code`` for the slow, write-it-down read (quick task
-    260715-oq0; markup-free rewrite in quick task 260716-3xx): each digit is
-    separated by ``ANNOUNCEMENT_SLOW_DIGIT_SEP`` -- plain punctuation
-    (``". ... "``: a period + an ellipsis) that TTS renders as a PAUSE and
-    NEVER speaks aloud (e.g. ``"123456"`` -> ``"1. ... 2. ... 3. ... 4. ...
-    5. ... 6"``). NO ``<break>`` markup -- the streaming ElevenLabs path reads
-    those tags aloud."""
+    """Digit-space ``code`` for the comma-paced "reasonable pace" read (quick
+    task 260715-oq0; markup-free rewrite in quick task 260716-3xx; re-paced
+    to a comma separator for the v6 gag rework, quick task 260722-ri1): each
+    digit is separated by ``ANNOUNCEMENT_SLOW_DIGIT_SEP`` -- plain
+    punctuation (``", "``: a comma + space) that TTS renders as a brief pause
+    and NEVER speaks aloud (e.g. ``"123456"`` -> ``"1, 2, 3, 4, 5, 6"``). NO
+    ``<break>`` markup -- the streaming ElevenLabs path reads those tags
+    aloud. Feeds the ``{code}`` placeholder."""
     return ANNOUNCEMENT_SLOW_DIGIT_SEP.join(code)
 
 
+def _pace_digits_fast(code: str) -> str:
+    """Digit-space ``code`` for the faster, space-paced re-read (v6 gag
+    rework, quick task 260722-ri1): each digit is separated by
+    ``ANNOUNCEMENT_FAST_DIGIT_SEP`` (a bare space) -- plain punctuation,
+    NEVER markup. Feeds the ``{code_fast}`` placeholder and every jumble
+    segment (B/C/D) in :func:`_build_accel_tail`."""
+    return ANNOUNCEMENT_FAST_DIGIT_SEP.join(code)
+
+
 def _build_accel_tail(code: str, closing: str) -> str:
-    """Build the panic-readout gag tail (quick task 260716-2px; markup-free
-    rewrite in 260716-3xx): "Did you get that? ... No?" followed by
-    accelerating re-reads of ``code`` using the shrinking plain-punctuation
-    separators in ``ANNOUNCEMENT_ACCEL_SEPS`` (comma-paced then space-paced),
-    then an abrupt ``closing`` sign-off. Digits are ALWAYS separated by a comma
-    or a space -- never concatenated -- so ElevenLabs never reads the code as
-    one number. NO markup tags anywhere, and NO pause punctuation immediately
-    before ``closing`` -- the cut into it must be abrupt. ``closing`` is
-    ``ANNOUNCEMENT_BYE_COPY`` normally, or ``ANNOUNCEMENT_SMS_PUNCHLINE_COPY``
-    when the caller was texted (quick task 260716-hg5)."""
-    passes = [sep.join(code) for sep in ANNOUNCEMENT_ACCEL_SEPS]
-    accel = " ".join(passes)
+    """Build the v6 announcement gag tail (quick task 260722-ri1,
+    operator-approved audition take -- replaces the prior 6-fast-pass
+    "accelerating rattle" gag from quick task 260716-2px/260716-3xx):
+    "Did you get that? ..." followed by a deterministic "wheels-come-off"
+    digit derangement jumble built ONLY from ``code``'s own digits, then a
+    cut into ``closing`` (which already carries the six-group pre-reveal
+    pause prepended -- see :func:`_build_announcement_script`).
+
+    The jumble has four segments, all seeded off ``random.Random(code)`` so
+    the SAME code always produces byte-identical output (T-RI1-03) -- no
+    call-path global ``random`` state:
+
+    - Segment A: the first three digits, comma-paced, with a trailing
+      ", " (e.g. ``"8, 3, 0, "``).
+    - Segment B: the last three digits, shuffled + space-paced, guaranteed
+      to differ from the true digit order (a deterministic rotate-by-one
+      fix-up if the shuffle happens to equal it), followed directly by
+      ``"... wait. "``.
+    - Segment C: all six digits, shuffled + space-paced, guaranteed to
+      differ from the true code (same rotate-by-one fix-up).
+    - Segment D: a 14-digit space-paced "runaway" -- each digit drawn via
+      ``rng.choice`` from ``code``'s own digit multiset (never a foreign
+      digit), so the whole tail stays "almost the code" without ever
+      reading it back cleanly.
+
+    Digits are ALWAYS separated by a comma or a space -- never concatenated
+    -- so ElevenLabs never reads the code (or the jumble) as one bare
+    number. NO markup tags anywhere. ``closing`` is ``ANNOUNCEMENT_BYE_COPY``
+    (pause-prefixed) normally, or the pause-prefixed
+    ``ANNOUNCEMENT_SMS_PUNCHLINE_COPY`` when the caller was texted (quick
+    task 260716-hg5)."""
+    rng = random.Random(code)
+
+    seg_a = ANNOUNCEMENT_SLOW_DIGIT_SEP.join(code[:3]) + ANNOUNCEMENT_SLOW_DIGIT_SEP
+
+    last_three = list(code[-3:])
+    shuffled_last_three = last_three.copy()
+    rng.shuffle(shuffled_last_three)
+    if shuffled_last_three == last_three:
+        shuffled_last_three = shuffled_last_three[1:] + shuffled_last_three[:1]
+    seg_b = ANNOUNCEMENT_FAST_DIGIT_SEP.join(shuffled_last_three) + "... wait. "
+
+    all_six = list(code)
+    shuffled_all_six = all_six.copy()
+    rng.shuffle(shuffled_all_six)
+    if shuffled_all_six == all_six:
+        shuffled_all_six = shuffled_all_six[1:] + shuffled_all_six[:1]
+    seg_c = ANNOUNCEMENT_FAST_DIGIT_SEP.join(shuffled_all_six)
+
+    seg_d = ANNOUNCEMENT_FAST_DIGIT_SEP.join(rng.choice(code) for _ in range(14))
+
     return (
         f"{ANNOUNCEMENT_DIDYOUGET_COPY} ... "
-        f"{ANNOUNCEMENT_NO_COPY} {accel} {closing}"
+        f"{seg_a}{seg_b}{seg_c} {seg_d}{closing}"
     )
 
 
 def _build_announcement_script(template: str, code: str, sms_eligible: bool = False) -> str:
-    """Substitute the digit-spaced ``code`` into every ``{code}`` occurrence
-    of ``template`` (quick task 260715-oq0; slow x2 read), then append the
-    panic-readout gag tail (quick task 260716-2px): "Did you get that? ...
-    No?" -> ~3 accelerating digit passes -> an abrupt sign-off. All one
-    string, spoken as a single TTS utterance via ``speak_goodbye`` -- no
-    multi-utterance sequencing. ``str.replace`` substitutes EVERY ``{code}``
-    occurrence, matching the design's "speak it twice" template shape.
+    """Substitute the paced ``code`` into ``template``'s ``{code}`` (comma
+    pace, quick task 260715-oq0, re-paced 260722-ri1) and ``{code_fast}``
+    (space pace, v6 gag rework, quick task 260722-ri1) placeholders, then
+    append the v6 announcement gag tail (quick task 260722-ri1,
+    operator-approved audition take): "Did you get that? ..." -> a
+    deterministic A/B/C/D digit-jumble derangement built from ``code``'s own
+    digits -> a long six-group pre-reveal pause -> the reveal/sign-off. All
+    one string, spoken as a single TTS utterance via ``speak_goodbye`` -- no
+    multi-utterance sequencing. ``{code}`` is substituted first; ``{code_fast}``
+    is not matched by the ``{code}`` literal, so substitution order is safe.
 
-    Quick task 260716-hg5: when ``sms_eligible`` is True (the caller was
-    texted a written copy of the code), the sign-off becomes the "check your
-    phone" punchline (``ANNOUNCEMENT_SMS_PUNCHLINE_COPY``). ``sms_eligible``
-    defaults to False so the legacy output is BYTE-IDENTICAL to before
-    (``ANNOUNCEMENT_BYE_COPY``) -- no "check your phone" promise for a caller
-    we could not text. A standalone, pure, module-level function so it's
-    unit-testable without a call (no controller/ARI/pipeline dependency)."""
-    # Operator request 2026-07-16: for the sms-eligible payoff, add a dramatic
-    # pause AFTER the last accelerated digit and THEN the "Just kidding..."
-    # punchline. The legacy bye keeps its abrupt cut (no pause). The pause is
-    # plain-punctuation silence prepended to the closing, so it lands between
-    # the last digit and the punchline in ``_build_accel_tail``'s
-    # ``{accel} {closing}`` join.
-    closing = (
-        ANNOUNCEMENT_PUNCHLINE_PAUSE + ANNOUNCEMENT_SMS_PUNCHLINE_COPY
+    Quick task 260716-hg5 (re-worded 260722-ri1): when ``sms_eligible`` is
+    True (the caller was texted a written copy of the code), the sign-off
+    becomes the "SMS on the way" punchline (``ANNOUNCEMENT_SMS_PUNCHLINE_COPY``).
+    ``sms_eligible`` defaults to False, in which case the sign-off is
+    ``"Just kidding. " + ANNOUNCEMENT_BYE_COPY`` -- a caller who was NOT
+    texted must NEVER hear "SMS on the way" (T-RI1-02). Both branches now
+    get the six-group ``ANNOUNCEMENT_PUNCHLINE_PAUSE`` prepended. A
+    standalone, pure, module-level function so it's unit-testable without a
+    call (no controller/ARI/pipeline dependency)."""
+    closing = ANNOUNCEMENT_PUNCHLINE_PAUSE + (
+        ANNOUNCEMENT_SMS_PUNCHLINE_COPY
         if sms_eligible
-        else ANNOUNCEMENT_BYE_COPY
+        else "Just kidding. " + ANNOUNCEMENT_BYE_COPY
     )
-    return template.replace("{code}", _pace_digits_slow(code)) + " " + _build_accel_tail(code, closing)
+    substituted = template.replace("{code}", _pace_digits_slow(code)).replace(
+        "{code_fast}", _pace_digits_fast(code)
+    )
+    return substituted + " " + _build_accel_tail(code, closing)
 
 
 async def _fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
