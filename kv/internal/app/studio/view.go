@@ -50,6 +50,13 @@ type AssembleInput struct {
 	// contract intact.
 	InboundDIDs []InboundDID
 
+	// Games is the quick-task-260727-pdh phone-games list, already parsed +
+	// env-annotated by the caller (server.go's assembleConfig, via
+	// RepoFiles.ReadTelephonyGames + AnnotateGameEnv) — AssembleConfig only
+	// carries it through into the ConfigView, mirroring InboundDIDs' own
+	// already-assembled-by-caller shape.
+	Games []GameEntry
+
 	// DynamoErr, when non-nil, short-circuits assembly: AssembleConfig
 	// returns Meta + a structured ErrorBanner and empty (non-nil) Rules/
 	// DIDs/Knowledge/Secrets — never a partial or blank view (spec §8).
@@ -92,6 +99,7 @@ func AssembleConfig(ctx context.Context, in AssembleInput) ConfigView {
 			Knowledge:   []KnowledgePack{},
 			Secrets:     []SecretRef{},
 			InboundDIDs: []InboundDID{},
+			Games:       []GameEntry{},
 			CompilesTo:  compilesToMap(),
 			Error: &ErrorBanner{
 				Store:   "dynamodb",
@@ -165,6 +173,11 @@ func AssembleConfig(ctx context.Context, in AssembleInput) ConfigView {
 		inboundDIDs = []InboundDID{}
 	}
 
+	games := in.Games
+	if games == nil {
+		games = []GameEntry{}
+	}
+
 	return ConfigView{
 		Meta:        meta,
 		Rules:       applyRuleOrder(rules, in.RuleOrder),
@@ -172,6 +185,7 @@ func AssembleConfig(ctx context.Context, in AssembleInput) ConfigView {
 		Knowledge:   knowledge,
 		Secrets:     ReadSecretRefs(in.GateMode),
 		InboundDIDs: inboundDIDs,
+		Games:       games,
 		CompilesTo:  compilesToMap(),
 	}
 }
@@ -255,6 +269,10 @@ func compilesToMap() map[string]string {
 		"did.defaultRule":         "YAML (apps/voice/configs/studio/dids.yaml)",
 		"did.greeting":            "YAML (apps/voice/configs/studio/dids.yaml)",
 		"did.routing":             "VoIP.ms (live account state; not persisted locally)",
+		"game.dids":               "TOML (apps/voice/configs/telephony.toml [[telephony.announcement]].dids)",
+		"game.codeEnvVar":         "TOML (apps/voice/configs/telephony.toml [[telephony.announcement]].code_env_var — NAME only; value in SSM)",
+		"game.wordsEnvVar":        "TOML (apps/voice/configs/telephony.toml [[telephony.announcement]].words_env_var — NAME only; value in SSM)",
+		"game.smsReplyDids":       "TOML (apps/voice/configs/telephony.toml [[telephony.announcement]].sms_reply_dids)",
 	}
 }
 

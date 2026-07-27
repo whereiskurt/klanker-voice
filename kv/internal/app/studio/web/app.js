@@ -1153,6 +1153,51 @@
     });
   }
 
+  /* ---------------- Phone games (quick task 260727-pdh) ---------------- */
+  //
+  // Read-only: one row per [[telephony.announcement]] entry in
+  // apps/voice/configs/telephony.toml, sourced via cfg.games
+  // (studio.ParseTelephonyGames + studio.AnnotateGameEnv, server-side).
+  // Prints env var NAMES + set/unset status lamps only -- never a secret
+  // value. Modelled directly on renderDids() above: same row-construction
+  // helpers, same lamp element for status, same empty-state hint line.
+
+  function renderGames(cfg) {
+    var list = $("#gameList");
+    if (!list) return;
+    list.textContent = "";
+    var games = cfg.games || [];
+
+    if (!games.length) {
+      list.appendChild(text("div", "hint", "No phone games found in telephony.toml."));
+      return;
+    }
+
+    games.forEach(function (g) {
+      var row = el("div", "didrow");
+      row.appendChild(text("span", "ic num", "☎"));
+      var body = el("div");
+      var scope = g.dids && g.dids.length ? g.dids.join(", ") : "global";
+      body.appendChild(text("div", "num", scope));
+      var wordsLabel = g.wordsEnvVar || "(none)";
+      body.appendChild(
+        text(
+          "div",
+          "dl",
+          "code " + g.codeEnvVar + " · words " + wordsLabel + " · sms " + (g.smsReplyDids && g.smsReplyDids.length ? g.smsReplyDids.join(", ") : "none")
+        )
+      );
+      row.appendChild(body);
+      var da = el("div", "da");
+      da.appendChild(lampEl(g.codeStatus === "set" ? "live" : "block", "code " + (g.codeStatus || "n/a")));
+      if (g.wordsEnvVar) {
+        da.appendChild(lampEl(g.wordsStatus === "set" ? "live" : "block", "words " + (g.wordsStatus || "n/a")));
+      }
+      row.appendChild(da);
+      list.appendChild(row);
+    });
+  }
+
   /* ---------------- DID manager modal (DID-01/02) ---------------- */
   //
   // Distinct from renderDids() above: that renders cfg.dids, the §23
@@ -2916,6 +2961,7 @@
     renderSummary(cfg);
     renderRules(cfg);
     renderDids(cfg);
+    renderGames(cfg);
     renderPacks(cfg);
     renderKeys(cfg);
     renderProviderKeys();

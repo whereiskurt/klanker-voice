@@ -23,6 +23,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/spf13/cobra"
+
+	"github.com/whereiskurt/klanker-voice/kv/internal/app/studio"
 )
 
 // --------------------------------------------------------------------------
@@ -378,6 +380,25 @@ type TelephonyListReport struct {
 	DIDs        []PhoneMappingRecord `json:"dids"`
 	Secrets     SecretsReport        `json:"secrets"`
 	GateConfig  GateConfigReport     `json:"gateConfig"`
+	// Games is the quick-task-260727-pdh phone-games section — one row per
+	// [[telephony.announcement]] entry, shared with kv studio via the same
+	// studio.ParseTelephonyGames/studio.AnnotateGameEnv parser (no
+	// duplicated TOML scanning). Always a non-nil (possibly empty) slice.
+	Games []studio.GameEntry `json:"games"`
+}
+
+// readTelephonyGames parses configPath's [[telephony.announcement]] blocks
+// via studio.ParseTelephonyGames and annotates env status via
+// studio.AnnotateGameEnv, degrading ANY error (missing/unreadable file) to
+// an empty slice — never a returned error, matching how
+// readTelephonySecrets/readInboundDIDs already refuse to let one section's
+// failure kill the whole report.
+func readTelephonyGames(configPath string) []studio.GameEntry {
+	games, err := studio.ParseTelephonyGames(configPath)
+	if err != nil {
+		return []studio.GameEntry{}
+	}
+	return studio.AnnotateGameEnv(games)
 }
 
 // defaultTelephonyConfigPath is the default --config path, relative to the
@@ -462,6 +483,7 @@ func NewTelephonyCmd(cfg *Config) *cobra.Command {
 				DIDs:        dids,
 				Secrets:     secrets,
 				GateConfig:  gateConfig,
+				Games:       readTelephonyGames(configPath),
 			}
 			return printTelephony(c, report, asJSON)
 		},
@@ -519,12 +541,38 @@ func printTelephony(c *cobra.Command, report TelephonyListReport, asJSON bool) e
 	fmt.Fprintln(out, "\nGate config:")
 	if !report.GateConfig.Found {
 		fmt.Fprintln(out, "  config not found")
+	} else {
+		printGateField(out, "gate_mode", report.GateConfig.GateMode)
+		printGateField(out, "require_gate", report.GateConfig.RequireGate)
+		printGateField(out, "gate_window_seconds", report.GateConfig.GateWindowSeconds)
+		printGateField(out, "unlock_tier_id", report.GateConfig.UnlockTierID)
+	}
+
+	fmt.Fprintln(out, "\nPhone games (quick task 260727-pdh):")
+	if len(report.Games) == 0 {
+		fmt.Fprintln(out, "  no [[telephony.announcement]] entries found")
 		return nil
 	}
-	printGateField(out, "gate_mode", report.GateConfig.GateMode)
-	printGateField(out, "require_gate", report.GateConfig.RequireGate)
-	printGateField(out, "gate_window_seconds", report.GateConfig.GateWindowSeconds)
-	printGateField(out, "unlock_tier_id", report.GateConfig.UnlockTierID)
+	gw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(gw, "DIDS\tCODE ENV VAR\tCODE STATUS\tWORDS ENV VAR\tWORDS STATUS\tSMS REPLY DIDS")
+	for _, g := range report.Games {
+		dids := strings.Join(g.DIDs, ",")
+		if dids == "" {
+			dids = "global"
+		}
+		wordsEnvVar := g.WordsEnvVar
+		wordsStatus := g.WordsStatus
+		if wordsEnvVar == "" {
+			wordsEnvVar = "(none)"
+			wordsStatus = "-"
+		}
+		fmt.Fprintf(gw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			dids, g.CodeEnvVar, g.CodeStatus, wordsEnvVar, wordsStatus, strings.Join(g.SmsReplyDIDs, ","))
+	}
+	if err := gw.Flush(); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "  (status reflects THIS shell's environment -- deployed values live in SSM via telephony-edge's task definition)")
 	return nil
 }
 

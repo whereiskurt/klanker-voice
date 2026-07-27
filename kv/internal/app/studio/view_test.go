@@ -282,6 +282,49 @@ func TestAssembleConfig_NilInboundDIDsIsNonNilEmpty(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// Games (quick task 260727-pdh)
+
+func TestAssembleConfig_CarriesGamesThrough(t *testing.T) {
+	in := goldenInput()
+	in.Games = []GameEntry{
+		{CodeEnvVar: "CTF_ANNOUNCEMENT_CODE_UCTF", WordsEnvVar: "CTF_ANNOUNCEMENT_WORDS_UCTF"},
+	}
+
+	view := AssembleConfig(context.Background(), in)
+
+	if len(view.Games) != 1 || view.Games[0].CodeEnvVar != "CTF_ANNOUNCEMENT_CODE_UCTF" {
+		t.Errorf("view.Games = %+v, want the input's Games carried through", view.Games)
+	}
+}
+
+// TestAssembleConfig_NilGamesIsNonNilEmpty asserts the "never nil" contract
+// holds for Games too, matching Rules/DIDs/Knowledge/Secrets/InboundDIDs.
+func TestAssembleConfig_NilGamesIsNonNilEmpty(t *testing.T) {
+	view := AssembleConfig(context.Background(), goldenInput())
+	if view.Games == nil {
+		t.Error("view.Games is nil, want a non-nil (possibly empty) slice")
+	}
+}
+
+// TestAssembleConfig_ErrorBannerPathGamesNonNilEmpty asserts Games is also
+// non-nil (empty) on the DynamoErr short-circuit path -- never a partial or
+// blank view (spec §8), same posture as every other slice field there.
+func TestAssembleConfig_ErrorBannerPathGamesNonNilEmpty(t *testing.T) {
+	in := goldenInput()
+	in.DynamoErr = errors.New("boom")
+	in.Games = []GameEntry{{CodeEnvVar: "SHOULD_NOT_SURVIVE"}}
+
+	view := AssembleConfig(context.Background(), in)
+
+	if view.Games == nil {
+		t.Error("view.Games is nil on the ErrorBanner path, want a non-nil empty slice")
+	}
+	if len(view.Games) != 0 {
+		t.Errorf("view.Games = %+v on the ErrorBanner path, want empty (never a partial view)", view.Games)
+	}
+}
+
+// --------------------------------------------------------------------------
 // MergeInboundDIDs (DID-01/02)
 
 func TestMergeInboundDIDs_AttachesMetadataToLiveEntry(t *testing.T) {

@@ -132,6 +132,17 @@
           </div>
           <div id="didList"><!-- rendered by app.js --></div>
         </div>
+
+        <!-- Quick task 260727-pdh: phone-games read-only panel (one row per
+             [[telephony.announcement]] entry) -- degrades to an empty-state
+             hint when telephony.toml is missing/unreadable, never blocks
+             the rest of the console. -->
+        <div class="didsection">
+          <div class="didsection-head">
+            <div class="eyebrow">Phone games</div>
+          </div>
+          <div id="gameList"><!-- rendered by app.js: renderGames --></div>
+        </div>
       </section>
 
       <!-- ---------- KNOWLEDGE TAB ---------- -->
