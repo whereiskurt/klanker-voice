@@ -586,3 +586,86 @@ def test_announcement_passphrase_env_var_key_rejected(make_config_file):
     path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
     with pytest.raises(ConfigError, match="credential"):
         load_telephony_config(path)
+
+
+# --- Quick task 260727-qfq: [[telephony.announcement]].sms_claim_url_template
+#
+# An OPTIONAL, PUBLIC claim-URL template that replaces ONLY the URL portion
+# of the mid-call SMS's first message (D-07). Must contain `{code}` when
+# present (mirrors the line_template rule); absent/empty -> the controller's
+# built-in default claim URL, byte-identical to every pre-qfq entry.
+
+
+def test_sms_claim_url_template_absent_defaults_empty(make_config_file):
+    """No `sms_claim_url_template` line -> "" (backward compatible --
+    byte-identical to the pre-260727-qfq announcement shape)."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].sms_claim_url_template == ""
+
+
+def test_sms_claim_url_template_parses_and_strips(make_config_file):
+    """A present value parses to the exact string, stripped."""
+    claim_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + (
+        '\nsms_claim_url_template = "  https://q.defcon.run/c?c=didhtp3234&v={code}  "\n'
+    )
+    path = make_config_file(append=VALID_TELEPHONY_TOML + claim_toml)
+    cfg = load_telephony_config(path)
+    assert (
+        cfg.announcements[0].sms_claim_url_template
+        == "https://q.defcon.run/c?c=didhtp3234&v={code}"
+    )
+
+
+def test_sms_claim_url_template_without_code_placeholder_rejected(make_config_file):
+    """A template missing `{code}` is a hard config error naming the field
+    (mirrors the `line_template` rule)."""
+    bad_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + (
+        '\nsms_claim_url_template = "https://q.defcon.run/c?c=didhtp3234"\n'
+    )
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="sms_claim_url_template"):
+        load_telephony_config(path)
+
+
+def test_sms_claim_url_template_key_clears_credential_gate(make_config_file):
+    """The D-09 credential-field gate ACCEPTS `sms_claim_url_template` --
+    its tokens (sms/claim/url/template) contain none of the refused
+    substrings (api_key|key|keys|secret|secrets|token|tokens|password|...),
+    unlike 260727-pdh's `passphrase_env_var` collision. Pins the constraint
+    2 finding from this task's planning pass rather than leaving it to a
+    future reader's inspection."""
+    claim_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + (
+        '\nsms_claim_url_template = "https://q.defcon.run/c?c=didhtp3234&v={code}"\n'
+    )
+    path = make_config_file(append=VALID_TELEPHONY_TOML + claim_toml)
+    cfg = load_telephony_config(path)  # must NOT raise ConfigError
+    assert cfg.announcements[0].sms_claim_url_template != ""
+
+
+def test_shipped_telephony_toml_per_game_otp_urls_and_claim_templates(make_config_file):
+    """D-06/D-07: each of the three shipped entries' `otp_url` carries its
+    own game query, and each `sms_claim_url_template` carries its own
+    didhtp slug -- all six values distinct, all three templates contain
+    `{code}`, and every value is pure 7-bit ASCII (the shared GSM-7 rule)."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    assert len(cfg.announcements) == 3
+
+    otp_urls = [e.otp_url for e in cfg.announcements]
+    assert otp_urls == [
+        "https://auth.klankermaker.ai/use1/ctf/otp?g=3234",
+        "https://auth.klankermaker.ai/use1/ctf/otp?g=3283",
+        "https://auth.klankermaker.ai/use1/ctf/otp?g=8283",
+    ]
+    assert len(set(otp_urls)) == 3
+
+    claim_templates = [e.sms_claim_url_template for e in cfg.announcements]
+    assert claim_templates == [
+        "https://q.defcon.run/c?c=didhtp3234&v={code}",
+        "https://q.defcon.run/c?c=didhtp3283&v={code}",
+        "https://q.defcon.run/c?c=didhtp8283&v={code}",
+    ]
+    assert len(set(claim_templates)) == 3
+    for template in claim_templates:
+        assert "{code}" in template
+        assert all(ord(c) < 128 for c in template)

@@ -115,6 +115,20 @@ class AnnouncementEntry:
             design doc's proposed ``otp_auth_env_var``. ``words_env_var``
             carries no credential token and mirrors the working
             ``code_env_var``/``otp_env_var`` precedent.
+        sms_claim_url_template: OPTIONAL (quick task 260727-qfq, D-07) -- a
+            per-entry claim-URL template that replaces ONLY the URL portion
+            of the mid-call SMS's first message. A PUBLIC plain-URL
+            template, like ``otp_url`` -- carries NO credential; the OTP
+            itself is substituted into it at send time via a ``{code}``
+            placeholder. Must contain ``{code}`` when present (enforced at
+            load time, mirroring the ``line_template`` rule). Absent/empty
+            (the default, ``""``) means the controller falls back to its
+            built-in default claim URL, so every pre-qfq entry keeps its
+            exact current SMS body -- byte-identical backward compatibility.
+            The field name deliberately carries no credential-regex token
+            (no ``key``/``secret``/``token``/``auth``/etc. substring), the
+            same naming discipline that produced ``otp_env_var`` and
+            ``words_env_var`` above.
 
     Note (quick task 260727-ohq): the controller's armed-trigger registry
     (``AsteriskCallController._announcements_by_code``) is keyed by the
@@ -176,6 +190,11 @@ class AnnouncementEntry:
     #: only, value in env/SSM, graceful skip when unset, deliberately not
     #: named with a ``passphrase`` token).
     words_env_var: str = ""
+    #: OPTIONAL per-entry claim-URL template (quick task 260727-qfq, D-07)
+    #: -- see the class docstring's ``sms_claim_url_template`` entry for the
+    #: full rule (PUBLIC URL template, ``{code}`` required when present,
+    #: empty means the controller's built-in default claim URL is used).
+    sms_claim_url_template: str = ""
 
 
 @dataclass(frozen=True)
@@ -396,6 +415,17 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
         # validation (unlike code_env_var above) -- an entry without a
         # spoken trigger simply omits this key.
         words_env_var = str(item.get("words_env_var", "")).strip()
+        # Quick task 260727-qfq (D-07): optional PUBLIC claim-URL template.
+        # Coerce-and-strip like sms_relay_url above; only when non-empty do
+        # we enforce the {code} placeholder rule, mirroring the
+        # line_template check earlier in this function. An absent/empty
+        # value is NOT an error -- the controller's default claim URL
+        # covers it (backward compatible).
+        sms_claim_url_template = str(item.get("sms_claim_url_template", "")).strip()
+        if sms_claim_url_template and "{code}" not in sms_claim_url_template:
+            raise ConfigError(
+                f"telephony.announcement[{i}].sms_claim_url_template must contain a {{code}} placeholder"
+            )
 
         entries.append(
             AnnouncementEntry(
@@ -409,6 +439,7 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 sms_relay_url=sms_relay_url,
                 dids=dids,
                 words_env_var=words_env_var,
+                sms_claim_url_template=sms_claim_url_template,
             )
         )
 

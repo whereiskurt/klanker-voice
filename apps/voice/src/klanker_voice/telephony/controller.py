@@ -268,10 +268,30 @@ ANNOUNCEMENT_GAG_TAIL_SECONDS = 16.0
 #: readout grace to complete.
 SMS_SEND_TIMEOUT_SECONDS = 12.0
 
-#: The SMS body: a titled flag-redemption URL that embeds the OTP as the ``?v=``
-#: query param, so the caller redeems by opening the link instead of relaying the
-#: raw code. Uses the PLAIN code (not the digit-spaced spoken form) so the URL is
-#: well-formed. Tunable. NEVER logged (the URL contains the live OTP).
+#: The fixed prefix framing every mid-call claim-URL SMS (quick task
+#: 260727-qfq, D-07 split -- previously fused directly into
+#: ``ANNOUNCEMENT_SMS_BODY_TEMPLATE`` below). Split out so a per-entry
+#: ``sms_claim_url_template`` (:func:`_build_sms_claim_body`) can replace
+#: ONLY the URL portion while this framing stays identical on every path.
+#: 7-bit ASCII, same GSM-7 rule as the constants below.
+ANNOUNCEMENT_SMS_CLAIM_PREFIX = "Here: "
+
+#: The DEFAULT claim-URL template (quick task 260727-qfq, D-07 split): a
+#: titled flag-redemption URL that embeds the OTP as the ``?v=`` query
+#: param, so the caller redeems by opening the link instead of relaying the
+#: raw code. Uses the PLAIN code (not the digit-spaced spoken form) so the
+#: URL is well-formed. Used whenever an entry has no
+#: ``sms_claim_url_template`` of its own (:func:`_build_sms_claim_body`) --
+#: this is the pre-260727-qfq behavior, unchanged.
+ANNOUNCEMENT_SMS_DEFAULT_CLAIM_URL_TEMPLATE = "https://q.defcon.run/c?v={code}"
+
+#: The SMS body: ``ANNOUNCEMENT_SMS_CLAIM_PREFIX`` + the default claim-URL
+#: template, concatenated so this constant's RESOLVED VALUE is exactly what
+#: it was before the 260727-qfq split. ``test_telephony_sms.py`` imports and
+#: asserts on this constant directly -- keeping it authoritative (rather
+#: than a duplicated literal) is what makes the legacy-fallback proof in
+#: :func:`_build_sms_claim_body` an equality against the real constant.
+#: Tunable. NEVER logged (the URL contains the live OTP).
 #:
 #: CRITICAL -- 7-bit GSM charset ONLY, NO non-ASCII characters (quick task
 #: 260716-hg5 follow-up, live-proven 2026-07-16): a single non-GSM character
@@ -282,9 +302,9 @@ SMS_SEND_TIMEOUT_SECONDS = 12.0
 #: original em-dash body never arrived; the plain-ASCII rewrite did. Keep every
 #: character here 7-bit ASCII. (The ``{code}`` braces are GSM-7 EXTENDED but are
 #: substituted away before the send, so the wire message is pure basic GSM-7.)
-ANNOUNCEMENT_SMS_BODY_TEMPLATE = (
-    "Here: https://q.defcon.run/c?v={code}"
-)
+#: Quick task 260727-qfq: a per-entry ``sms_claim_url_template`` is subject
+#: to this IDENTICAL 7-bit rule -- see the field's docstring in config.py.
+ANNOUNCEMENT_SMS_BODY_TEMPLATE = ANNOUNCEMENT_SMS_CLAIM_PREFIX + ANNOUNCEMENT_SMS_DEFAULT_CLAIM_URL_TEMPLATE
 
 #: The SECOND, STATIC SMS sent to the caller (quick task 260718-9el) -- fires
 #: right after the URL body via :func:`_send_sms_sequence`, in a SEPARATE
@@ -639,6 +659,27 @@ def _announcement_matches_did(entry: AnnouncementEntry, dialed_did: str) -> bool
     if not entry.dids:
         return True
     return bool(dialed_did) and dialed_did in entry.dids
+
+
+def _build_sms_claim_body(entry: AnnouncementEntry, code: str) -> str:
+    """Build the first (URL) mid-call SMS message body (quick task
+    260727-qfq, D-07). Picks ``entry.sms_claim_url_template`` when set,
+    otherwise ``ANNOUNCEMENT_SMS_DEFAULT_CLAIM_URL_TEMPLATE`` -- either way
+    the result is ``ANNOUNCEMENT_SMS_CLAIM_PREFIX`` concatenated with that
+    template rendered against ``code``.
+
+    An entry with NO template returns a string byte-identical to
+    ``ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)`` -- the legacy
+    fallback, proven by equality against the real module constant (not a
+    duplicated literal). The per-entry field replaces ONLY the URL portion:
+    the ``Here: `` prefix framing and the separate msg2 beat
+    (``ANNOUNCEMENT_SMS_SECOND_BODY``) are composed OUTSIDE this function
+    and are unchanged either way.
+
+    Module-level (not a method) so tests can monkeypatch it directly,
+    exactly like ``_fetch_ctf_otp``/``_send_sms_via_relay``."""
+    template = entry.sms_claim_url_template or ANNOUNCEMENT_SMS_DEFAULT_CLAIM_URL_TEMPLATE
+    return ANNOUNCEMENT_SMS_CLAIM_PREFIX + template.format(code=code)
 
 
 async def _send_sms_via_relay(
@@ -1609,7 +1650,10 @@ class AsteriskCallController:
         send_dids = _select_sms_send_dids(entry, active_call.dialed_did)
         sms_eligible = bool(send_dids) and bool(entry.sms_relay_url) and bool(dst)
         if sms_eligible:
-            url_body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)
+            # Quick task 260727-qfq (D-07): per-entry claim-URL template,
+            # falling back to the legacy default when unset -- see
+            # _build_sms_claim_body's docstring.
+            url_body = _build_sms_claim_body(entry, code)
             bodies = (url_body, ANNOUNCEMENT_SMS_SECOND_BODY)
             bearer = os.environ.get(entry.otp_env_var, "") if entry.otp_env_var else ""
             relay_headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}

@@ -148,6 +148,17 @@ otp_only_dids = ["7254043234", "7254043283", "7254048283"]
 # to three DIFFERENT SSM-seeded values, or the later one silently wins
 # regardless of `dids`.
 #
+# Per-game OTP dimension + claim-URL slug (quick task 260727-qfq, D-06/D-07):
+# each game's `otp_url` below now carries its OWN `?g=<game>` query -- the
+# auth issuer resolves the seed from that game's OWN env var
+# (CTF_OTP_SECRET_3234/_3283/_8283, per the auth route's static allowlist),
+# so each game's spoken OTP derives from its own seed rather than the one
+# shared legacy secret. Each entry's `sms_claim_url_template` similarly
+# carries that game's OWN didhtp flag slug (`c=didhtp<game>`), so the
+# mid-call claim link redeems as that game specifically. The
+# `q.defcon.run/c` verifier that consumes this URL shape is DC34-side and
+# still unbuilt -- this is a forward contract, not a live integration.
+#
 # Game 1: 725-404-3234 -- the original CTF OTP game (numeric-only, no
 # spoken trigger). code_env_var renamed 260727-pdh (from the old bare
 # CTF_ANNOUNCEMENT_CODE) for per-DID naming consistency with the two games
@@ -155,10 +166,11 @@ otp_only_dids = ["7254043234", "7254043283", "7254048283"]
 # /kmv/secrets/use1/ctf/announcement_code_3234 instead of .../announcement_code.
 [[telephony.announcement]]
 dids = ["7254043234"]
-otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=3234"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"            # NAME only; token VALUE from env/SSM at call time (D-09)
 code_env_var = "CTF_ANNOUNCEMENT_CODE_3234"   # NAME only; trigger VALUE lives in SSM (/kmv/secrets/use1/ctf/announcement_code_3234), never TOML (D-09)
 line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
+sms_claim_url_template = "https://q.defcon.run/c?c=didhtp3234&v={code}"
 # SMS-during-call (quick task 260716-hg5 -- design doc docs/superpowers/specs/
 # 2026-07-16-ctf-otp-sms-during-call-design.md): text the caller a written copy
 # of the OTP mid-call, then land the "check your phone" punchline. Ordered pool
@@ -191,13 +203,14 @@ sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
 # only, unchanged behavior.
 [[telephony.announcement]]
 dids = ["7254043283"]
-otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=3283"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"
 code_env_var = "CTF_ANNOUNCEMENT_CODE_3283"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_3283), never TOML (D-09)
 line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
 sms_dids = []
 sms_reply_dids = ["7254043283"]
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
+sms_claim_url_template = "https://q.defcon.run/c?c=didhtp3283&v={code}"
 
 # Game 3: 725-404-8283 -- the new third game (quick task 260727-pdh, D-09
 # amended). Its EITHER-factor split launch state: the code param
@@ -216,7 +229,7 @@ sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
 # the distinct-code-value constraint noted above the 3234 entry.
 [[telephony.announcement]]
 dids = ["7254048283"]
-otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=8283"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"
 code_env_var = "CTF_ANNOUNCEMENT_CODE_UCTF"     # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_uctf), never TOML (D-09)
 words_env_var = "CTF_ANNOUNCEMENT_WORDS_UCTF"   # NAME only; spoken-trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_words_uctf) -- currently the `__unset__` sentinel (D-03a)
@@ -224,3 +237,4 @@ line_template = "Hey! Let me get that one time password for you. Ready? . ... {c
 sms_dids = []
 sms_reply_dids = ["7254048283"]
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
+sms_claim_url_template = "https://q.defcon.run/c?c=didhtp8283&v={code}"
