@@ -605,6 +605,26 @@ def _select_sms_send_dids(entry: AnnouncementEntry, dialed_did: str) -> tuple[st
     return entry.sms_dids
 
 
+def _announcement_matches_did(entry: AnnouncementEntry, dialed_did: str) -> bool:
+    """Fail-closed per-DID game-scoping match (quick task 260727-ohq, D-02).
+
+    Three cases:
+      * ``entry.dids`` empty (GLOBAL entry) → always matches, byte-identical
+        to before this field existed;
+      * ``entry.dids`` non-empty (SCOPED entry) AND ``dialed_did`` is
+        truthy (resolved) AND present in ``entry.dids`` → matches;
+      * ``entry.dids`` non-empty AND (``dialed_did`` is falsy/unresolved OR
+        not in ``entry.dids``) → does NOT match.
+
+    An unresolved dialed DID must never be able to redeem a DID-bound game
+    code -- fail closed, never guess. Pure / module-level so it is
+    unit-testable without a controller or a live call (mirrors
+    :func:`_select_sms_send_dids`)."""
+    if not entry.dids:
+        return True
+    return bool(dialed_did) and dialed_did in entry.dids
+
+
 async def _send_sms_via_relay(
     url: str, headers: dict[str, str], dst: str, message: str, dids: tuple[str, ...]
 ) -> bool:
@@ -1538,7 +1558,17 @@ class AsteriskCallController:
         never unlock an OTP-only DID. ``dtmf_raw`` is still appended and the
         announcement-code loop still runs for every call (otp_only or not),
         so 333266 keeps working on OTP-only DIDs exactly as it does on
-        every other DID."""
+        every other DID.
+
+        Quick task 260727-ohq (per-DID game scoping): every armed entry is
+        still evaluated on every call, but an entry is skipped unless it
+        matches this call's resolved dialed DID -- see
+        :func:`_announcement_matches_did`. A GLOBAL entry (``dids`` empty)
+        always matches; a SCOPED entry only matches a resolved dialed DID
+        that is one of its own -- an unresolved dialed DID can only ever
+        reach global entries (fail closed). Entries stay code-keyed
+        (``_announcements_by_code``), so distinct entries need distinct
+        code values regardless of DID scope."""
         if self._telephony_cfg.gate_mode not in ("dtmf", "either"):
             return
         channel_id = _normalize_token((event.get("channel", {}) or {}).get("id"))
@@ -1555,9 +1585,12 @@ class AsteriskCallController:
                 await active_call.gate.unlock("dtmf")
                 return
         for code, entry in self._announcements_by_code.items():
-            if code and active_call.dtmf_raw.endswith(code):
-                await self._gate_announcement(active_call, entry)
-                return
+            if not (code and active_call.dtmf_raw.endswith(code)):
+                continue
+            if not _announcement_matches_did(entry, active_call.dialed_did):
+                continue
+            await self._gate_announcement(active_call, entry)
+            return
 
     async def _teardown_gate_resources(
         self,
