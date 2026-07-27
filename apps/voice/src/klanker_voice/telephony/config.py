@@ -101,6 +101,20 @@ class AnnouncementEntry:
             resolved dialed DID is in this set; an unresolved dialed DID
             reaches only global entries (fail closed). See the attribute's
             own inline comment for the full rule.
+        words_env_var: OPTIONAL (quick task 260727-pdh) -- the NAME of the
+            environment variable holding this entry's spoken-trigger secret
+            words (a whitespace-separated phrase, mirrors ``code_env_var``
+            exactly: value in env/SSM, NEVER in TOML). Absent or empty (the
+            default, ``""``) means this entry simply has no spoken trigger --
+            a graceful skip, exactly like an unset ``code_env_var`` today;
+            the entry's numeric code keeps working unaffected. Deliberately
+            NOT named with a ``passphrase`` token: this module's shared
+            ``_reject_credential_fields`` gate (``_CREDENTIAL_FIELD_RE`` in
+            ``klanker_voice.config``) refuses any TOML key containing one,
+            the exact same reason ``otp_env_var`` above was renamed from the
+            design doc's proposed ``otp_auth_env_var``. ``words_env_var``
+            carries no credential token and mirrors the working
+            ``code_env_var``/``otp_env_var`` precedent.
 
     Note (quick task 260727-ohq): the controller's armed-trigger registry
     (``AsteriskCallController._announcements_by_code``) is keyed by the
@@ -157,6 +171,11 @@ class AnnouncementEntry:
     #: to ``sms_dids``/``sms_reply_dids`` (digits-only, order preserved,
     #: empties dropped) via the same ``_parse_sms_dids`` helper.
     dids: tuple[str, ...] = ()
+    #: OPTIONAL spoken-trigger env var NAME (quick task 260727-pdh) -- see
+    #: the class docstring's ``words_env_var`` entry for the full rule (NAME
+    #: only, value in env/SSM, graceful skip when unset, deliberately not
+    #: named with a ``passphrase`` token).
+    words_env_var: str = ""
 
 
 @dataclass(frozen=True)
@@ -373,6 +392,10 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
         sms_reply_dids = _parse_sms_dids(item.get("sms_reply_dids"), i, field="sms_reply_dids")
         sms_relay_url = str(item.get("sms_relay_url", "")).strip()
         dids = _parse_sms_dids(item.get("dids"), i, field="dids")
+        # Quick task 260727-pdh: optional, NAME-only, no non-empty
+        # validation (unlike code_env_var above) -- an entry without a
+        # spoken trigger simply omits this key.
+        words_env_var = str(item.get("words_env_var", "")).strip()
 
         entries.append(
             AnnouncementEntry(
@@ -385,6 +408,7 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 sms_reply_dids=sms_reply_dids,
                 sms_relay_url=sms_relay_url,
                 dids=dids,
+                words_env_var=words_env_var,
             )
         )
 

@@ -604,3 +604,114 @@ async def test_concierge_enabled_default_true_byte_identical():
     await gate2.unlock("dtmf")
     assert unlock_calls2 == ["unlocked"]
     assert gate2.unlocked is True
+
+
+# --- GateProcessor: announcement spoken-trigger factor (quick task 260727-pdh) --
+
+
+def _announcement_gate(**overrides):
+    """Build a GateProcessor with an armed announcement-words registry (key
+    "uctf" -> {"hack", "the", "planet"}) and a recording on_announcement_words
+    callback. Returns (gate, unlock_calls, fail_closed_calls,
+    announcement_calls). Mirrors _gate()'s shape/defaults exactly."""
+    announcement_calls: list[str] = []
+
+    async def _on_announcement_words(key: str) -> None:
+        announcement_calls.append(key)
+
+    overrides.setdefault("announcement_words", {"uctf": ["hack", "the", "planet"]})
+    overrides.setdefault("on_announcement_words", _on_announcement_words)
+    gate, unlock_calls, fail_closed_calls = _gate(**overrides)
+    return gate, unlock_calls, fail_closed_calls, announcement_calls
+
+
+async def test_announcement_words_accumulate_and_match_when_concierge_disabled():
+    """D-06: with concierge_unlock_enabled=False (the OTP-only DID case),
+    tokens still accumulate and match the armed announcement registry --
+    across TWO separate TranscriptionFrames, proving accumulation now
+    happens where it used to be skipped entirely."""
+    gate, unlock_calls, _, announcement_calls = _announcement_gate(
+        concierge_unlock_enabled=False
+    )
+    D = FrameDirection.DOWNSTREAM
+
+    await gate.process_frame(TranscriptionFrame(text="hack the", user_id="", timestamp=""), D)
+    await gate.process_frame(TranscriptionFrame(text="planet", user_id="", timestamp=""), D)
+    await asyncio.sleep(0)  # let the spawned callback task run
+
+    assert announcement_calls == ["uctf"]
+    assert gate.unlocked is False
+    assert unlock_calls == []
+
+
+async def test_announcement_words_match_cancels_fail_closed_timer():
+    """A successful announcement match resolves the gate via
+    cancel_for_takeover BEFORE the callback is spawned, so the fail-closed
+    timer can never fire afterward (T-pdh-05)."""
+    gate, unlock_calls, fail_closed_calls, announcement_calls = _announcement_gate(
+        gate_window_seconds=0.05
+    )
+    gate.start_timer()
+
+    await gate.process_frame(
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await asyncio.sleep(0.15)
+
+    assert announcement_calls == ["uctf"]
+    assert fail_closed_calls == []
+    assert unlock_calls == []
+
+
+async def test_announcement_words_callback_fires_at_most_once():
+    """A second matching utterance after the first match produces NO second
+    callback invocation -- the gate is already resolved."""
+    gate, _, _, announcement_calls = _announcement_gate()
+    D = FrameDirection.DOWNSTREAM
+
+    await gate.process_frame(
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""), D
+    )
+    await asyncio.sleep(0)
+    await gate.process_frame(
+        TranscriptionFrame(text="hack the planet again", user_id="", timestamp=""), D
+    )
+    await asyncio.sleep(0)
+
+    assert announcement_calls == ["uctf"]
+
+
+async def test_announcement_words_redaction_zero_frames_and_no_secret_in_logs(loguru_caplog):
+    """Redaction (D-07/T-pdh-01): a downstream sink receives ZERO frames
+    during/after an announcement match, and captured logs contain neither
+    the heard words, the matched words, nor the registry key."""
+    gate, _, _, announcement_calls = _announcement_gate()
+
+    frames = [
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+    ]
+    down, _ = await run_test(gate, frames_to_send=frames, expected_down_frames=[])
+    await asyncio.sleep(0)  # let the spawned callback task run
+
+    assert down == []
+    assert announcement_calls == ["uctf"]
+    log_text = loguru_caplog.text.lower()
+    assert "hack" not in log_text
+    assert "planet" not in log_text
+    assert "uctf" not in log_text
+
+
+async def test_announcement_words_no_registry_is_byte_identical_default():
+    """A GateProcessor with no announcement_words/on_announcement_words kwargs
+    (the default) behaves exactly as before this task -- no announcement
+    branch ever runs, concierge matching is unaffected."""
+    gate, unlock_calls, _ = _gate()  # no announcement kwargs at all
+
+    frames = [
+        TranscriptionFrame(text="purple falcon midnight compass", user_id="", timestamp=""),
+    ]
+    await run_test(gate, frames_to_send=frames)
+
+    assert unlock_calls == ["unlocked"]
+    assert gate.unlocked is True

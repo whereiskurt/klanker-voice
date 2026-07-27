@@ -499,3 +499,42 @@ def test_shipped_telephony_toml_announcement_dids_still_global(make_config_file)
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
     assert len(cfg.announcements) == 1
     assert cfg.announcements[0].dids == ()
+
+
+# --- Quick task 260727-pdh: [[telephony.announcement]].words_env_var --------
+#
+# An OPTIONAL, NAME-only spoken-trigger env var, mirroring code_env_var but
+# with NO non-empty validation (an entry may legitimately have no spoken
+# trigger at all). Deliberately NOT named `passphrase_env_var` -- the shared
+# D-09 credential-field gate refuses any key containing a `passphrase` token
+# (same precedent as the existing otp_env_var rename).
+
+
+def test_announcement_words_env_var_absent_defaults_empty(make_config_file):
+    """No `words_env_var` line -> "" -- the entry has no spoken trigger,
+    byte-identical to the pre-260727-pdh announcement shape."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].words_env_var == ""
+
+
+def test_announcement_words_env_var_parses_and_strips(make_config_file):
+    """`words_env_var` parses to the exact NAME string, stripped."""
+    words_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + (
+        '\nwords_env_var = "  CTF_ANNOUNCEMENT_WORDS_UCTF  "\n'
+    )
+    path = make_config_file(append=VALID_TELEPHONY_TOML + words_toml)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].words_env_var == "CTF_ANNOUNCEMENT_WORDS_UCTF"
+
+
+def test_announcement_passphrase_env_var_key_rejected(make_config_file):
+    """The D-09 credential-field gate refuses `passphrase_env_var` outright
+    -- the constraint that forced the rename to `words_env_var` (mirrors the
+    existing `otp_auth_env_var` -> `otp_env_var` precedent)."""
+    bad_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + (
+        '\npassphrase_env_var = "CTF_ANNOUNCEMENT_WORDS_UCTF"\n'
+    )
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="credential"):
+        load_telephony_config(path)
