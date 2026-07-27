@@ -26,6 +26,30 @@ type ConfigView struct {
 	// compilesToMap() in view.go for the exact field->store enumeration.
 	// Always non-nil.
 	CompilesTo map[string]string `json:"compilesTo"`
+
+	// Games is the quick-task-260727-pdh addition: one row per
+	// [[telephony.announcement]] entry in apps/voice/configs/telephony.toml
+	// (DID scope, code/words env var NAMES + set/unset status,
+	// sms_reply_dids) — the operator-visible "phone games" surface, shared
+	// with `kv telephony list`'s own games section via the same
+	// ParseTelephonyGames/AnnotateGameEnv parser. Always a non-nil
+	// (possibly empty) slice, degrading gracefully when telephony.toml is
+	// missing or unreadable (see assembleConfig in server.go).
+	Games []GameEntry `json:"games"`
+}
+
+// GameEntry is one [[telephony.announcement]] entry's operator-visible
+// summary (quick task 260727-pdh): DID scope, the code/words env var NAMES,
+// and their local-environment set/unset STATUS only — NEVER a secret
+// value, the same name-only posture SecretRef already documents. An empty
+// DIDs slice means the entry is GLOBAL (fires on every call).
+type GameEntry struct {
+	DIDs         []string `json:"dids"`
+	CodeEnvVar   string   `json:"codeEnvVar"`
+	CodeStatus   string   `json:"codeStatus"` // "set" | "not set" | "" (no env var name)
+	WordsEnvVar  string   `json:"wordsEnvVar"`
+	WordsStatus  string   `json:"wordsStatus"` // "set" | "not set" | "" (no env var name)
+	SmsReplyDIDs []string `json:"smsReplyDids"`
 }
 
 // Meta carries the provenance of an assembled ConfigView: which AWS

@@ -22,10 +22,17 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pipecat.frames.frames import TranscriptionFrame
+from pipecat.processors.frame_processor import FrameDirection
+
 from klanker_voice.auth import AuthError, SessionIdentity
 from klanker_voice.config import load_config, load_knowledge_config
 from klanker_voice.telephony.config import AnnouncementEntry
-from klanker_voice.telephony.controller import AsteriskCallController, _build_announcement_script
+from klanker_voice.telephony.controller import (
+    ANNOUNCEMENT_WORDS_UNSET_SENTINEL,
+    AsteriskCallController,
+    _build_announcement_script,
+)
 
 from tests.test_call_runtime import _gate_result, _quota_config, fake_aws, reset_active_count  # noqa: F401
 from tests.test_telephony_lifecycle import (  # noqa: F401 -- stub_call_session_run is an autouse fixture
@@ -293,7 +300,11 @@ ANNOUNCEMENT_CODE = "990011"
 
 def _announcement_entry(**overrides) -> AnnouncementEntry:
     base = dict(
-        code_env_var="CTF_ANNOUNCEMENT_CODE",
+        # An arbitrary fixture value -- renamed off the retired bare
+        # CTF_ANNOUNCEMENT_CODE (quick task 260727-pdh, D-02 amended) so a
+        # grep for that retired name stays at zero; no live behavior
+        # depends on this literal string.
+        code_env_var="CTF_ANNOUNCEMENT_CODE_3234",
         otp_url="https://auth.klankermaker.ai/use1/ctf/otp",
         otp_env_var="CTF_OTP_AUTH_TOKEN",
         line_template="Hey! O T P. {code}. That's {code}. Bye.",
@@ -571,12 +582,213 @@ async def test_gate_mode_passphrase_ignores_announcement_code(
     assert gate_announcement_calls == []
 
 
+async def test_scoped_announcement_dispatches_on_matching_did(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A scoped entry (dids=("7254048283",)) fires exactly once when the
+    call's resolved dialed_did matches (quick task 260727-ohq, D-02)."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    entry = _announcement_entry(dids=("7254048283",))
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(cid_prefix_did_map={"KVD8283": "7254048283"}),
+        access_pin="4242",
+        announcement_codes={ANNOUNCEMENT_CODE: entry},
+    )
+    ari.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD8283"
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    assert active_call.dialed_did == "7254048283"
+
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert len(gate_announcement_calls) == 1
+    assert gate_announcement_calls[0][1] is entry
+
+
+async def test_scoped_announcement_does_not_dispatch_on_other_did(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A scoped entry does NOT fire when the call resolves to a DIFFERENT
+    dialed DID -- zero dispatches, gate still locked afterwards (fail
+    closed; the code must not leak onto another DID)."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    entry = _announcement_entry(dids=("7254048283",))
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(
+            cid_prefix_did_map={"KVD3234": "7254043234", "KVD8283": "7254048283"}
+        ),
+        access_pin="4242",
+        announcement_codes={ANNOUNCEMENT_CODE: entry},
+    )
+    ari.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD3234"
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    assert active_call.dialed_did == "7254043234"
+
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert gate_announcement_calls == []
+    assert active_call.gate.unlocked is False
+
+
+async def test_scoped_announcement_does_not_dispatch_on_unresolved_did(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A scoped entry does NOT fire when the dialed DID is unresolved (no
+    channel vars set) -- fail closed."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    entry = _announcement_entry(dids=("7254048283",))
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        access_pin="4242",
+        announcement_codes={ANNOUNCEMENT_CODE: entry},
+    )
+    # No KLANKER_SIP_CIDNAME/KLANKER_SIP_TO channel var set -- dialed_did resolves to "".
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    assert active_call.dialed_did == ""
+
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert gate_announcement_calls == []
+    assert active_call.gate.unlocked is False
+
+
+async def test_global_announcement_dispatches_regardless_of_did_resolution(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A GLOBAL entry (dids=()) dispatches both when the dialed DID is
+    resolved and when it is unresolved -- today's behavior preserved
+    exactly (quick task 260727-ohq must not regress the shipped live entry)."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    entry = _announcement_entry()  # dids defaults to () -- global
+    assert entry.dids == ()
+
+    # Case 1: dialed DID resolved.
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(cid_prefix_did_map={"KVD3234": "7254043234"}),
+        access_pin="4242",
+        announcement_codes={ANNOUNCEMENT_CODE: entry},
+    )
+    ari.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD3234"
+    await controller.on_stasis_start(_stasis_event())
+    assert controller.calls["chan-1"].dialed_did == "7254043234"
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+    assert len(gate_announcement_calls) == 1
+
+    # Case 2: dialed DID unresolved -- fresh controller/call.
+    controller2, ari2, sessions2 = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        access_pin="4242",
+        announcement_codes={ANNOUNCEMENT_CODE: entry},
+    )
+    await controller2.on_stasis_start(_stasis_event())
+    assert controller2.calls["chan-1"].dialed_did == ""
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller2.on_channel_dtmf_received(event)
+    assert len(gate_announcement_calls) == 2
+
+
+async def test_scoped_code_no_dispatch_but_global_code_still_dispatches(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """Two entries armed under different codes -- one global, one scoped to
+    a DID this call did NOT dial: dialing the scoped code dispatches
+    nothing, dialing the global code still dispatches the global entry (the
+    loop skips a non-matching entry rather than aborting)."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    SCOPED_CODE = "990011"
+    GLOBAL_CODE = "112233"
+    scoped_entry = _announcement_entry(
+        code_env_var="CTF_SCOPED_CODE", dids=("7254048283",)
+    )
+    global_entry = _announcement_entry(code_env_var="CTF_GLOBAL_CODE")
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(cid_prefix_did_map={"KVD3234": "7254043234"}),
+        access_pin="4242",
+        announcement_codes={SCOPED_CODE: scoped_entry, GLOBAL_CODE: global_entry},
+    )
+    ari.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD3234"
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    assert active_call.dialed_did == "7254043234"
+
+    for event in _dial(SCOPED_CODE):
+        await controller.on_channel_dtmf_received(event)
+    assert gate_announcement_calls == []
+
+    for event in _dial(GLOBAL_CODE):
+        await controller.on_channel_dtmf_received(event)
+    assert len(gate_announcement_calls) == 1
+    assert gate_announcement_calls[0][1] is global_entry
+
+
 def test_announcement_code_unset_env_var_arms_no_trigger(
     make_config_file, monkeypatch
 ):
     """An entry whose code_env_var is unset in the environment arms NO
     trigger -- the controller's resolved announcement-code map is empty."""
-    monkeypatch.delenv("CTF_ANNOUNCEMENT_CODE", raising=False)
+    monkeypatch.delenv("CTF_ANNOUNCEMENT_CODE_3234", raising=False)
 
     cfg = load_config(make_config_file())
     knowledge_cfg = load_knowledge_config()
@@ -594,5 +806,288 @@ def test_announcement_code_unset_env_var_arms_no_trigger(
         # No announcement_codes injection -- resolves from os.environ, which
         # does NOT have CTF_ANNOUNCEMENT_CODE set.
     )
+    assert controller._announcements_by_code == {}
+
+
+# --- Quick task 260727-pdh: either-factor spoken-trigger seam --------------
+
+
+def _build_controller_words(
+    make_config_file,
+    *,
+    telephony_cfg,
+    announcement_words: dict[str, str] | None = None,
+    announcement_codes: dict[str, AnnouncementEntry] | None = None,
+    access_pin: str = "",
+) -> tuple[AsteriskCallController, "FakeAriClient"]:
+    """Construct an AsteriskCallController directly (bypassing
+    tests/test_telephony_lifecycle.py's _build_controller, which has no
+    announcement_words injection seam) so these tests can hermetically arm
+    the spoken-trigger registry without touching the real environment."""
+    cfg = load_config(make_config_file())
+    knowledge_cfg = load_knowledge_config()
+    ari = FakeAriClient()
+    opener, _sessions = _make_media_opener()
+    controller = AsteriskCallController(
+        ari,
+        cfg,
+        knowledge_cfg,
+        _quota_config(reconnect_grace_seconds=3600.0),
+        telephony_cfg,
+        media_session_opener=opener,
+        access_pin=access_pin,
+        passphrase_words=frozenset(),
+        announcement_codes=announcement_codes,
+        announcement_words=announcement_words,
+    )
+    return controller, ari
+
+
+async def test_words_registry_skips_four_disabled_states_numeric_trigger_unaffected(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """All four spoken-factor-disabled states (D-03) skip gracefully -- no
+    registry row -- while the SAME entry's numeric code trigger stays fully
+    armed. This is the 8283 launch state and must be asserted, not assumed."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    no_field_entry = _announcement_entry(code_env_var="CTF_CODE_NO_FIELD")  # no words_env_var
+    absent_entry = _announcement_entry(
+        code_env_var="CTF_CODE_ABSENT", words_env_var="WORDS_ABSENT_FROM_SOURCE"
+    )
+    empty_entry = _announcement_entry(
+        code_env_var="CTF_CODE_EMPTY", words_env_var="WORDS_EMPTY"
+    )
+    sentinel_entry = _announcement_entry(
+        code_env_var="CTF_CODE_SENTINEL", words_env_var="WORDS_SENTINEL"
+    )
+
+    telephony_cfg = _gated_cfg(
+        announcements=(no_field_entry, absent_entry, empty_entry, sentinel_entry)
+    )
+    numeric_code = "990011"
+    controller, ari = _build_controller_words(
+        make_config_file,
+        telephony_cfg=telephony_cfg,
+        announcement_words={
+            # WORDS_ABSENT_FROM_SOURCE deliberately not present at all.
+            "WORDS_EMPTY": "   ",
+            "WORDS_SENTINEL": ANNOUNCEMENT_WORDS_UNSET_SENTINEL,
+        },
+        # Hermetic numeric-trigger injection (mirrors every other test in
+        # this file) -- proves the DTMF path is a wholly separate
+        # resolution, unaffected by every one of the four disabled words
+        # states above.
+        announcement_codes={numeric_code: no_field_entry},
+        access_pin="4242",
+    )
+
+    # No registry row for ANY of the four entries -- every disabled state
+    # skipped gracefully, none raised.
+    assert controller._announcement_words_by_code_env_var == {}
+
+    await controller.on_stasis_start(_stasis_event())
+    for event in _dial(numeric_code):
+        await controller.on_channel_dtmf_received(event)
+
+    assert len(gate_announcement_calls) == 1
+    assert gate_announcement_calls[0][1] is no_field_entry
+
+
+def test_words_registry_sentinel_substring_not_treated_as_sentinel(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A words value that merely CONTAINS the sentinel token (not an exact
+    whole-value match) is NOT disabled -- the entry arms with those real
+    words, sentinel token included as an ordinary word among others."""
+    entry = _announcement_entry(
+        code_env_var="CTF_CODE_UCTF", words_env_var="WORDS_UCTF"
+    )
+    controller, ari = _build_controller_words(
+        make_config_file,
+        telephony_cfg=_gated_cfg(announcements=(entry,)),
+        announcement_words={"WORDS_UCTF": f"{ANNOUNCEMENT_WORDS_UNSET_SENTINEL} hack the planet"},
+        access_pin="4242",
+    )
+
+    assert "CTF_CODE_UCTF" in controller._announcement_words_by_code_env_var
+    arming_entry, words = controller._announcement_words_by_code_env_var["CTF_CODE_UCTF"]
+    assert arming_entry is entry
+    assert words == {ANNOUNCEMENT_WORDS_UNSET_SENTINEL, "hack", "the", "planet"}
+
+
+async def test_words_registry_well_formed_arms_and_dispatches_via_gate_announcement(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A well-formed words registry arms the gate's announcement_words seam;
+    speaking the words through the pipeline dispatches to the exact SAME
+    _gate_announcement method the DTMF factor already calls, with the
+    matching entry."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    entry = _announcement_entry(
+        code_env_var="CTF_ANNOUNCEMENT_CODE_UCTF", words_env_var="CTF_ANNOUNCEMENT_WORDS_UCTF"
+    )
+    controller, ari = _build_controller_words(
+        make_config_file,
+        telephony_cfg=_gated_cfg(announcements=(entry,)),
+        announcement_words={"CTF_ANNOUNCEMENT_WORDS_UCTF": "hack the planet"},
+        access_pin="4242",
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    assert active_call.gate is not None
+
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await asyncio.sleep(0)  # let the spawned callback task run
+
+    assert len(gate_announcement_calls) == 1
+    assert gate_announcement_calls[0][1] is entry
+    assert active_call.gate.unlocked is False  # cancel_for_takeover, never unlock
+
+
+async def test_words_registry_did_filtered_scoped_entry_armed_only_on_own_did(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A scoped words entry's registry row is present in the per-call phrase
+    map only when the call's resolved dialed_did is one of its own -- absent
+    for another DID and for an unresolved DID (fail closed, D-04/T-pdh-03)."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    scoped_entry = _announcement_entry(
+        code_env_var="CTF_ANNOUNCEMENT_CODE_UCTF",
+        words_env_var="CTF_ANNOUNCEMENT_WORDS_UCTF",
+        dids=("7254048283",),
+    )
+    telephony_cfg = _gated_cfg(
+        announcements=(scoped_entry,),
+        cid_prefix_did_map={"KVD3234": "7254043234", "KVD8283": "7254048283"},
+    )
+
+    # Case 1: dialed a DIFFERENT DID -- the scoped entry must not be armed.
+    controller, ari = _build_controller_words(
+        make_config_file,
+        telephony_cfg=telephony_cfg,
+        announcement_words={"CTF_ANNOUNCEMENT_WORDS_UCTF": "hack the planet"},
+        access_pin="4242",
+    )
+    ari.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD3234"
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    assert active_call.dialed_did == "7254043234"
+
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await asyncio.sleep(0)
+    assert gate_announcement_calls == []
+
+    # Case 2: dialed DID unresolved -- fresh controller/call, fail closed.
+    controller2, ari2 = _build_controller_words(
+        make_config_file,
+        telephony_cfg=telephony_cfg,
+        announcement_words={"CTF_ANNOUNCEMENT_WORDS_UCTF": "hack the planet"},
+        access_pin="4242",
+    )
+    await controller2.on_stasis_start(_stasis_event())
+    active_call2 = controller2.calls["chan-1"]
+    assert active_call2.dialed_did == ""
+
+    await active_call2.gate.process_frame(
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await asyncio.sleep(0)
+    assert gate_announcement_calls == []
+
+    # Case 3: dialed the OWNING DID -- the scoped entry IS armed and dispatches.
+    controller3, ari3 = _build_controller_words(
+        make_config_file,
+        telephony_cfg=telephony_cfg,
+        announcement_words={"CTF_ANNOUNCEMENT_WORDS_UCTF": "hack the planet"},
+        access_pin="4242",
+    )
+    ari3.channel_vars["KLANKER_SIP_CIDNAME"] = "KVD8283"
+    await controller3.on_stasis_start(_stasis_event())
+    active_call3 = controller3.calls["chan-1"]
+    assert active_call3.dialed_did == "7254048283"
+
+    await active_call3.gate.process_frame(
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await asyncio.sleep(0)
+    assert len(gate_announcement_calls) == 1
+    assert gate_announcement_calls[0][1] is scoped_entry
+
+
+async def test_words_registry_global_entry_armed_regardless_of_did_resolution(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """A GLOBAL words entry (dids=()) is armed and dispatches for every call,
+    resolved or not -- mirrors the DTMF path's own global-entry behavior."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    global_entry = _announcement_entry(
+        code_env_var="CTF_ANNOUNCEMENT_CODE_UCTF", words_env_var="CTF_ANNOUNCEMENT_WORDS_UCTF"
+    )
+    assert global_entry.dids == ()
+    telephony_cfg = _gated_cfg(announcements=(global_entry,))
+
+    controller, ari = _build_controller_words(
+        make_config_file,
+        telephony_cfg=telephony_cfg,
+        announcement_words={"CTF_ANNOUNCEMENT_WORDS_UCTF": "hack the planet"},
+        access_pin="4242",
+    )
+    await controller.on_stasis_start(_stasis_event())  # dialed_did unresolved
+    active_call = controller.calls["chan-1"]
+    assert active_call.dialed_did == ""
+
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await asyncio.sleep(0)
+
+    assert len(gate_announcement_calls) == 1
+    assert gate_announcement_calls[0][1] is global_entry
 
     assert controller._announcements_by_code == {}

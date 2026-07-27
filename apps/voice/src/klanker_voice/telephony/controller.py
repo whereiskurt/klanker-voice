@@ -268,10 +268,30 @@ ANNOUNCEMENT_GAG_TAIL_SECONDS = 16.0
 #: readout grace to complete.
 SMS_SEND_TIMEOUT_SECONDS = 12.0
 
-#: The SMS body: a titled flag-redemption URL that embeds the OTP as the ``?v=``
-#: query param, so the caller redeems by opening the link instead of relaying the
-#: raw code. Uses the PLAIN code (not the digit-spaced spoken form) so the URL is
-#: well-formed. Tunable. NEVER logged (the URL contains the live OTP).
+#: The fixed prefix framing every mid-call claim-URL SMS (quick task
+#: 260727-qfq, D-07 split -- previously fused directly into
+#: ``ANNOUNCEMENT_SMS_BODY_TEMPLATE`` below). Split out so a per-entry
+#: ``sms_claim_url_template`` (:func:`_build_sms_claim_body`) can replace
+#: ONLY the URL portion while this framing stays identical on every path.
+#: 7-bit ASCII, same GSM-7 rule as the constants below.
+ANNOUNCEMENT_SMS_CLAIM_PREFIX = "Here: "
+
+#: The DEFAULT claim-URL template (quick task 260727-qfq, D-07 split): a
+#: titled flag-redemption URL that embeds the OTP as the ``?v=`` query
+#: param, so the caller redeems by opening the link instead of relaying the
+#: raw code. Uses the PLAIN code (not the digit-spaced spoken form) so the
+#: URL is well-formed. Used whenever an entry has no
+#: ``sms_claim_url_template`` of its own (:func:`_build_sms_claim_body`) --
+#: this is the pre-260727-qfq behavior, unchanged.
+ANNOUNCEMENT_SMS_DEFAULT_CLAIM_URL_TEMPLATE = "https://q.defcon.run/c?v={code}"
+
+#: The SMS body: ``ANNOUNCEMENT_SMS_CLAIM_PREFIX`` + the default claim-URL
+#: template, concatenated so this constant's RESOLVED VALUE is exactly what
+#: it was before the 260727-qfq split. ``test_telephony_sms.py`` imports and
+#: asserts on this constant directly -- keeping it authoritative (rather
+#: than a duplicated literal) is what makes the legacy-fallback proof in
+#: :func:`_build_sms_claim_body` an equality against the real constant.
+#: Tunable. NEVER logged (the URL contains the live OTP).
 #:
 #: CRITICAL -- 7-bit GSM charset ONLY, NO non-ASCII characters (quick task
 #: 260716-hg5 follow-up, live-proven 2026-07-16): a single non-GSM character
@@ -282,9 +302,9 @@ SMS_SEND_TIMEOUT_SECONDS = 12.0
 #: original em-dash body never arrived; the plain-ASCII rewrite did. Keep every
 #: character here 7-bit ASCII. (The ``{code}`` braces are GSM-7 EXTENDED but are
 #: substituted away before the send, so the wire message is pure basic GSM-7.)
-ANNOUNCEMENT_SMS_BODY_TEMPLATE = (
-    "Here: https://q.defcon.run/c?v={code}"
-)
+#: Quick task 260727-qfq: a per-entry ``sms_claim_url_template`` is subject
+#: to this IDENTICAL 7-bit rule -- see the field's docstring in config.py.
+ANNOUNCEMENT_SMS_BODY_TEMPLATE = ANNOUNCEMENT_SMS_CLAIM_PREFIX + ANNOUNCEMENT_SMS_DEFAULT_CLAIM_URL_TEMPLATE
 
 #: The SECOND, STATIC SMS sent to the caller (quick task 260718-9el) -- fires
 #: right after the URL body via :func:`_send_sms_sequence`, in a SEPARATE
@@ -321,6 +341,22 @@ ANNOUNCEMENT_PUNCHLINE_PAUSE = ". ... ... ... ... ... ... "
 #: announcement code while staying bounded (never grows unbounded across a
 #: long gate window).
 DTMF_RAW_MAX_DIGITS = 32
+
+#: The literal sentinel value (quick task 260727-pdh, D-03a) that an
+#: announcement entry's ``words_env_var`` resolves to when the spoken
+#: trigger is deliberately disabled but the ECS ``valueFrom`` wiring must
+#: still be deploy-safe. WHY this exists: ECS fails task launch outright on
+#: a MISSING ``valueFrom`` SSM parameter, so an operator who hasn't picked
+#: spoken-trigger words yet cannot simply leave the parameter absent -- the
+#: parameter is seeded with this literal string instead, and THIS constant
+#: is what gives it meaning ("disabled"), at the application layer, both
+#: here and in ``kv``'s two operator surfaces (which must apply the
+#: identical rule so the console never reports an inert trigger as live).
+#: Matched on the STRIPPED, LOWERCASED WHOLE resolved value -- never a
+#: substring or token test, so a real phrase that happens to CONTAIN this
+#: token (e.g. as one word among several) is unaffected; only an exact
+#: whole-value match disables the trigger.
+ANNOUNCEMENT_WORDS_UNSET_SENTINEL = "__unset__"
 
 _E164_STRIP_RE = re.compile(r"[^\d+]")
 
@@ -605,6 +641,47 @@ def _select_sms_send_dids(entry: AnnouncementEntry, dialed_did: str) -> tuple[st
     return entry.sms_dids
 
 
+def _announcement_matches_did(entry: AnnouncementEntry, dialed_did: str) -> bool:
+    """Fail-closed per-DID game-scoping match (quick task 260727-ohq, D-02).
+
+    Three cases:
+      * ``entry.dids`` empty (GLOBAL entry) → always matches, byte-identical
+        to before this field existed;
+      * ``entry.dids`` non-empty (SCOPED entry) AND ``dialed_did`` is
+        truthy (resolved) AND present in ``entry.dids`` → matches;
+      * ``entry.dids`` non-empty AND (``dialed_did`` is falsy/unresolved OR
+        not in ``entry.dids``) → does NOT match.
+
+    An unresolved dialed DID must never be able to redeem a DID-bound game
+    code -- fail closed, never guess. Pure / module-level so it is
+    unit-testable without a controller or a live call (mirrors
+    :func:`_select_sms_send_dids`)."""
+    if not entry.dids:
+        return True
+    return bool(dialed_did) and dialed_did in entry.dids
+
+
+def _build_sms_claim_body(entry: AnnouncementEntry, code: str) -> str:
+    """Build the first (URL) mid-call SMS message body (quick task
+    260727-qfq, D-07). Picks ``entry.sms_claim_url_template`` when set,
+    otherwise ``ANNOUNCEMENT_SMS_DEFAULT_CLAIM_URL_TEMPLATE`` -- either way
+    the result is ``ANNOUNCEMENT_SMS_CLAIM_PREFIX`` concatenated with that
+    template rendered against ``code``.
+
+    An entry with NO template returns a string byte-identical to
+    ``ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)`` -- the legacy
+    fallback, proven by equality against the real module constant (not a
+    duplicated literal). The per-entry field replaces ONLY the URL portion:
+    the ``Here: `` prefix framing and the separate msg2 beat
+    (``ANNOUNCEMENT_SMS_SECOND_BODY``) are composed OUTSIDE this function
+    and are unchanged either way.
+
+    Module-level (not a method) so tests can monkeypatch it directly,
+    exactly like ``_fetch_ctf_otp``/``_send_sms_via_relay``."""
+    template = entry.sms_claim_url_template or ANNOUNCEMENT_SMS_DEFAULT_CLAIM_URL_TEMPLATE
+    return ANNOUNCEMENT_SMS_CLAIM_PREFIX + template.format(code=code)
+
+
 async def _send_sms_via_relay(
     url: str, headers: dict[str, str], dst: str, message: str, dids: tuple[str, ...]
 ) -> bool:
@@ -791,6 +868,7 @@ class AsteriskCallController:
         access_pin: str | None = None,
         passphrase_words: frozenset[str] | None = None,
         announcement_codes: dict[str, AnnouncementEntry] | None = None,
+        announcement_words: dict[str, str] | None = None,
     ) -> None:
         self._ari = ari
         self._cfg = cfg
@@ -830,6 +908,48 @@ class AsteriskCallController:
                 for entry in telephony_cfg.announcements
                 if (code := os.environ.get(entry.code_env_var, "").strip())
             }
+
+        #: Quick task 260727-pdh (D-03/D-08): the announcement spoken-trigger
+        #: registry, keyed by each entry's OWN ``code_env_var`` NAME (used
+        #: purely as a stable, non-secret, log-safe handle -- never the
+        #: resolved code VALUE) -> a two-tuple of the entry and its
+        #: normalized (strip+lower, empties dropped) word frozenset.
+        #: Resolved from the explicit ``announcement_words`` kwarg (an
+        #: ``is not None`` check, NOT truthiness -- an intentionally empty
+        #: override dict must never silently fall back to ``os.environ``,
+        #: so tests never mutate the real process environment) when a
+        #: caller injects one, else from ``os.environ[entry.words_env_var]``.
+        #:
+        #: Arming rule: the spoken factor arms on its OWN env var
+        #: independently of whether the entry's ``code_env_var`` resolved --
+        #: each factor arms on its own secret, and a disabled spoken factor
+        #: (any of the four states below) never disturbs the numeric one.
+        #: This is exactly the 8283 launch state: code live, words inert.
+        #:
+        #: An entry is skipped -- no registry row -- in FOUR states (D-03):
+        #: no ``words_env_var`` on the entry; the env var absent from the
+        #: resolution source; a resolved value that is empty/whitespace-only;
+        #: or a resolved value equal to ``ANNOUNCEMENT_WORDS_UNSET_SENTINEL``
+        #: (D-03a) after strip+lowercase -- an EXACT whole-value match, never
+        #: a substring/token test, so a real phrase merely CONTAINING the
+        #: sentinel token is unaffected.
+        words_source = announcement_words if announcement_words is not None else os.environ
+        self._announcement_words_by_code_env_var: dict[
+            str, tuple[AnnouncementEntry, frozenset[str]]
+        ] = {}
+        for entry in telephony_cfg.announcements:
+            if not entry.words_env_var:
+                continue
+            raw_value = words_source.get(entry.words_env_var, "")
+            stripped_value = raw_value.strip()
+            if not stripped_value:
+                continue
+            if stripped_value.lower() == ANNOUNCEMENT_WORDS_UNSET_SENTINEL:
+                continue
+            words = frozenset(w.strip().lower() for w in stripped_value.split() if w.strip())
+            if not words:
+                continue
+            self._announcement_words_by_code_env_var[entry.code_env_var] = (entry, words)
 
         #: D-02's registry, keyed by the original Asterisk SIP channel ID.
         self.calls: dict[str, ActiveCall] = {}
@@ -1205,6 +1325,19 @@ class AsteriskCallController:
         :meth:`on_channel_dtmf_received` can also skip the PIN branch.
         Nothing else in this method changes: mint, grant_tier_id, the
         fail-closed timer start, and the pickup cue all stay byte-identical.
+
+        Quick task 260727-pdh (D-04/D-06/T-pdh-03): either-factor game
+        triggers. Immediately before constructing the ``GateProcessor``,
+        ``self._announcement_words_by_code_env_var`` is filtered through
+        ``_announcement_matches_did`` against THIS call's already-resolved
+        ``dialed_did`` -- the same fail-closed predicate the DTMF loop
+        (:meth:`on_channel_dtmf_received`) applies -- and the resulting
+        DID-scoped map, plus a dispatch closure, is threaded into the gate
+        as its ``announcement_words``/``on_announcement_words`` kwargs. A
+        spoken match resolves straight into :meth:`_gate_announcement` --
+        the SAME method the DTMF path already calls, so OTP fetch, SMS
+        relay, script build, and teardown are shared, never duplicated. The
+        DTMF path in :meth:`on_channel_dtmf_received` is byte-unchanged.
         """
         normalized_caller_id = _normalize_e164(caller_id)
         mint_configured = bool(self._telephony_cfg.tel_mint_url)
@@ -1248,6 +1381,29 @@ class AsteriskCallController:
             if active_call is not None:
                 await self._gate_unlock(active_call, caller_id=caller_id, sip_channel_id=sip_channel_id)
 
+        async def _on_announcement_words(code_env_var: str) -> None:
+            active_call = active_call_holder.get("call")
+            if active_call is None:
+                return
+            entry_words = self._announcement_words_by_code_env_var.get(code_env_var)
+            if entry_words is None:
+                return
+            entry, _words = entry_words
+            await self._gate_announcement(active_call, entry)
+
+        # Quick task 260727-pdh (D-04/T-pdh-03): fail-closed per-call DID
+        # scoping for the SPOKEN factor, applied BEFORE the GateProcessor is
+        # constructed -- reuses the exact same _announcement_matches_did
+        # predicate the DTMF loop (on_channel_dtmf_received) already applies,
+        # so an unresolved or foreign dialed DID can never arm a scoped
+        # entry's spoken trigger for this call. The map is keyed by the same
+        # code_env_var handle self._announcement_words_by_code_env_var uses.
+        call_announcement_words = {
+            code_env_var: words
+            for code_env_var, (entry, words) in self._announcement_words_by_code_env_var.items()
+            if _announcement_matches_did(entry, dialed_did)
+        }
+
         passphrase_words = (
             self._passphrase_words
             if self._telephony_cfg.gate_mode in ("passphrase", "either")
@@ -1268,6 +1424,12 @@ class AsteriskCallController:
             # concierge unlock factors (passphrase + DTMF PIN) -- only the
             # 333266 announcement takeover + fail-closed timer apply.
             concierge_unlock_enabled=not otp_only,
+            # Quick task 260727-pdh (D-04/D-06): the either-factor spoken
+            # trigger -- DID-scoped, code_env_var-keyed word registry plus
+            # the dispatch closure that resolves straight into
+            # _gate_announcement, the SAME method the DTMF factor calls.
+            announcement_words=call_announcement_words,
+            on_announcement_words=_on_announcement_words,
         )
 
         call_session = await create_call_session(
@@ -1488,7 +1650,10 @@ class AsteriskCallController:
         send_dids = _select_sms_send_dids(entry, active_call.dialed_did)
         sms_eligible = bool(send_dids) and bool(entry.sms_relay_url) and bool(dst)
         if sms_eligible:
-            url_body = ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code)
+            # Quick task 260727-qfq (D-07): per-entry claim-URL template,
+            # falling back to the legacy default when unset -- see
+            # _build_sms_claim_body's docstring.
+            url_body = _build_sms_claim_body(entry, code)
             bodies = (url_body, ANNOUNCEMENT_SMS_SECOND_BODY)
             bearer = os.environ.get(entry.otp_env_var, "") if entry.otp_env_var else ""
             relay_headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
@@ -1538,7 +1703,17 @@ class AsteriskCallController:
         never unlock an OTP-only DID. ``dtmf_raw`` is still appended and the
         announcement-code loop still runs for every call (otp_only or not),
         so 333266 keeps working on OTP-only DIDs exactly as it does on
-        every other DID."""
+        every other DID.
+
+        Quick task 260727-ohq (per-DID game scoping): every armed entry is
+        still evaluated on every call, but an entry is skipped unless it
+        matches this call's resolved dialed DID -- see
+        :func:`_announcement_matches_did`. A GLOBAL entry (``dids`` empty)
+        always matches; a SCOPED entry only matches a resolved dialed DID
+        that is one of its own -- an unresolved dialed DID can only ever
+        reach global entries (fail closed). Entries stay code-keyed
+        (``_announcements_by_code``), so distinct entries need distinct
+        code values regardless of DID scope."""
         if self._telephony_cfg.gate_mode not in ("dtmf", "either"):
             return
         channel_id = _normalize_token((event.get("channel", {}) or {}).get("id"))
@@ -1555,9 +1730,12 @@ class AsteriskCallController:
                 await active_call.gate.unlock("dtmf")
                 return
         for code, entry in self._announcements_by_code.items():
-            if code and active_call.dtmf_raw.endswith(code):
-                await self._gate_announcement(active_call, entry)
-                return
+            if not (code and active_call.dtmf_raw.endswith(code)):
+                continue
+            if not _announcement_matches_did(entry, active_call.dialed_did):
+                continue
+            await self._gate_announcement(active_call, entry)
+            return
 
     async def _teardown_gate_resources(
         self,

@@ -23,9 +23,11 @@ from klanker_voice.telephony.controller import (
     ANNOUNCEMENT_BYE_COPY,
     ANNOUNCEMENT_PUNCHLINE_PAUSE,
     ANNOUNCEMENT_SMS_BODY_TEMPLATE,
+    ANNOUNCEMENT_SMS_CLAIM_PREFIX,
     ANNOUNCEMENT_SMS_PUNCHLINE_COPY,
     ANNOUNCEMENT_SMS_SECOND_BODY,
     _build_announcement_script,
+    _build_sms_claim_body,
     _dialed_did_from_cidname,
     _dialed_did_from_sip_to,
     _select_sms_send_dids,
@@ -148,6 +150,44 @@ def test_sms_second_body_is_gsm7_ascii_safe():
     assert non_ascii == [], f"second SMS body has non-GSM-7 chars: {non_ascii!r}"
     assert "{" not in ANNOUNCEMENT_SMS_SECOND_BODY and "}" not in ANNOUNCEMENT_SMS_SECOND_BODY
     assert ANNOUNCEMENT_SMS_SECOND_BODY == "Hack the planet!"
+
+
+# --- Quick task 260727-qfq: _build_sms_claim_body (D-07) ---------------------
+
+
+def test_build_sms_claim_body_no_template_is_byte_identical_to_legacy_constant():
+    """An entry with NO sms_claim_url_template returns a string byte-identical
+    to ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code=code) -- the legacy
+    fallback, proven by equality against the REAL module constant (not a
+    duplicated literal)."""
+    entry = _announcement_entry()  # no sms_claim_url_template override
+    assert entry.sms_claim_url_template == ""
+    body = _build_sms_claim_body(entry, "482913")
+    assert body == ANNOUNCEMENT_SMS_BODY_TEMPLATE.format(code="482913")
+
+
+def test_build_sms_claim_body_with_template_substitutes_code():
+    """An entry WITH a template returns the Here: prefix + that template
+    with {code} substituted."""
+    entry = _announcement_entry(
+        sms_claim_url_template="https://q.defcon.run/c?c=didhtp3234&v={code}"
+    )
+    body = _build_sms_claim_body(entry, "482913")
+    assert body == ANNOUNCEMENT_SMS_CLAIM_PREFIX + "https://q.defcon.run/c?c=didhtp3234&v=482913"
+    assert body.startswith("Here: ")
+
+
+def test_build_sms_claim_body_shipped_style_template_is_gsm7_ascii_safe():
+    """The composed body for a shipped-style template is pure 7-bit ASCII
+    with no leftover brace -- the same GSM-7 rule guarding the module
+    constants."""
+    entry = _announcement_entry(
+        sms_claim_url_template="https://q.defcon.run/c?c=didhtp8283&v={code}"
+    )
+    body = _build_sms_claim_body(entry, "778899")
+    non_ascii = [c for c in body if ord(c) >= 128]
+    assert non_ascii == [], f"claim SMS body has non-GSM-7 chars: {non_ascii!r}"
+    assert "{" not in body and "}" not in body
 
 
 # --- _build_announcement_script branch ---------------------------------------
@@ -411,6 +451,47 @@ async def test_hook_eligible_posts_two_relay_calls_and_speaks_punchline(
     assert url0 == url1 == RELAY_URL
     assert to0 == to1 == "5197101515"
     assert dids0 == dids1 == ("6134805878",)
+    assert len(goodbye) == 1
+    assert ANNOUNCEMENT_SMS_PUNCHLINE_COPY in goodbye[0]
+    assert controller.calls == {}
+
+
+async def test_hook_templated_entry_posts_own_slug_and_static_second_beat(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """Quick task 260727-qfq (D-07): an entry with an sms_claim_url_template
+    posts msg1 carrying THAT entry's slug and the plain OTP, and msg2 stays
+    exactly 'Hack the planet!' -- still exactly TWO relay calls, still
+    speaks the sms-eligible punchline."""
+    goodbye = _stub_common(monkeypatch, otp="778899")
+    sent: list[tuple[Any, ...]] = []
+
+    async def _fake_relay(url, headers, to, message, dids):
+        sent.append((url, headers, to, message, dids))
+        return True
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._send_sms_via_relay", _fake_relay
+    )
+
+    templated_entry = _sms_entry(
+        sms_claim_url_template="https://q.defcon.run/c?c=didhtp8283&v={code}"
+    )
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        announcement_codes={ANNOUNCEMENT_CODE: templated_entry},
+    )
+
+    await controller.on_stasis_start(_stasis_event(caller_number="5197101515"))
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert len(sent) == 2
+    message0 = sent[0][3]
+    message1 = sent[1][3]
+    assert message0 == "Here: https://q.defcon.run/c?c=didhtp8283&v=778899"
+    assert message1 == "Hack the planet!"  # static second body, unchanged
     assert len(goodbye) == 1
     assert ANNOUNCEMENT_SMS_PUNCHLINE_COPY in goodbye[0]
     assert controller.calls == {}

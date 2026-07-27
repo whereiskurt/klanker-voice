@@ -756,6 +756,14 @@ func (s *Server) assembleConfig(ctx context.Context) ConfigView {
 	dids, _ := s.mergedInboundDIDs(ctx)
 	in.InboundDIDs = dids
 
+	// Quick task 260727-pdh: best-effort, mirrors the ReadManifest/
+	// ReadTopicMap/ReadTelephonyGate pattern above — an unreadable
+	// telephony.toml degrades to an empty games section, never blocks the
+	// rest of the console.
+	if games, err := s.opts.Repo.ReadTelephonyGames(); err == nil {
+		in.Games = AnnotateGameEnv(games)
+	}
+
 	return AssembleConfig(ctx, in)
 }
 

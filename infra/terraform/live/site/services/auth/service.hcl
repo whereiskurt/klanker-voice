@@ -168,7 +168,27 @@ locals {
           # absent/empty => uniform 404) and, when CTF_OTP_AUTH_TOKEN is set, enforces
           # a shared bearer (telephony-edge sends the same token). Both are SSM
           # SecureString, never in git/TOML.
+          #
+          # Per-game OTP dimension (quick 260727-qfq, D-01/D-08): the route now
+          # ALSO accepts ?g=<game>, which selects a seed via a static allowlist
+          # keyed by game (3234/3283/8283) rather than the one legacy secret
+          # above. All three parameters below are ALREADY seeded live and
+          # readback-verified (2026-07-27) — required for this wiring to be
+          # deploy-safe, since ECS fails task launch outright on an absent
+          # valueFrom parameter. No execution-role IAM change is needed: the
+          # ecs-task module's task-execution-role SSM policy already grants
+          # ssm:GetParameter(s) across the whole account/region parameter
+          # namespace, so a new valueFrom path here needs no policy edit.
+          #
+          # The legacy CTF_OTP_SECRET entry above STAYS until cutover
+          # completes: the route's no-`g` path still resolves from it, and the
+          # live telephony-edge keeps calling the bare (no-`g`) URL until it
+          # redeploys onto the new ?g=<game> otp_url values. Its removal is a
+          # POST-cutover step, not this task (see 260727-qfq-SUMMARY.md).
           { name = "CTF_OTP_SECRET", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret" },
+          { name = "CTF_OTP_SECRET_3234", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret_3234" },
+          { name = "CTF_OTP_SECRET_3283", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret_3283" },
+          { name = "CTF_OTP_SECRET_8283", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret_8283" },
           { name = "CTF_OTP_AUTH_TOKEN", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/auth_token" },
           # VoIP.ms REST API creds (quick 260716-hg5 follow-up): the internal
           # /ctf/sms relay sends the CTF OTP text via VoIP.ms sendSMS. The relay

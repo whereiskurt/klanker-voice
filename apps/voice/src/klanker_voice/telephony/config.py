@@ -95,6 +95,48 @@ class AnnouncementEntry:
             def secrets -> SSM), mirroring how the OTP bearer is read from
             ``otp_env_var``. Each entry is normalized to digits only; empties
             are dropped.
+        dids: OPTIONAL per-entry game scoping (quick task 260727-ohq). Empty
+            or absent -> the entry is GLOBAL (fires on every call, today's
+            behavior). Non-empty -> the entry only fires when the call's
+            resolved dialed DID is in this set; an unresolved dialed DID
+            reaches only global entries (fail closed). See the attribute's
+            own inline comment for the full rule.
+        words_env_var: OPTIONAL (quick task 260727-pdh) -- the NAME of the
+            environment variable holding this entry's spoken-trigger secret
+            words (a whitespace-separated phrase, mirrors ``code_env_var``
+            exactly: value in env/SSM, NEVER in TOML). Absent or empty (the
+            default, ``""``) means this entry simply has no spoken trigger --
+            a graceful skip, exactly like an unset ``code_env_var`` today;
+            the entry's numeric code keeps working unaffected. Deliberately
+            NOT named with a ``passphrase`` token: this module's shared
+            ``_reject_credential_fields`` gate (``_CREDENTIAL_FIELD_RE`` in
+            ``klanker_voice.config``) refuses any TOML key containing one,
+            the exact same reason ``otp_env_var`` above was renamed from the
+            design doc's proposed ``otp_auth_env_var``. ``words_env_var``
+            carries no credential token and mirrors the working
+            ``code_env_var``/``otp_env_var`` precedent.
+        sms_claim_url_template: OPTIONAL (quick task 260727-qfq, D-07) -- a
+            per-entry claim-URL template that replaces ONLY the URL portion
+            of the mid-call SMS's first message. A PUBLIC plain-URL
+            template, like ``otp_url`` -- carries NO credential; the OTP
+            itself is substituted into it at send time via a ``{code}``
+            placeholder. Must contain ``{code}`` when present (enforced at
+            load time, mirroring the ``line_template`` rule). Absent/empty
+            (the default, ``""``) means the controller falls back to its
+            built-in default claim URL, so every pre-qfq entry keeps its
+            exact current SMS body -- byte-identical backward compatibility.
+            The field name deliberately carries no credential-regex token
+            (no ``key``/``secret``/``token``/``auth``/etc. substring), the
+            same naming discipline that produced ``otp_env_var`` and
+            ``words_env_var`` above.
+
+    Note (quick task 260727-ohq): the controller's armed-trigger registry
+    (``AsteriskCallController._announcements_by_code``) is keyed by the
+    entry's RESOLVED code VALUE, not by DID scope -- so two entries intended
+    for two different games must resolve to two DIFFERENT code values (each
+    with its own ``code_env_var`` and its own SSM-seeded value). If two
+    entries' code env vars happen to hold the same value, only one survives
+    the registry regardless of ``dids`` scoping.
     """
 
     otp_url: str
@@ -129,6 +171,30 @@ class AnnouncementEntry:
     #: Empty ⇒ SMS is not sent even if ``sms_dids`` is set (the relay is the
     #: only send path). The bearer reuses ``otp_env_var``.
     sms_relay_url: str = ""
+    #: Per-DID game scoping (quick task 260727-ohq -- one-block-per-game
+    #: TOML layout). The set of DIALED DIDs this announcement entry is bound
+    #: to. Empty or absent (the default) means the entry is GLOBAL and fires
+    #: on every call -- byte-identical to before this field existed. When
+    #: non-empty, the entry only fires when the resolved dialed DID (the
+    #: same ``active_call.dialed_did`` ``on_stasis_start`` already resolves
+    #: via ``[telephony.cid_prefix_dids]``/the SIP ``To:`` header) is one of
+    #: these. An UNRESOLVED dialed DID (empty string -- a CID-prefix/To:
+    #: parse miss) matches ONLY global entries, NEVER scoped ones -- fail
+    #: closed, never guess. A DID is a public phone number, never a
+    #: credential, so the digits live safely in TOML. Normalized identically
+    #: to ``sms_dids``/``sms_reply_dids`` (digits-only, order preserved,
+    #: empties dropped) via the same ``_parse_sms_dids`` helper.
+    dids: tuple[str, ...] = ()
+    #: OPTIONAL spoken-trigger env var NAME (quick task 260727-pdh) -- see
+    #: the class docstring's ``words_env_var`` entry for the full rule (NAME
+    #: only, value in env/SSM, graceful skip when unset, deliberately not
+    #: named with a ``passphrase`` token).
+    words_env_var: str = ""
+    #: OPTIONAL per-entry claim-URL template (quick task 260727-qfq, D-07)
+    #: -- see the class docstring's ``sms_claim_url_template`` entry for the
+    #: full rule (PUBLIC URL template, ``{code}`` required when present,
+    #: empty means the controller's built-in default claim URL is used).
+    sms_claim_url_template: str = ""
 
 
 @dataclass(frozen=True)
@@ -344,6 +410,22 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
         sms_dids = _parse_sms_dids(item.get("sms_dids"), i)
         sms_reply_dids = _parse_sms_dids(item.get("sms_reply_dids"), i, field="sms_reply_dids")
         sms_relay_url = str(item.get("sms_relay_url", "")).strip()
+        dids = _parse_sms_dids(item.get("dids"), i, field="dids")
+        # Quick task 260727-pdh: optional, NAME-only, no non-empty
+        # validation (unlike code_env_var above) -- an entry without a
+        # spoken trigger simply omits this key.
+        words_env_var = str(item.get("words_env_var", "")).strip()
+        # Quick task 260727-qfq (D-07): optional PUBLIC claim-URL template.
+        # Coerce-and-strip like sms_relay_url above; only when non-empty do
+        # we enforce the {code} placeholder rule, mirroring the
+        # line_template check earlier in this function. An absent/empty
+        # value is NOT an error -- the controller's default claim URL
+        # covers it (backward compatible).
+        sms_claim_url_template = str(item.get("sms_claim_url_template", "")).strip()
+        if sms_claim_url_template and "{code}" not in sms_claim_url_template:
+            raise ConfigError(
+                f"telephony.announcement[{i}].sms_claim_url_template must contain a {{code}} placeholder"
+            )
 
         entries.append(
             AnnouncementEntry(
@@ -355,6 +437,9 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 sms_dids=sms_dids,
                 sms_reply_dids=sms_reply_dids,
                 sms_relay_url=sms_relay_url,
+                dids=dids,
+                words_env_var=words_env_var,
+                sms_claim_url_template=sms_claim_url_template,
             )
         )
 
@@ -371,8 +456,9 @@ def _parse_sms_dids(raw: object, i: int, field: str = "sms_dids") -> tuple[str, 
     ``sms_dids`` it is the runtime auto-fallback order. No credential ever
     appears here: a DID is a public phone number, and the VoIP.ms API creds are
     read from the environment by the controller, never from TOML. ``field``
-    names the parsed key for the error message (reused for both ``sms_dids``
-    and ``sms_reply_dids``)."""
+    names the parsed key for the error message (reused for ``sms_dids``,
+    ``sms_reply_dids``, and -- quick task 260727-ohq -- the per-entry ``dids``
+    game-scoping array; same normalization rule for all three callers)."""
     if raw is None:
         return ()
     if not isinstance(raw, (list, tuple)):

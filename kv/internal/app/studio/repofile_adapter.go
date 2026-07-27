@@ -259,6 +259,184 @@ func (r RepoFiles) ReadTelephonyGate() (string, error) {
 	return "", nil
 }
 
+// announcementWordsUnsetSentinel mirrors klanker_voice.telephony.controller.
+// ANNOUNCEMENT_WORDS_UNSET_SENTINEL (D-03a) — both kv operator surfaces
+// (kv telephony list, kv studio) must apply the IDENTICAL resolution rule
+// the Python controller applies: once a words_env_var resolves to this
+// literal value, the spoken trigger is DISABLED, exactly like an empty
+// value. Without this, a shell or container carrying the sentinel would
+// report a spoken trigger as live when it is actually inert — the console
+// would be lying about the one thing this panel exists to show. Matched
+// on the stripped, lowercased WHOLE value (see envTriggerStatus) — never a
+// substring/token test.
+const announcementWordsUnsetSentinel = "__unset__"
+
+// ParseTelephonyGames parses every [[telephony.announcement]] block in the
+// telephony TOML at path into a []GameEntry (quick task 260727-pdh), one
+// per block, in file order. A minimal line scan (no TOML dependency),
+// mirroring ReadTelephonyGate's scanning shape: a
+// "[[telephony.announcement]]" header line opens a new entry; any
+// subsequent line beginning with "[" closes it (re-opening another entry
+// when it is itself another announcement header, or ending the scan's
+// interest in the block otherwise). Lines inside a block are read via
+// parseTOMLScalarLine (code_env_var/words_env_var) and parseTOMLArrayLine
+// (dids/sms_reply_dids) — both already skip full-line comments, so a
+// commented-out example line (the shipped telephony.toml's historical
+// "# dids = [...]" precedent) is never mistaken for live config. A
+// missing file returns a typed *RepoFileError; every caller degrades that
+// to an empty games section rather than failing the whole view/report.
+func ParseTelephonyGames(path string) ([]GameEntry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, &RepoFileError{Path: path, Err: err}
+	}
+	defer f.Close()
+
+	games := []GameEntry{}
+	var current *GameEntry
+	inBlock := false
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			if current != nil {
+				games = append(games, *current)
+				current = nil
+			}
+			if strings.HasPrefix(line, "[[telephony.announcement]]") {
+				current = &GameEntry{DIDs: []string{}, SmsReplyDIDs: []string{}}
+				inBlock = true
+			} else {
+				inBlock = false
+			}
+			continue
+		}
+		if !inBlock || current == nil {
+			continue
+		}
+		if key, values, ok := parseTOMLArrayLine(line); ok {
+			switch key {
+			case "dids":
+				current.DIDs = values
+			case "sms_reply_dids":
+				current.SmsReplyDIDs = values
+			}
+			continue
+		}
+		key, value, ok := parseTOMLScalarLine(line)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "code_env_var":
+			current.CodeEnvVar = value
+		case "words_env_var":
+			current.WordsEnvVar = value
+		}
+	}
+	if current != nil {
+		games = append(games, *current)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, &RepoFileError{Path: path, Err: err}
+	}
+	return games, nil
+}
+
+// ReadTelephonyGames wraps ParseTelephonyGames, joining Root with the
+// package-level telephonyConfigPath constant — the same convention
+// ReadTelephonyGate already follows.
+func (r RepoFiles) ReadTelephonyGames() ([]GameEntry, error) {
+	path := filepath.Join(r.Root, telephonyConfigPath)
+	return ParseTelephonyGames(path)
+}
+
+// AnnotateGameEnv fills CodeStatus/WordsStatus on every entry in games from
+// the process environment (quick task 260727-pdh) — a PURE function that
+// reads env var NAMES and returns STATUSES only; it never places a value
+// on the returned struct (the same name-only posture SecretRef already
+// documents). This reports the LOCAL shell's environment ONLY — the
+// deployed values live in SSM and reach the container through
+// telephony-edge's task definition; an operator reading "not set" locally
+// is seeing their own shell, not prod.
+func AnnotateGameEnv(games []GameEntry) []GameEntry {
+	out := make([]GameEntry, len(games))
+	for i, g := range games {
+		g.CodeStatus = envTriggerStatus(g.CodeEnvVar)
+		g.WordsStatus = envTriggerStatus(g.WordsEnvVar)
+		out[i] = g
+	}
+	return out
+}
+
+// envTriggerStatus resolves one env var NAME to a "set" / "not set" / ""
+// (no env var name configured) status. Applies the SAME D-03a sentinel
+// rule the Python controller applies (announcementWordsUnsetSentinel,
+// stripped + lowercased, exact whole-value match) so this console can
+// never report an inert spoken trigger as live.
+func envTriggerStatus(name string) string {
+	if name == "" {
+		return ""
+	}
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return "not set"
+	}
+	if strings.ToLower(value) == announcementWordsUnsetSentinel {
+		return "not set"
+	}
+	return "set"
+}
+
+// parseTOMLArrayLine splits a "key = [\"a\", \"b\"]  # comment" line into
+// its key and a slice of unquoted, trimmed array elements (quick task
+// 260727-pdh) — parseTOMLScalarLine's quote-trimming only strips leading/
+// trailing quote CHARACTERS from the whole value, so it never correctly
+// splits a bracketed array literal into its individual elements. Skips
+// full-line comments exactly as parseTOMLScalarLine does — load-bearing,
+// not just hygiene: the shipped telephony.toml contains a commented-out
+// example array line inside an announcement block, and a parser that
+// mis-skipped the comment marker would surface phantom config to the
+// operator. Returns ok=false for a scalar line, a comment line, or any
+// line whose value is not bracketed. An empty array (`key = []`) returns
+// ok=true with a non-nil, empty values slice.
+func parseTOMLArrayLine(line string) (key string, values []string, ok bool) {
+	if strings.HasPrefix(line, "#") {
+		return "", nil, false
+	}
+	rawKey, rawValue, found := strings.Cut(line, "=")
+	if !found {
+		return "", nil, false
+	}
+	key = strings.TrimSpace(rawKey)
+	value := strings.TrimSpace(rawValue)
+	if idx := strings.Index(value, "]"); idx >= 0 {
+		// Drop any trailing inline comment AFTER the closing bracket
+		// (e.g. `dids = ["123"]  # a note`).
+		value = value[:idx+1]
+	}
+	if key == "" || !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+		return "", nil, false
+	}
+	inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "["), "]"))
+	if inner == "" {
+		return key, []string{}, true
+	}
+	parts := strings.Split(inner, ",")
+	values = make([]string, 0, len(parts))
+	for _, p := range parts {
+		v := strings.TrimSpace(strings.Trim(strings.TrimSpace(p), `"`))
+		if v != "" {
+			values = append(values, v)
+		}
+	}
+	return key, values, true
+}
+
 // parseTOMLScalarLine splits a "key = value  # comment" line, stripping
 // surrounding quotes from value and any trailing " #"-prefixed inline
 // comment. Mirrors cmd/telephony.go's parseTOMLScalarLine exactly (kept as

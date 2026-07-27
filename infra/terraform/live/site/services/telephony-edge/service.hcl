@@ -231,12 +231,49 @@ locals {
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/auth_token"
           },
           {
-            # CTF phone-OTP Revision 2 (quick 260716-1g0): the DTMF access code a
-            # caller enters at the §24 gate to trigger the OTP readout. The code
-            # NAME is in configs/telephony.toml as code_env_var; only the VALUE
-            # lives here in SSM (operator-rotatable, never in TOML/git).
-            name      = "CTF_ANNOUNCEMENT_CODE"
-            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code"
+            # Per-DID CTF phone-OTP games (quick task 260727-pdh, D-10 amended):
+            # FOUR announcement secrets replace the single legacy
+            # CTF_ANNOUNCEMENT_CODE wiring above (the pre-per-DID global game
+            # code) — no [[telephony.announcement]] entry in configs/
+            # telephony.toml references that bare env var name any more, so
+            # leaving it wired would be dead config. The legacy SSM PARAMETER
+            # itself (/kmv/secrets/use1/ctf/announcement_code) is intentionally
+            # NOT deleted here — the currently-running task definition still
+            # references it, and deleting it before this new wiring deploys +
+            # is verified live would fail task launch on the next restart; its
+            # deletion is a post-cutover operator step (see the SUMMARY).
+            #
+            # Launch-ordering hazard: ECS fails task launch outright on ANY
+            # missing valueFrom parameter. All FOUR parameters below are
+            # already seeded live and readback-verified (the three code params
+            # hold real per-game codes; the words param — see below —
+            # deliberately holds the literal `__unset__` sentinel rather than
+            # being absent), so this wiring is deploy-safe as written. A
+            # deploy-safe wiring and an inert spoken trigger coexist precisely
+            # because the sentinel is a real (non-empty) SSM value — see
+            # ANNOUNCEMENT_WORDS_UNSET_SENTINEL in controller.py (D-03a) for
+            # what gives that sentinel its "disabled" meaning at the
+            # application layer.
+            name      = "CTF_ANNOUNCEMENT_CODE_3234"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_3234"
+          },
+          {
+            name      = "CTF_ANNOUNCEMENT_CODE_3283"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_3283"
+          },
+          {
+            name      = "CTF_ANNOUNCEMENT_CODE_UCTF"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_uctf"
+          },
+          {
+            # The 725-404-8283 game's spoken-trigger words. Currently the
+            # `__unset__` sentinel (D-03a) — the ONLY remaining operator step
+            # to turn this game's spoken trigger on is replacing this SSM
+            # parameter's value with real whitespace-separated words; the
+            # numeric trigger (CTF_ANNOUNCEMENT_CODE_UCTF above) is already
+            # live regardless.
+            name      = "CTF_ANNOUNCEMENT_WORDS_UCTF"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_words_uctf"
           },
           # The telephony pipeline runs IN this container (Phase-9
           # call_runtime): after gate unlock it builds the same

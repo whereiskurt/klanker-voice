@@ -63,6 +63,21 @@ reach any LLM request, persona/system prompt, or transcript ledger — they
 live only in this processor's in-memory accumulated-token set for the
 duration of the (short) gate window.
 
+**Announcement spoken-trigger factor (quick task 260727-pdh, D-06/D-07).**
+The gate now accumulates tokens whenever EITHER the concierge passphrase
+factor is enabled OR an announcement-words registry is armed — including on
+an OTP-only DID, where accumulation used to be skipped entirely (quick task
+260717-o2q). This still forwards NOTHING and logs NOTHING: every
+``TranscriptionFrame`` remains swallowed (never ``push_frame``d) whether or
+not it completes an announcement match, and the only new log line on this
+path is ``cancel_for_takeover``'s existing ``reason`` + ``call_id`` line —
+never the heard tokens, the matched words, or the registry key. The matched
+entry's opaque key is handed to the injected ``on_announcement_words``
+callback (never the accumulated words themselves), which is spawned via
+``asyncio.create_task`` — never awaited inline, so a slow OTP
+fetch/readout/grace-sleep downstream can never stall this processor's frame
+queue.
+
 **Opt-in fail-path debug logging (260714, relaxes D-05e for the FAIL path
 only).** When ``telephony.gate_debug_log_heard=true`` (default False), the
 fail-closed path additionally logs one ``gate_fail_heard{call_id, caller_id,
@@ -86,7 +101,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Iterable
 
 from loguru import logger
@@ -109,6 +124,16 @@ UnlockCallback = Callable[[], Awaitable[None]]
 #: ``on_fail_closed()`` callback: awaited exactly once, on gate-window
 #: expiry with no unlock.
 FailClosedCallback = Callable[[], Awaitable[None]]
+
+#: ``on_announcement_words(key)`` callback (quick task 260727-pdh, the
+#: spoken-trigger seam from this processor to the controller's announcement
+#: dispatch): a callable taking ONE opaque, non-secret registry key
+#: (never the matched words, never the raw transcript) and returning an
+#: awaitable. Spawned via ``asyncio.create_task`` from inside
+#: ``process_frame`` -- never awaited inline (see :meth:`GateProcessor.
+#: process_frame`'s "spawn, do not await" note) -- and fires AT MOST ONCE
+#: per call, since a match resolves the gate synchronously first.
+AnnouncementWordsCallback = Callable[[str], Awaitable[None]]
 
 _TOKEN_RE = re.compile(r"[a-z0-9']+")
 
@@ -186,6 +211,8 @@ class GateProcessor(FrameProcessor):
         caller_id: str | None = None,
         debug_log_heard: bool = False,
         concierge_unlock_enabled: bool = True,
+        announcement_words: Mapping[str, Iterable[str]] | None = None,
+        on_announcement_words: AnnouncementWordsCallback | None = None,
         name: str | None = None,
     ) -> None:
         if name is not None:
@@ -226,6 +253,27 @@ class GateProcessor(FrameProcessor):
         self._suppress_speech_until_new_turn = False
         self._accumulated_tokens: set[str] = set()
         self._timer_task: asyncio.Task | None = None
+
+        # Quick task 260727-pdh: the announcement spoken-trigger registry --
+        # opaque entry key -> normalized (strip+lower, empties dropped) word
+        # set, insertion order preserved (dict preserves it since Python
+        # 3.7). Mirrors self._secret_words' own normalization. An entry
+        # whose normalized set ends up empty is dropped entirely -- it can
+        # never match match_passphrase's `if not secret_words: return False`
+        # guard anyway, so keeping it around would only cost a wasted
+        # iteration per frame.
+        self._announcement_words: dict[str, frozenset[str]] = {}
+        if announcement_words:
+            for key, words in announcement_words.items():
+                normalized = frozenset(w.strip().lower() for w in words if w and w.strip())
+                if normalized:
+                    self._announcement_words[key] = normalized
+        self._on_announcement_words = on_announcement_words
+        #: Strong reference to the spawned announcement-callback task (mirrors
+        #: ``ActiveCall.sms_task`` in the controller) -- ``asyncio.create_task``
+        #: only holds a WEAK reference, so without this the fire-and-forget
+        #: callback could be garbage-collected mid-flight.
+        self._announcement_task: asyncio.Task | None = None
 
     @property
     def unlocked(self) -> bool:
@@ -350,18 +398,54 @@ class GateProcessor(FrameProcessor):
             return
 
         if isinstance(frame, TranscriptionFrame):
-            # Quick task 260717-o2q: when the concierge passphrase factor is
-            # suppressed, skip tokenizing/accumulating and skip the match
-            # attempt entirely -- do not even build a token set toward a
-            # match that can never unlock. The frame is still swallowed
-            # below, byte-identical to the locked-window redaction boundary.
-            if self._concierge_unlock_enabled and frame.text and frame.text.strip():
+            has_text = bool(frame.text and frame.text.strip())
+            # Quick task 260727-pdh (D-06): tokens now accumulate when
+            # EITHER the concierge passphrase factor is enabled OR the
+            # announcement-words registry is armed -- previously
+            # accumulation was gated behind concierge_unlock_enabled alone
+            # (quick task 260717-o2q), so an OTP-only DID never even
+            # tokenized speech. An armed announcement registry needs that
+            # same token set to match against, even when the concierge
+            # factor itself can never unlock.
+            if has_text and (self._concierge_unlock_enabled or self._announcement_words):
                 self._accumulated_tokens |= _tokenize(frame.text)
+
+            # 1. Concierge match attempt -- unchanged semantics, unchanged
+            # priority (stays first). Quick task 260717-o2q: skipped
+            # entirely when the concierge factor is suppressed.
+            if self._concierge_unlock_enabled and has_text:
                 if match_passphrase(self._accumulated_tokens, self._secret_words):
                     await self.unlock("passphrase")
+
+            # 2. Announcement-words match attempt (quick task 260727-pdh,
+            # D-04/D-05/D-06/D-07/T-pdh-01/T-pdh-05): only when a registry
+            # is armed, a callback is injected, and the gate has NOT
+            # already resolved (a concierge unlock above, a prior
+            # announcement match, or fail-closed) -- this is what makes the
+            # callback fire AT MOST ONCE. Iterate the registry IN ORDER and
+            # reuse match_passphrase (D-05 -- no second matcher). On the
+            # first match: resolve the gate SYNCHRONOUSLY via
+            # cancel_for_takeover BEFORE spawning the callback (closes the
+            # fail-closed-timer race -- T-pdh-05), then spawn (never await
+            # inline -- awaiting here would block this processor's frame
+            # queue for the whole OTP fetch/readout/grace sleep, stalling
+            # every frame including teardown control frames).
+            if (
+                self._announcement_words
+                and self._on_announcement_words is not None
+                and not self._resolved
+            ):
+                for key, words in self._announcement_words.items():
+                    if match_passphrase(self._accumulated_tokens, words):
+                        self.cancel_for_takeover("announcement")
+                        self._announcement_task = asyncio.create_task(
+                            self._on_announcement_words(key)
+                        )
+                        break
+
             # D-05e/R5: never forward a pre-unlock transcription frame --
             # the structural redaction boundary. This is true whether or
-            # not this frame happened to complete the match.
+            # not this frame happened to complete either match.
             return
 
         if isinstance(

@@ -18,6 +18,8 @@ import (
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	smithy "github.com/aws/smithy-go"
 	"github.com/spf13/cobra"
+
+	"github.com/whereiskurt/klanker-voice/kv/internal/app/studio"
 )
 
 // --------------------------------------------------------------------------
@@ -554,5 +556,150 @@ func TestPrintTelephony_JSONIncludesInboundDIDs(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "14165551234") {
 		t.Errorf("JSON output missing the inbound DID: %s", buf.String())
+	}
+}
+
+// --------------------------------------------------------------------------
+// Phone games section (quick task 260727-pdh)
+
+func TestPrintTelephony_GamesSectionRendersDidsEnvVarsStatusesAndSms(t *testing.T) {
+	report := TelephonyListReport{
+		GateConfig: GateConfigReport{Found: false},
+		Games: []studio.GameEntry{
+			{
+				DIDs:         []string{"7254048283"},
+				CodeEnvVar:   "CTF_ANNOUNCEMENT_CODE_UCTF",
+				CodeStatus:   "set",
+				WordsEnvVar:  "CTF_ANNOUNCEMENT_WORDS_UCTF",
+				WordsStatus:  "not set",
+				SmsReplyDIDs: []string{"7254048283"},
+			},
+			{
+				DIDs:       []string{"7254043234"},
+				CodeEnvVar: "CTF_ANNOUNCEMENT_CODE_3234",
+				CodeStatus: "not set",
+				// No words_env_var -- numeric-only game.
+			},
+		},
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := printTelephony(cmd, report, false); err != nil {
+		t.Fatalf("printTelephony() error: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"Phone games",
+		"7254048283",
+		"CTF_ANNOUNCEMENT_CODE_UCTF",
+		"CTF_ANNOUNCEMENT_WORDS_UCTF",
+		"not set",
+		"7254043234",
+		"CTF_ANNOUNCEMENT_CODE_3234",
+		"(none)", // no words_env_var on the second entry
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q: %q", want, out)
+		}
+	}
+}
+
+func TestPrintTelephony_GamesSectionGlobalScopeWhenDidsEmpty(t *testing.T) {
+	report := TelephonyListReport{
+		GateConfig: GateConfigReport{Found: false},
+		Games: []studio.GameEntry{
+			{CodeEnvVar: "CTF_ANNOUNCEMENT_CODE_TEST", CodeStatus: "set"},
+		},
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := printTelephony(cmd, report, false); err != nil {
+		t.Fatalf("printTelephony() error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "global") {
+		t.Errorf("output missing the 'global' DID scope for an entry with no dids: %q", buf.String())
+	}
+}
+
+func TestPrintTelephony_GamesSectionEmptyDegradesGracefully(t *testing.T) {
+	report := TelephonyListReport{
+		GateConfig: GateConfigReport{Found: false},
+		Games:      []studio.GameEntry{},
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := printTelephony(cmd, report, false); err != nil {
+		t.Fatalf("printTelephony() error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "no [[telephony.announcement]] entries found") {
+		t.Errorf("output missing the empty-games note: %q", buf.String())
+	}
+}
+
+func TestPrintTelephony_JSONShapeCarriesGamesArray(t *testing.T) {
+	report := TelephonyListReport{
+		GateConfig: GateConfigReport{Found: false},
+		Games: []studio.GameEntry{
+			{DIDs: []string{"7254048283"}, CodeEnvVar: "CTF_ANNOUNCEMENT_CODE_UCTF", CodeStatus: "set"},
+		},
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := printTelephony(cmd, report, true); err != nil {
+		t.Fatalf("printTelephony() error: %v", err)
+	}
+	var decoded TelephonyListReport
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if len(decoded.Games) != 1 || decoded.Games[0].CodeEnvVar != "CTF_ANNOUNCEMENT_CODE_UCTF" {
+		t.Errorf("decoded.Games = %+v, want the seeded game entry", decoded.Games)
+	}
+}
+
+// TestPrintTelephony_GamesSectionNeverLeaksASecretValue proves the games
+// section prints env var NAMES only -- a value that would be catastrophic
+// if it leaked (a real DTMF code / spoken-trigger phrase) never appears in
+// either the text or JSON rendering, only the (non-secret) NAME does.
+func TestPrintTelephony_GamesSectionNeverLeaksASecretValue(t *testing.T) {
+	const secretLookingValue = "990011-should-never-print"
+	report := TelephonyListReport{
+		GateConfig: GateConfigReport{Found: false},
+		Games: []studio.GameEntry{
+			{
+				DIDs:        []string{"7254048283"},
+				CodeEnvVar:  "CTF_ANNOUNCEMENT_CODE_UCTF",
+				CodeStatus:  "set",
+				WordsEnvVar: "CTF_ANNOUNCEMENT_WORDS_UCTF",
+				WordsStatus: "set",
+			},
+		},
+	}
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	if err := printTelephony(cmd, report, false); err != nil {
+		t.Fatalf("printTelephony() error: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, secretLookingValue) {
+		t.Errorf("output leaked a secret-shaped value it was never given: %q", out)
+	}
+	if !strings.Contains(out, "CTF_ANNOUNCEMENT_CODE_UCTF") || !strings.Contains(out, "CTF_ANNOUNCEMENT_WORDS_UCTF") {
+		t.Errorf("output missing the (non-secret) env var NAMES: %q", out)
+	}
+}
+
+func TestReadTelephonyGames_MissingFileDegradesToEmptySlice(t *testing.T) {
+	got := readTelephonyGames(filepath.Join(t.TempDir(), "telephony.toml"))
+	if got == nil {
+		t.Error("readTelephonyGames() returned nil, want a non-nil empty slice on a missing file")
+	}
+	if len(got) != 0 {
+		t.Errorf("readTelephonyGames() = %+v, want empty for a missing file", got)
 	}
 }

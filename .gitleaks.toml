@@ -1,0 +1,17 @@
+# Gitleaks config — extends the default ruleset (which ran implicitly before
+# this file existed; [extend].useDefault keeps that behavior identical).
+#
+# Allowlist: exactly ONE synthetic value — the RFC 6238 TOTP test vector
+# (base32 of "12345678901234567890"), used as the fake CTF_OTP_SECRET* fixture
+# throughout apps/auth/webapp/src/app/ctf/__tests__/. It is a published
+# standards constant, not secret material. Scoped to the literal string (not a
+# path allowlist) so a REAL secret pasted into a test file still fails the scan.
+
+title = "klanker-voice gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "RFC 6238 test-vector base32 secret used in auth CTF OTP test fixtures"
+regexes = ['''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''']
