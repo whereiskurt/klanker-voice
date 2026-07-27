@@ -93,11 +93,13 @@ gate_mode = "either"                 # "dtmf" | "passphrase" | "either" (D-05b: 
 gate_window_seconds = 20             # fail-closed goodbye + hangup if neither factor lands in time (D-05d). Bumped 10→20 (260714): the pickup-cue ring+"hey" (~4s) + caller reaction + Deepgram finalization (~2.8s) overran the old 10s window — live call showed the caller speaking at ~6.6s but STT finalizing after fail-closed.
 gate_debug_log_heard = true          # ENABLED 260714 (operator KPH) to debug an accent/STT miss on the passphrase (a caller with an Indian accent couldn't pass "hack the planet"). TEMPORARY: gather a few real gate_fail_heard{...} lines, then flip back to false once the phase-2 fix (Deepgram keyterm boosting favored) lands. OPT-IN debug; default is false (keeps D-05e byte-identical). When true, a fail-closed call (gate-window expiry, no unlock) logs ONE gate_fail_heard{call_id, caller_id, heard_tokens, token_count} line to telephony-edge CloudWatch — the caller's number + what STT actually heard — for accent/STT debugging of the passphrase. Deliberate D-05e relaxation for the FAIL path ONLY: a failed attempt's heard words are by definition not the passphrase (no secret leak); NEVER on the success path; NEVER logs the passphrase words or the DTMF PIN. Flip to true + redeploy telephony-edge to gather real failed attempts.
 unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (minimal identity seam, D-05a). Dedicated PUBLIC from-anywhere caller tier (session 180s / period 900s / maxConcurrent 4), created live in kmv-auth-electro (thin-token, no redeploy) — see docs/operators/phase12-seed-data.md Task 3. Replaces the prior kph-tier grant (Kurt's own 24h tier stays untouched). NOTE: caller-ID→code mint (tel_mint_url) still resolves entitled callers to THEIR tier; this is only the fallback for un-entitled public callers. The row MUST exist live before this resolves — an absent tier fails closed (no-access).
-# Per-DID gate policy Part A (quick 260717-o2q): the two Las Vegas DIDs are
-# OTP-only -- the concierge passphrase/PIN are suppressed, only the global
-# 333266 announcement + the fail-closed timer apply. Resolved via the
-# [telephony.cid_prefix_dids] tags KVD3234/KVD3283 above.
-otp_only_dids = ["7254043234", "7254043283"]
+# Per-DID gate policy Part A (quick 260717-o2q; extended to a third DID by
+# quick 260727-pdh): all three Las Vegas DIDs are OTP-only -- the concierge
+# passphrase/PIN are suppressed on every one of them; only that DID's own
+# per-game [[telephony.announcement]] entry (below) + the fail-closed timer
+# apply. Resolved via the [telephony.cid_prefix_dids] tags KVD3234/KVD3283/
+# KVD8283 above.
+otp_only_dids = ["7254043234", "7254043283", "7254048283"]
 # Secrets (ARI creds, PIN, passphrase words) live in env/SSM, NEVER here (D-09):
 # ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
 # TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.
@@ -117,66 +119,108 @@ otp_only_dids = ["7254043234", "7254043283"]
 "KVD3283" = "7254043283"
 "KVD8283" = "7254048283"
 
-# CTF phone-OTP announcement (quick task 260716-1g0, Revision 2 -- design doc
-# docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-did-design.md,
-# "Revision 2 (2026-07-16) -- DTMF-code trigger, not DID" section). A caller
-# INSIDE the existing §24 answer-gate who enters the armed DTMF code hears
-# the current OTP (digit-spaced, twice) and the line hangs up -- no mint, no
-# quota, no concierge. Revision 1's DID-keyed pre-gate dispatch never fired
-# on a live call: VoIP.ms routes all DIDs to one sub-account, so the dialed
-# number is not visible at the edge. otp_env_var/code_env_var carry only env
-# var NAMES; the CTF_OTP_AUTH_TOKEN bearer and the CTF_ANNOUNCEMENT_CODE
-# trigger value are env/SSM-only, never here (D-09).
+# CTF phone-OTP announcement games (quick task 260716-1g0, Revision 2 --
+# design doc docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-
+# did-design.md, "Revision 2 (2026-07-16) -- DTMF-code trigger, not DID"
+# section, extended by quick tasks 260727-ohq/260727-pdh). A caller INSIDE
+# the existing §24 answer-gate who enters a GAME's armed DTMF code -- OR, as
+# of 260727-pdh, speaks that game's secret words -- hears that game's OTP
+# script (digit-spaced, twice) and the line hangs up -- no mint, no quota,
+# no concierge. Revision 1's DID-keyed pre-gate dispatch never fired on a
+# live call: VoIP.ms routes all DIDs to one sub-account, so the dialed
+# number is not visible at the edge.
 #
-# Per-DID game scoping (quick task 260727-ohq): each [[telephony.announcement]]
-# entry accepts an OPTIONAL `dids` array binding it to specific DIALED DIDs
-# (resolved via the [telephony.cid_prefix_dids] tags above). Absent/empty
-# keeps the entry GLOBAL -- fires on every call, which is what the live entry
-# below intentionally is. A populated list binds the entry to those dialed
-# DIDs only; an unresolved dialed DID (CID-prefix/To: parse miss) fires ONLY
-# global entries, never a scoped one (fail closed). This is the intended
-# one-block-per-game layout: DID list + its own code_env_var + its own
-# line_template + its own sms_reply_dids, one [[telephony.announcement]]
-# table per game, each entry's code_env_var resolving to a DISTINCT SSM
-# value (the controller's armed-trigger registry is keyed by the resolved
-# code VALUE, not by DID scope -- two entries sharing a code value collide
-# regardless of dids). Adding a second game entry (e.g. a 725-404-8283-only
-# block) is a separate operator step: a new SSM code param + task-def env
-# wiring -- OUT of scope for this task, which only adds the field.
+# One-block-per-game layout (quick task 260727-ohq/260727-pdh, D-02
+# amended): each game below is its OWN [[telephony.announcement]] table,
+# scoped to its OWN DID via `dids`, with its OWN `code_env_var` (numeric
+# trigger, REQUIRED) and OPTIONAL `words_env_var` (spoken trigger --
+# EITHER factor fires the same script, D-04). `dids`/`sms_reply_dids`
+# resolve via the [telephony.cid_prefix_dids] tags above; an unresolved
+# dialed DID (CID-prefix/To: parse miss) fires ONLY a GLOBAL entry (empty
+# `dids`), never a scoped one (fail closed). otp_env_var/code_env_var/
+# words_env_var carry only env var NAMES -- every VALUE (the
+# CTF_OTP_AUTH_TOKEN bearer, each game's DTMF code, each game's spoken
+# words) is env/SSM-only, never here (D-09).
+#
+# DISTINCT-CODE-VALUE constraint (cross-referenced from the two entries
+# below): the controller's armed-trigger registry is keyed by the RESOLVED
+# code VALUE, not by DID scope -- so all three entries below must resolve
+# to three DIFFERENT SSM-seeded values, or the later one silently wins
+# regardless of `dids`.
+#
+# Game 1: 725-404-3234 -- the original CTF OTP game (numeric-only, no
+# spoken trigger). code_env_var renamed 260727-pdh (from the old bare
+# CTF_ANNOUNCEMENT_CODE) for per-DID naming consistency with the two games
+# below; the code VALUE itself is unchanged, now seeded at
+# /kmv/secrets/use1/ctf/announcement_code_3234 instead of .../announcement_code.
 [[telephony.announcement]]
+dids = ["7254043234"]
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
-otp_env_var = "CTF_OTP_AUTH_TOKEN"     # NAME only; token VALUE from env/SSM at call time (D-09)
-code_env_var = "CTF_ANNOUNCEMENT_CODE"  # NAME only; trigger VALUE lives in SSM (/kmv/secrets/use1/ctf/announcement_code), never TOML (D-09)
+otp_env_var = "CTF_OTP_AUTH_TOKEN"            # NAME only; token VALUE from env/SSM at call time (D-09)
+code_env_var = "CTF_ANNOUNCEMENT_CODE_3234"   # NAME only; trigger VALUE lives in SSM (/kmv/secrets/use1/ctf/announcement_code_3234), never TOML (D-09)
 line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
-# did = "7254043234"   # informational only -- NOT visible at the edge (all DIDs arrive as the sub-account 557010_klanker-pbx)
-# dids = ["7254048283"]   # OPTIONAL (260727-ohq) -- example shape only; left commented so this entry stays GLOBAL (dids == ())
 # SMS-during-call (quick task 260716-hg5 -- design doc docs/superpowers/specs/
 # 2026-07-16-ctf-otp-sms-during-call-design.md): text the caller a written copy
 # of the OTP mid-call, then land the "check your phone" punchline. Ordered pool
 # of SMS-capable VoIP.ms sending DIDs -- tried IN ORDER until one send succeeds
 # (runtime auto-fallback). PUBLIC DID digits only; the VoIP.ms API creds are
-# env/SSM-only (VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD), never here. Empty /
-# absent ⇒ feature OFF. 6134805878 is the only SMS-enabled DID as of 2026-07-16
-# (verified via getDIDsInfo); enable SMS on the others in the portal + append
-# them here for fallback depth.
+# env/SSM-only (VOIPMS_API_USERNAME/VOIPMS_API_PASSWORD), never here.
 # EMPTY (quick 260717-buf): with per-DID reply now resolving via CALLERID(name)
 # (Approach C, below), the shared fallback pool is dropped so an UNRESOLVED
-# dialed DID sends NO text -- this reserves 613 (and every non-enrolled number):
-# dialed a Vegas DID -> texts from itself; dialed 613 / anything unprefixed ->
-# no text at all. (Was ["6134805878"]; 613 is no longer a universal sender.)
+# dialed DID sends NO text -- this reserves 613 (and every non-enrolled number).
 sms_dids = []
-# Per-DID reply (quick 260716-hg5 → resolution rewired in 260717-buf): each
-# ENROLLED dialed DID replies FROM ITSELF. The controller now resolves the
-# dialed DID from the per-DID Caller ID name prefix in ${CALLERID(name)} (see
+# Per-DID reply (quick 260716-hg5 → resolution rewired in 260717-buf, narrowed
+# to this game's own DID by 260727-pdh): the controller resolves the dialed
+# DID from the per-DID Caller ID name prefix in ${CALLERID(name)} (see
 # [telephony.cid_prefix_dids] above -- Approach C, live-confirmed 2026-07-17);
-# the dead SIP To: header stays only as a last-ditch fallback. Selection:
-# enrolled dialed DID -> text from THAT DID; a resolved-but-unenrolled DID -> NO
-# text; an unresolved dialed DID -> the (now empty) sms_dids pool -> no text.
-# All three Las Vegas DIDs are enrolled (SMS-enabled 2026-07-16, 2026-07-21).
-sms_reply_dids = ["7254043234", "7254043283", "7254048283"]
+# the dead SIP To: header stays only as a last-ditch fallback.
+sms_reply_dids = ["7254043234"]
 # The SMS is sent by POSTing to the auth app's internal /ctf/sms relay (quick
 # 260716-hg5 follow-up), NOT by calling VoIP.ms from here: VoIP.ms's API is
 # IP-allowlisted and this task's Fargate egress IP is ephemeral, while auth
 # egresses from the stable, whitelisted NAT EIP. The relay bearer reuses
 # otp_env_var (CTF_OTP_AUTH_TOKEN). Empty ⇒ no SMS is sent.
+sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
+
+# Game 2: 725-404-3283 -- a second numeric-only game, same OTP script,
+# different access code (quick task 260727-ohq, amended 260727-pdh). Its
+# SSM parameter (/kmv/secrets/use1/ctf/announcement_code_3283) is already
+# seeded live and readback-verified -- this entry is armed the moment the
+# task definition carries the env var. See the distinct-code-value
+# constraint noted above the 3234 entry; no words_env_var here -- numeric
+# only, unchanged behavior.
+[[telephony.announcement]]
+dids = ["7254043283"]
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
+otp_env_var = "CTF_OTP_AUTH_TOKEN"
+code_env_var = "CTF_ANNOUNCEMENT_CODE_3283"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_3283), never TOML (D-09)
+line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
+sms_dids = []
+sms_reply_dids = ["7254043283"]
+sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
+
+# Game 3: 725-404-8283 -- the new third game (quick task 260727-pdh, D-09
+# amended). Its EITHER-factor split launch state: the code param
+# (/kmv/secrets/use1/ctf/announcement_code_uctf) is seeded live, so its
+# numeric trigger works today; the words param
+# (/kmv/secrets/use1/ctf/announcement_words_uctf) holds the literal
+# `__unset__` sentinel, so its spoken trigger is inert until an operator
+# replaces that value with real whitespace-separated words. See
+# ANNOUNCEMENT_WORDS_UNSET_SENTINEL in controller.py for what gives that
+# sentinel its meaning (D-03a) -- not restated here. `line_template` is
+# deliberately the SAME OTP gag script as the two games above (all three
+# entries share one identical template string, differing only in `dids`,
+# `code_env_var`, `words_env_var`, and `sms_reply_dids`); a distinct 8283
+# script can land later as a TOML-only edit -- any replacement must keep a
+# `{code}` substitution or the loader rejects the whole config at boot. See
+# the distinct-code-value constraint noted above the 3234 entry.
+[[telephony.announcement]]
+dids = ["7254048283"]
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
+otp_env_var = "CTF_OTP_AUTH_TOKEN"
+code_env_var = "CTF_ANNOUNCEMENT_CODE_UCTF"     # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_uctf), never TOML (D-09)
+words_env_var = "CTF_ANNOUNCEMENT_WORDS_UCTF"   # NAME only; spoken-trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_words_uctf) -- currently the `__unset__` sentinel (D-03a)
+line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
+sms_dids = []
+sms_reply_dids = ["7254048283"]
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"

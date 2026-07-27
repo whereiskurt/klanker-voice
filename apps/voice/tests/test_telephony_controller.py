@@ -300,7 +300,11 @@ ANNOUNCEMENT_CODE = "990011"
 
 def _announcement_entry(**overrides) -> AnnouncementEntry:
     base = dict(
-        code_env_var="CTF_ANNOUNCEMENT_CODE",
+        # An arbitrary fixture value -- renamed off the retired bare
+        # CTF_ANNOUNCEMENT_CODE (quick task 260727-pdh, D-02 amended) so a
+        # grep for that retired name stays at zero; no live behavior
+        # depends on this literal string.
+        code_env_var="CTF_ANNOUNCEMENT_CODE_3234",
         otp_url="https://auth.klankermaker.ai/use1/ctf/otp",
         otp_env_var="CTF_OTP_AUTH_TOKEN",
         line_template="Hey! O T P. {code}. That's {code}. Bye.",
@@ -784,7 +788,7 @@ def test_announcement_code_unset_env_var_arms_no_trigger(
 ):
     """An entry whose code_env_var is unset in the environment arms NO
     trigger -- the controller's resolved announcement-code map is empty."""
-    monkeypatch.delenv("CTF_ANNOUNCEMENT_CODE", raising=False)
+    monkeypatch.delenv("CTF_ANNOUNCEMENT_CODE_3234", raising=False)
 
     cfg = load_config(make_config_file())
     knowledge_cfg = load_knowledge_config()

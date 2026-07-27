@@ -174,7 +174,7 @@ def test_telephony_table_must_be_a_table(tmp_path: Path):
 
 VALID_ANNOUNCEMENT_TOML = """
 [[telephony.announcement]]
-code_env_var = "CTF_ANNOUNCEMENT_CODE"
+code_env_var = "CTF_ANNOUNCEMENT_CODE_TEST"
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"
 line_template = "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
@@ -210,7 +210,7 @@ def test_well_formed_announcement_entry_parses(make_config_file):
     cfg = load_telephony_config(path)
     assert len(cfg.announcements) == 1
     entry = cfg.announcements[0]
-    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE"
+    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_TEST"
     assert entry.otp_url == "https://auth.klankermaker.ai/use1/ctf/otp"
     assert entry.otp_env_var == "CTF_OTP_AUTH_TOKEN"
     assert entry.line_template == "Hey! Let me get you that O T P. {code}. That's {code}. Buh bye."
@@ -229,7 +229,7 @@ def test_announcement_entry_without_code_placeholder_rejected(make_config_file):
 
 def test_announcement_entry_missing_code_env_var_rejected(make_config_file):
     bad_toml = VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML.replace(
-        'code_env_var = "CTF_ANNOUNCEMENT_CODE"', 'code_env_var = ""'
+        'code_env_var = "CTF_ANNOUNCEMENT_CODE_TEST"', 'code_env_var = ""'
     )
     path = make_config_file(append=bad_toml)
     with pytest.raises(ConfigError, match="code_env_var"):
@@ -267,12 +267,14 @@ def test_announcement_otp_env_var_optional_defaults_empty(make_config_file):
 def test_real_checked_in_telephony_toml_has_announcement_entry():
     """apps/voice/configs/telephony.toml (the standalone telephony-edge
     harness config, NOT pipeline.toml) is code-keyed (Revision 2,
-    260716-1g0) -- the trigger value itself lives only in SSM."""
+    260716-1g0) -- the trigger value itself lives only in SSM. Quick task
+    260727-pdh: three per-DID game entries now, the first (3234) renamed off
+    the retired bare CTF_ANNOUNCEMENT_CODE name."""
     telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
     cfg = load_telephony_config(telephony_toml_path)
-    assert len(cfg.announcements) == 1
+    assert len(cfg.announcements) == 3
     entry = cfg.announcements[0]
-    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE"
+    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_3234"
     assert entry.otp_env_var == "CTF_OTP_AUTH_TOKEN"
     assert "{code}" in entry.line_template
 
@@ -329,15 +331,16 @@ def test_announcement_sms_relay_url_absent_defaults_empty(make_config_file):
 
 
 def test_shipped_telephony_toml_arms_sms_did_and_relay(make_config_file):
-    """The shipped configs/telephony.toml announcement entry has an EMPTY sms_dids
-    fallback pool (quick 260717-buf reserves 613 -- unresolved dialed DID sends no
-    text), the auth /ctf/sms relay URL, and per-DID reply enrollment for all three
-    Las Vegas DIDs (which now resolve via the CALLERID(name) prefix map)."""
+    """The shipped configs/telephony.toml's 3234 game entry has an EMPTY
+    sms_dids fallback pool (quick 260717-buf reserves 613 -- unresolved
+    dialed DID sends no text), the auth /ctf/sms relay URL, and per-DID
+    reply enrollment NARROWED (quick task 260727-pdh, D-02 amended) to its
+    OWN single DID -- 3283/8283 are now served by their own entries."""
     telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
     cfg = load_telephony_config(telephony_toml_path)
     assert cfg.announcements[0].sms_dids == ()
     assert cfg.announcements[0].sms_relay_url == "https://auth.klankermaker.ai/use1/ctf/sms"
-    assert cfg.announcements[0].sms_reply_dids == ("7254043234", "7254043283", "7254048283")
+    assert cfg.announcements[0].sms_reply_dids == ("7254043234",)
 
 
 # --- Quick task 260716-hg5 follow-up: [[telephony.announcement]].sms_reply_dids
@@ -442,11 +445,12 @@ def test_otp_only_dids_non_list_rejected(make_config_file):
         load_telephony_config(make_config_file(append=bad_toml))
 
 
-def test_shipped_telephony_toml_seeds_both_vegas_otp_only_dids(make_config_file):
+def test_shipped_telephony_toml_seeds_all_three_vegas_otp_only_dids(make_config_file):
     """The shipped configs/telephony.toml seeds otp_only_dids with exactly the
-    two Las Vegas DIDs (per-DID gate policy Part A)."""
+    three Las Vegas DIDs (per-DID gate policy Part A, extended to 8283 by
+    quick task 260727-pdh)."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
-    assert cfg.otp_only_dids == ("7254043234", "7254043283")
+    assert cfg.otp_only_dids == ("7254043234", "7254043283", "7254048283")
 
 
 # --- Quick task 260727-ohq: [[telephony.announcement]].dids (per-DID scoping) --
@@ -493,12 +497,56 @@ def test_announcement_dids_non_list_rejected(make_config_file):
         load_telephony_config(path)
 
 
-def test_shipped_telephony_toml_announcement_dids_still_global(make_config_file):
-    """D-04: the shipped configs/telephony.toml live announcement entry keeps
-    parsing to dids == () -- no behavior change shipped in this task."""
+def test_shipped_telephony_toml_announcement_dids_now_per_game_scoped(make_config_file):
+    """D-04/D-02 (amended, quick task 260727-pdh): the shipped
+    configs/telephony.toml now ships THREE per-DID game entries, each
+    scoped to its own single DID -- no entry stays GLOBAL any more."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
-    assert len(cfg.announcements) == 1
-    assert cfg.announcements[0].dids == ()
+    assert len(cfg.announcements) == 3
+    assert cfg.announcements[0].dids == ("7254043234",)
+    assert cfg.announcements[1].dids == ("7254043283",)
+    assert cfg.announcements[2].dids == ("7254048283",)
+
+
+def test_shipped_telephony_toml_three_games_share_template_distinct_code_names(
+    make_config_file,
+):
+    """All three shipped game entries carry ONE identical line_template
+    containing a {code} placeholder, and all three code_env_var names are
+    distinct (the cheapest available proxy for the distinct-code-value
+    constraint, since the values themselves live only in SSM)."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    assert len(cfg.announcements) == 3
+    templates = {e.line_template for e in cfg.announcements}
+    assert len(templates) == 1
+    assert "{code}" in next(iter(templates))
+    code_env_vars = [e.code_env_var for e in cfg.announcements]
+    assert len(set(code_env_vars)) == len(code_env_vars) == 3
+
+
+def test_shipped_telephony_toml_3283_game_entry(make_config_file):
+    """The 3283 game entry: its own DID, its own distinct code_env_var NAME,
+    its own single-DID sms_reply_dids, and NO words_env_var (numeric-only,
+    unchanged behavior)."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    entry = cfg.announcements[1]
+    assert entry.dids == ("7254043283",)
+    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_3283"
+    assert entry.sms_reply_dids == ("7254043283",)
+    assert entry.words_env_var == ""
+
+
+def test_shipped_telephony_toml_8283_game_entry(make_config_file):
+    """The 8283 game entry: its own DID, both env var NAMES (code + words),
+    and its own single-DID sms_reply_dids -- the either-factor split launch
+    state (numeric live, spoken inert behind the __unset__ sentinel) is
+    proven at the controller layer, not here."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    entry = cfg.announcements[2]
+    assert entry.dids == ("7254048283",)
+    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_UCTF"
+    assert entry.words_env_var == "CTF_ANNOUNCEMENT_WORDS_UCTF"
+    assert entry.sms_reply_dids == ("7254048283",)
 
 
 # --- Quick task 260727-pdh: [[telephony.announcement]].words_env_var --------
