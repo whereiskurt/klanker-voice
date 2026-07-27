@@ -127,12 +127,29 @@ otp_only_dids = ["7254043234", "7254043283"]
 # number is not visible at the edge. otp_env_var/code_env_var carry only env
 # var NAMES; the CTF_OTP_AUTH_TOKEN bearer and the CTF_ANNOUNCEMENT_CODE
 # trigger value are env/SSM-only, never here (D-09).
+#
+# Per-DID game scoping (quick task 260727-ohq): each [[telephony.announcement]]
+# entry accepts an OPTIONAL `dids` array binding it to specific DIALED DIDs
+# (resolved via the [telephony.cid_prefix_dids] tags above). Absent/empty
+# keeps the entry GLOBAL -- fires on every call, which is what the live entry
+# below intentionally is. A populated list binds the entry to those dialed
+# DIDs only; an unresolved dialed DID (CID-prefix/To: parse miss) fires ONLY
+# global entries, never a scoped one (fail closed). This is the intended
+# one-block-per-game layout: DID list + its own code_env_var + its own
+# line_template + its own sms_reply_dids, one [[telephony.announcement]]
+# table per game, each entry's code_env_var resolving to a DISTINCT SSM
+# value (the controller's armed-trigger registry is keyed by the resolved
+# code VALUE, not by DID scope -- two entries sharing a code value collide
+# regardless of dids). Adding a second game entry (e.g. a 725-404-8283-only
+# block) is a separate operator step: a new SSM code param + task-def env
+# wiring -- OUT of scope for this task, which only adds the field.
 [[telephony.announcement]]
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"     # NAME only; token VALUE from env/SSM at call time (D-09)
 code_env_var = "CTF_ANNOUNCEMENT_CODE"  # NAME only; trigger VALUE lives in SSM (/kmv/secrets/use1/ctf/announcement_code), never TOML (D-09)
 line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
 # did = "7254043234"   # informational only -- NOT visible at the edge (all DIDs arrive as the sub-account 557010_klanker-pbx)
+# dids = ["7254048283"]   # OPTIONAL (260727-ohq) -- example shape only; left commented so this entry stays GLOBAL (dids == ())
 # SMS-during-call (quick task 260716-hg5 -- design doc docs/superpowers/specs/
 # 2026-07-16-ctf-otp-sms-during-call-design.md): text the caller a written copy
 # of the OTP mid-call, then land the "check your phone" punchline. Ordered pool

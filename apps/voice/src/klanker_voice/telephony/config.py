@@ -95,6 +95,20 @@ class AnnouncementEntry:
             def secrets -> SSM), mirroring how the OTP bearer is read from
             ``otp_env_var``. Each entry is normalized to digits only; empties
             are dropped.
+        dids: OPTIONAL per-entry game scoping (quick task 260727-ohq). Empty
+            or absent -> the entry is GLOBAL (fires on every call, today's
+            behavior). Non-empty -> the entry only fires when the call's
+            resolved dialed DID is in this set; an unresolved dialed DID
+            reaches only global entries (fail closed). See the attribute's
+            own inline comment for the full rule.
+
+    Note (quick task 260727-ohq): the controller's armed-trigger registry
+    (``AsteriskCallController._announcements_by_code``) is keyed by the
+    entry's RESOLVED code VALUE, not by DID scope -- so two entries intended
+    for two different games must resolve to two DIFFERENT code values (each
+    with its own ``code_env_var`` and its own SSM-seeded value). If two
+    entries' code env vars happen to hold the same value, only one survives
+    the registry regardless of ``dids`` scoping.
     """
 
     otp_url: str
@@ -129,6 +143,20 @@ class AnnouncementEntry:
     #: Empty ⇒ SMS is not sent even if ``sms_dids`` is set (the relay is the
     #: only send path). The bearer reuses ``otp_env_var``.
     sms_relay_url: str = ""
+    #: Per-DID game scoping (quick task 260727-ohq -- one-block-per-game
+    #: TOML layout). The set of DIALED DIDs this announcement entry is bound
+    #: to. Empty or absent (the default) means the entry is GLOBAL and fires
+    #: on every call -- byte-identical to before this field existed. When
+    #: non-empty, the entry only fires when the resolved dialed DID (the
+    #: same ``active_call.dialed_did`` ``on_stasis_start`` already resolves
+    #: via ``[telephony.cid_prefix_dids]``/the SIP ``To:`` header) is one of
+    #: these. An UNRESOLVED dialed DID (empty string -- a CID-prefix/To:
+    #: parse miss) matches ONLY global entries, NEVER scoped ones -- fail
+    #: closed, never guess. A DID is a public phone number, never a
+    #: credential, so the digits live safely in TOML. Normalized identically
+    #: to ``sms_dids``/``sms_reply_dids`` (digits-only, order preserved,
+    #: empties dropped) via the same ``_parse_sms_dids`` helper.
+    dids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -344,6 +372,7 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
         sms_dids = _parse_sms_dids(item.get("sms_dids"), i)
         sms_reply_dids = _parse_sms_dids(item.get("sms_reply_dids"), i, field="sms_reply_dids")
         sms_relay_url = str(item.get("sms_relay_url", "")).strip()
+        dids = _parse_sms_dids(item.get("dids"), i, field="dids")
 
         entries.append(
             AnnouncementEntry(
@@ -355,6 +384,7 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 sms_dids=sms_dids,
                 sms_reply_dids=sms_reply_dids,
                 sms_relay_url=sms_relay_url,
+                dids=dids,
             )
         )
 
@@ -371,8 +401,9 @@ def _parse_sms_dids(raw: object, i: int, field: str = "sms_dids") -> tuple[str, 
     ``sms_dids`` it is the runtime auto-fallback order. No credential ever
     appears here: a DID is a public phone number, and the VoIP.ms API creds are
     read from the environment by the controller, never from TOML. ``field``
-    names the parsed key for the error message (reused for both ``sms_dids``
-    and ``sms_reply_dids``)."""
+    names the parsed key for the error message (reused for ``sms_dids``,
+    ``sms_reply_dids``, and -- quick task 260727-ohq -- the per-entry ``dids``
+    game-scoping array; same normalization rule for all three callers)."""
     if raw is None:
         return ()
     if not isinstance(raw, (list, tuple)):

@@ -447,3 +447,55 @@ def test_shipped_telephony_toml_seeds_both_vegas_otp_only_dids(make_config_file)
     two Las Vegas DIDs (per-DID gate policy Part A)."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
     assert cfg.otp_only_dids == ("7254043234", "7254043283")
+
+
+# --- Quick task 260727-ohq: [[telephony.announcement]].dids (per-DID scoping) --
+#
+# An entry with a non-empty `dids` list only dispatches when the call's
+# resolved dialed_did is in that list; absent/empty stays GLOBAL. Parsed via
+# the same `_parse_sms_dids` normalizer as sms_dids/sms_reply_dids.
+
+
+def test_announcement_dids_absent_defaults_empty(make_config_file):
+    """No `dids` line -> `()` -- the entry is GLOBAL, byte-identical to the
+    pre-260727-ohq announcement shape."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].dids == ()
+
+
+def test_announcement_dids_empty_array_defaults_empty(make_config_file):
+    """`dids = []` -> `()` -- explicit empty is treated identically to
+    absent (also GLOBAL)."""
+    empty_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + "\ndids = []\n"
+    path = make_config_file(append=VALID_TELEPHONY_TOML + empty_toml)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].dids == ()
+
+
+def test_announcement_dids_parses_and_normalizes(make_config_file):
+    """`dids` normalizes to digits-only DIDs (same rule as sms_dids), order
+    preserved, blank/junk elements dropped."""
+    dids_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + (
+        '\ndids = ["725-404-8283", "+17254043234", "  "]\n'
+    )
+    path = make_config_file(append=VALID_TELEPHONY_TOML + dids_toml)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].dids == ("7254048283", "17254043234")
+
+
+def test_announcement_dids_non_list_rejected(make_config_file):
+    """A scalar `dids` (not an array) is a hard config error naming the
+    field."""
+    bad_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + '\ndids = "7254048283"\n'
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="dids"):
+        load_telephony_config(path)
+
+
+def test_shipped_telephony_toml_announcement_dids_still_global(make_config_file):
+    """D-04: the shipped configs/telephony.toml live announcement entry keeps
+    parsing to dids == () -- no behavior change shipped in this task."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    assert len(cfg.announcements) == 1
+    assert cfg.announcements[0].dids == ()
