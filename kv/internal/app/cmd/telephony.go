@@ -493,6 +493,10 @@ func NewTelephonyCmd(cfg *Config) *cobra.Command {
 	list.Flags().StringVar(&configPath, "config", defaultTelephonyConfigPath, "path to the telephony pipeline TOML config (for the [telephony] gate-config section)")
 	telephonyCmd.AddCommand(list)
 
+	// Quick task 260727-v5e: per-DID call-volume/outcome analytics from the
+	// game_call_event log lines telephony-edge emits at teardown.
+	telephonyCmd.AddCommand(newTelephonyStatsCmd(cfg))
+
 	return telephonyCmd
 }
 
