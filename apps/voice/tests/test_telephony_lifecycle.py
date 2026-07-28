@@ -35,6 +35,7 @@ real AWS call (CloudWatch/ECS/DynamoDB) -- everything below is a fake:
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -42,6 +43,7 @@ import pytest
 from klanker_voice import quota
 from klanker_voice.call_runtime import CallSession
 from klanker_voice.config import load_config, load_knowledge_config
+from klanker_voice.telephony.call_event import CALL_EVENT_MARKER
 from klanker_voice.telephony.config import AnnouncementEntry, TelephonyConfig
 from klanker_voice.telephony.controller import ActiveCall, AsteriskCallController
 
@@ -55,6 +57,7 @@ from tests.test_call_runtime import (  # noqa: F401 -- fake_aws/reset_active_cou
     fake_aws,
     reset_active_count,
 )
+from tests.test_telephony_gate import loguru_caplog  # noqa: F401 -- shared loguru->caplog bridge fixture
 
 
 # --- fakes ---------------------------------------------------------------
@@ -270,6 +273,21 @@ def _patch_start_gate(
     monkeypatch.setattr("klanker_voice.telephony.controller.quota.start_gate", _fake_start_gate)
 
 
+def _extract_call_events(text: str) -> list[dict[str, Any]]:
+    """Quick task 260727-v5e: pull every ``game_call_event`` marker line out
+    of ``loguru_caplog.text`` and parse its JSON payload -- shared helper so
+    every teardown-path test below can assert ``len(events) == 1``
+    uniformly."""
+    events: list[dict[str, Any]] = []
+    marker = CALL_EVENT_MARKER + " "
+    for line in text.splitlines():
+        idx = line.find(marker)
+        if idx == -1:
+            continue
+        events.append(json.loads(line[idx + len(marker) :]))
+    return events
+
+
 # --- (a)/(f) StasisStart allocation (Task 1) ------------------------------
 
 
@@ -370,11 +388,17 @@ async def test_channel_destroyed_closes_exactly_once(
 
 
 async def test_simultaneous_close_calls_release_exactly_once(
-    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
 ):
     """Simulated simultaneous hangup + timeout: two racing calls to
     ``_close_active_call`` for the SAME ``ActiveCall`` tear down exactly
-    once (the ``ActiveCall.closed`` guard, T-11-05-01)."""
+    once (the ``ActiveCall.closed`` guard, T-11-05-01).
+
+    Quick task 260727-v5e (Test 14, D-01 telemetry): also asserts exactly
+    ONE ``game_call_event`` marker line -- the emission position (right
+    after the idempotency flag flip) makes exactly-once telemetry a
+    corollary of the pre-existing teardown-once guarantee, never a second
+    emission path to keep in sync."""
     controller, ari, sessions = _build_controller(make_config_file)
     _patch_start_gate(monkeypatch)
     await controller.on_stasis_start(_stasis_event())
@@ -389,6 +413,7 @@ async def test_simultaneous_close_calls_release_exactly_once(
     assert ari.count("destroy_bridge", arg="bridge-1") == 1
     assert ari.count("hangup", arg="ext-media-1") == 1
     assert sessions[0].closed is True
+    assert len(_extract_call_events(loguru_caplog.text)) == 1
 
 
 async def test_hard_timeout_hangs_up_sip_channel(
@@ -1272,3 +1297,171 @@ async def test_gated_writer_disabled_when_mint_unconfigured(
     assert writer.enabled is True
     await writer.append(role="user", text="hello")
     assert writer._buffer[-1]["code_hash"] is None
+
+
+# --- Quick task 260727-v5e: game-call telemetry teardown-path coverage -----
+
+
+async def test_normal_path_passphrase_unlock_then_destroyed_emits_one_event(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 10: gated call, passphrase unlock, then ChannelDestroyed --
+    exactly one event, outcome="concierge_unlock_passphrase", non-null
+    seconds_to_outcome, duration_seconds present."""
+    from pipecat.frames.frames import TranscriptionFrame
+    from pipecat.processors.frame_processor import FrameDirection
+
+    _patch_start_gate(monkeypatch)
+
+    async def _spy_greet_now(worker, context):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(unlock_tier_id="kph-tier"),
+        passphrase_words=frozenset({"purple", "falcon", "midnight", "compass"}),
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    gate = active_call.gate
+
+    await gate.process_frame(
+        TranscriptionFrame(text="the midnight compass", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await gate.process_frame(
+        TranscriptionFrame(text="found a purple falcon", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    assert gate.unlocked is True
+
+    await controller.on_channel_destroyed(_channel_destroyed_event("chan-1"))
+
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "concierge_unlock_passphrase"
+    assert events[0]["seconds_to_outcome"] is not None
+    assert events[0]["duration_seconds"] is not None
+
+
+async def test_dtmf_pin_unlock_reports_digits_entered(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 11: DTMF PIN unlock -- outcome="concierge_unlock_dtmf" and
+    digits_entered equal to the number of digits dialed."""
+    _patch_start_gate(monkeypatch)
+
+    async def _spy_greet_now(worker, context):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file, telephony_cfg=_gated_cfg(), access_pin="4242"
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    for digit in "4242":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+    active_call = controller.calls["chan-1"]
+    assert active_call.gate.unlocked is True
+
+    await controller.on_channel_destroyed(_channel_destroyed_event("chan-1"))
+
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "concierge_unlock_dtmf"
+    assert events[0]["digits_entered"] == 4
+
+
+async def test_early_hangup_before_resolution_emits_one_event_null_seconds_to_outcome(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 12: ChannelDestroyed before any resolution -- exactly one
+    event, outcome="early_hangup", seconds_to_outcome is null."""
+    controller, ari, sessions = _build_controller(
+        make_config_file, telephony_cfg=_gated_cfg(gate_window_seconds=3600.0)
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    assert controller.calls["chan-1"].gate.unlocked is False
+
+    await controller.on_channel_destroyed(_channel_destroyed_event("chan-1"))
+
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "early_hangup"
+    assert events[0]["seconds_to_outcome"] is None
+
+
+async def test_gate_window_expiry_fail_closed_emits_gate_timeout(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 13: fail-closed on gate-window expiry -- exactly one event,
+    outcome="gate_timeout"."""
+    async def _spy_speak_goodbye(worker, copy):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_window_seconds=0.05),
+        quota_cfg=_quota_config(reconnect_grace_seconds=3600.0, goodbye_grace_seconds=0.01),
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    await asyncio.sleep(0.3)
+
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "gate_timeout"
+
+
+async def test_allocation_failure_emits_one_error_event_no_registered_call(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 15: a media/bridge allocation failure (create_bridge raises) --
+    exactly one event, outcome="error", and controller.calls stays empty (no
+    ActiveCall was ever registered) -- proving _teardown_gate_resources is
+    the OTHER emission seam _close_active_call can never see."""
+    controller, ari, sessions = _build_controller(make_config_file)
+
+    async def _boom(bridge_type: str = "mixing") -> str:
+        raise RuntimeError("asterisk create_bridge failed")
+
+    monkeypatch.setattr(ari, "create_bridge", _boom)
+
+    await controller.on_stasis_start(_stasis_event())
+
+    assert controller.calls == {}
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "error"
+    assert events[0]["digits_entered"] == 0
+    assert events[0]["words_heard"] == 0
+    assert events[0]["seconds_to_outcome"] is None
+
+
+async def test_ungated_escape_hatch_emits_one_event_with_ungated_grant_label(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 16: the require_gate=False dev-only escape hatch still emits
+    exactly one event on teardown, with the ungated_grant label -- proving
+    D-01 holds on the dev path too."""
+    controller, ari, sessions = _build_controller(make_config_file)  # require_gate=False default
+    _patch_start_gate(monkeypatch)
+
+    await controller.on_stasis_start(_stasis_event())
+    assert controller.calls["chan-1"].gate is None
+
+    await controller.on_channel_destroyed(_channel_destroyed_event("chan-1"))
+
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "ungated_grant"

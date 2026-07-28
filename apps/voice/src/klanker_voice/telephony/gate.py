@@ -240,6 +240,12 @@ class GateProcessor(FrameProcessor):
         self._on_fail_closed = on_fail_closed
 
         self._unlocked = False
+        #: Quick task 260727-v5e (D-04 telemetry): which unlock factor
+        #: resolved the gate -- "dtmf" or "passphrase", or ``None`` before
+        #: resolution or when ``concierge_unlock_enabled=False`` suppressed
+        #: the attempt. Read-only via the :attr:`unlock_method` property;
+        #: never set by ``cancel_for_takeover`` (that path never unlocks).
+        self._unlock_method: str | None = None
         #: True once EITHER unlock or fail-closed has fired -- guards both
         #: paths so exactly one of them ever runs, and the timer never fires
         #: after an unlock (or vice versa).
@@ -278,6 +284,24 @@ class GateProcessor(FrameProcessor):
     @property
     def unlocked(self) -> bool:
         return self._unlocked
+
+    @property
+    def unlock_method(self) -> str | None:
+        """Quick task 260727-v5e (D-04 telemetry): which factor unlocked the
+        gate -- ``"dtmf"``/``"passphrase"``, or ``None`` before resolution
+        (or when ``concierge_unlock_enabled=False`` suppressed the
+        attempt). A D-05e-safe read-only view -- never the transcript, the
+        PIN, or the passphrase words themselves."""
+        return self._unlock_method
+
+    @property
+    def token_count(self) -> int:
+        """Quick task 260727-v5e (D-04/D-05 telemetry): the COUNT of
+        distinct accumulated tokens -- the ``words_heard`` telemetry field's
+        source. Deliberately returns an ``int``, NEVER the token set itself
+        -- the accumulated-token SET must never cross the processor
+        boundary (D-05)."""
+        return len(self._accumulated_tokens)
 
     def start_timer(self) -> None:
         """Start the fail-closed timer. Idempotent (a second call while a
@@ -335,6 +359,11 @@ class GateProcessor(FrameProcessor):
             return
         self._resolved = True
         self._unlocked = True
+        # Quick task 260727-v5e (D-04 telemetry): stamp the unlock method
+        # ONLY here -- after both the concierge-suppression and
+        # already-resolved guards above have passed -- so a suppressed or
+        # already-resolved unlock attempt never records a method.
+        self._unlock_method = method
         self._suppress_speech_until_new_turn = True
         if self._timer_task is not None:
             self._timer_task.cancel()
