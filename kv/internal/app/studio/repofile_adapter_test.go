@@ -439,8 +439,8 @@ func TestParseTelephonyGames_ShippedConfigMatchesTask2Entries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseTelephonyGames(%s) error: %v", path, err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("len(got) = %d, want 3 (3234/3283/8283): %+v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("len(got) = %d, want 4 (3234/3283/8283/1800): %+v", len(got), got)
 	}
 
 	if len(got[0].DIDs) != 1 || got[0].DIDs[0] != "7254043234" || got[0].CodeEnvVar != "CTF_ANNOUNCEMENT_CODE_3234" || got[0].WordsEnvVar != "" {
@@ -451,6 +451,13 @@ func TestParseTelephonyGames_ShippedConfigMatchesTask2Entries(t *testing.T) {
 	}
 	if len(got[2].DIDs) != 1 || got[2].DIDs[0] != "7254048283" || got[2].CodeEnvVar != "CTF_ANNOUNCEMENT_CODE_UCTF" || got[2].WordsEnvVar != "CTF_ANNOUNCEMENT_WORDS_UCTF" {
 		t.Errorf("got[2] (8283 game) = %+v, want dids=[7254048283] code=CTF_ANNOUNCEMENT_CODE_UCTF words=CTF_ANNOUNCEMENT_WORDS_UCTF", got[2])
+	}
+	// The 1800 toll-free game (quick 260728-tfn) ships behind a PLACEHOLDER
+	// DID until the real number is ordered, so its digits are deliberately
+	// NOT asserted here (the go-live swap must be a pure TOML edit) -- only
+	// its shape: one DID, its own code env var, numeric-only.
+	if len(got[3].DIDs) != 1 || got[3].DIDs[0] == "" || got[3].CodeEnvVar != "CTF_ANNOUNCEMENT_CODE_1800" || got[3].WordsEnvVar != "" {
+		t.Errorf("got[3] (1800 game) = %+v, want one non-empty DID, code=CTF_ANNOUNCEMENT_CODE_1800, words=\"\"", got[3])
 	}
 }
 

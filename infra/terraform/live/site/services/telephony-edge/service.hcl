@@ -275,6 +275,18 @@ locals {
             name      = "CTF_ANNOUNCEMENT_WORDS_UCTF"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_words_uctf"
           },
+          {
+            # Fourth game: the 1-800 toll-free DID (quick 260728-tfn) --
+            # numeric trigger only, no words secret. ⚠ SEED-BEFORE-APPLY:
+            # unlike the four parameters above (all seeded 2026-07-27),
+            # announcement_code_1800 does NOT exist yet -- ECS fails task
+            # launch on a missing valueFrom parameter, so seed a DTMF code
+            # (DISTINCT from the other three games' values, per the
+            # distinct-code-value constraint in configs/telephony.toml)
+            # BEFORE applying this change.
+            name      = "CTF_ANNOUNCEMENT_CODE_1800"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_1800"
+          },
           # The telephony pipeline runs IN this container (Phase-9
           # call_runtime): after gate unlock it builds the same
           # STT/LLM/TTS cascade the voice service runs, so it needs the
