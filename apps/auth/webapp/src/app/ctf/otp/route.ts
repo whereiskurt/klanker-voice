@@ -23,11 +23,12 @@ import { computeTotp } from "@/lib/ctf-totp";
  * the issuer emits ONLY the current-step code (no skew range; +-1 skew is a
  * verifier-only, out-of-scope meshtk concern).
  *
- * Game dimension (quick task 260727-qfq, D-01..D-05): `?g=<game>` selects
- * WHICH seed to compute from, via the static `GAME_SECRET_ENV_VARS`
- * allowlist below. `<game>` is one of `"3234"`, `"3283"`, `"8283"`, mapping
- * to env vars `CTF_OTP_SECRET_3234`/`_3283`/`_8283` respectively (SSM
- * `/kmv/secrets/use1/ctf/otp_secret_{3234,3283,8283}`).
+ * Game dimension (quick task 260727-qfq, D-01..D-05; fourth game
+ * 260728-tfn): `?g=<game>` selects WHICH seed to compute from, via the
+ * static `GAME_SECRET_ENV_VARS` allowlist below. `<game>` is one of
+ * `"3234"`, `"3283"`, `"8283"`, `"1800"` (the toll-free game), mapping to
+ * env vars `CTF_OTP_SECRET_3234`/`_3283`/`_8283`/`_1800` respectively (SSM
+ * `/kmv/secrets/use1/ctf/otp_secret_{3234,3283,8283,1800}`).
  *
  * NO `g` param (or an empty one) is the LEGACY path and stays BYTE-IDENTICAL
  * to pre-260727-qfq behavior: it computes from `CTF_OTP_SECRET`. This is the
@@ -58,6 +59,7 @@ const GAME_SECRET_ENV_VARS: Map<string, string> = new Map([
   ["3234", "CTF_OTP_SECRET_3234"],
   ["3283", "CTF_OTP_SECRET_3283"],
   ["8283", "CTF_OTP_SECRET_8283"],
+  ["1800", "CTF_OTP_SECRET_1800"],
 ]);
 
 export async function GET(request: NextRequest) {

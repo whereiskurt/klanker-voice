@@ -62,6 +62,7 @@ describe("GET /ctf/otp (CTF phone-OTP issuer, no-oracle contract)", () => {
     delete process.env.CTF_OTP_SECRET_3234;
     delete process.env.CTF_OTP_SECRET_3283;
     delete process.env.CTF_OTP_SECRET_8283;
+    delete process.env.CTF_OTP_SECRET_1800;
   });
 
   it("a configured secret returns 200 with the current-step TOTP, cache-control no-store", async () => {
@@ -150,11 +151,12 @@ describe("GET /ctf/otp (CTF phone-OTP issuer, no-oracle contract)", () => {
     expect(res.status).toBe(200);
   });
 
-  it("a no-g request ignores all three per-game env vars, even when they hold invalid base32 (deterministic proof)", async () => {
+  it("a no-g request ignores all four per-game env vars, even when they hold invalid base32 (deterministic proof)", async () => {
     process.env.CTF_OTP_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
     process.env.CTF_OTP_SECRET_3234 = "not-valid-base32!!!";
     process.env.CTF_OTP_SECRET_3283 = "not-valid-base32!!!";
     process.env.CTF_OTP_SECRET_8283 = "not-valid-base32!!!";
+    process.env.CTF_OTP_SECRET_1800 = "not-valid-base32!!!";
 
     // Had ANY per-game env been read here, computeTotp would throw and the
     // route would return its uniform 404 instead of 200 -- so 200 is
@@ -185,6 +187,7 @@ describe("GET /ctf/otp (CTF phone-OTP issuer, no-oracle contract)", () => {
     ["3234", "CTF_OTP_SECRET_3234"],
     ["3283", "CTF_OTP_SECRET_3283"],
     ["8283", "CTF_OTP_SECRET_8283"],
+    ["1800", "CTF_OTP_SECRET_1800"],
   ])("game %s", (game, envVar) => {
     it(`?g=${game} resolves from ${envVar}, ignoring the legacy secret (D-01/D-05)`, async () => {
       process.env[envVar] = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
