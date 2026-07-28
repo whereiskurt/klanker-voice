@@ -660,10 +660,13 @@ def test_shipped_telephony_toml_per_game_otp_urls_and_claim_templates(make_confi
     assert len(set(otp_urls)) == 3
 
     claim_templates = [e.sms_claim_url_template for e in cfg.announcements]
+    # Per-game q.defcon.run slugs (c3234/c3283/c8283): the resolver's shared
+    # /c slug hardcodes c=didhtp1 in its destination and preserveQuery cannot
+    # override it, so each game gets its own Qr row (live 2026-07-27).
     assert claim_templates == [
-        "https://q.defcon.run/c?c=didhtp3234&v={code}",
-        "https://q.defcon.run/c?c=didhtp3283&v={code}",
-        "https://q.defcon.run/c?c=didhtp8283&v={code}",
+        "https://q.defcon.run/c3234?v={code}",
+        "https://q.defcon.run/c3283?v={code}",
+        "https://q.defcon.run/c8283?v={code}",
     ]
     assert len(set(claim_templates)) == 3
     for template in claim_templates:

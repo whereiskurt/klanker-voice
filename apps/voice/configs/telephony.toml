@@ -170,7 +170,7 @@ otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=3234"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"            # NAME only; token VALUE from env/SSM at call time (D-09)
 code_env_var = "CTF_ANNOUNCEMENT_CODE_3234"   # NAME only; trigger VALUE lives in SSM (/kmv/secrets/use1/ctf/announcement_code_3234), never TOML (D-09)
 line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
-sms_claim_url_template = "https://q.defcon.run/c?c=didhtp3234&v={code}"
+sms_claim_url_template = "https://q.defcon.run/c3234?v={code}"
 # SMS-during-call (quick task 260716-hg5 -- design doc docs/superpowers/specs/
 # 2026-07-16-ctf-otp-sms-during-call-design.md): text the caller a written copy
 # of the OTP mid-call, then land the "check your phone" punchline. Ordered pool
@@ -210,7 +210,7 @@ line_template = "Hey! Let me get that one time password for you. Ready? . ... {c
 sms_dids = []
 sms_reply_dids = ["7254043283"]
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
-sms_claim_url_template = "https://q.defcon.run/c?c=didhtp3283&v={code}"
+sms_claim_url_template = "https://q.defcon.run/c3283?v={code}"
 
 # Game 3: 725-404-8283 -- the new third game (quick task 260727-pdh, D-09
 # amended). Its EITHER-factor split launch state: the code param
@@ -237,4 +237,4 @@ line_template = "Hey! Let me get that one time password for you. Ready? . ... {c
 sms_dids = []
 sms_reply_dids = ["7254048283"]
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
-sms_claim_url_template = "https://q.defcon.run/c?c=didhtp8283&v={code}"
+sms_claim_url_template = "https://q.defcon.run/c8283?v={code}"
