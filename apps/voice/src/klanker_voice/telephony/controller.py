@@ -134,6 +134,7 @@ from klanker_voice.call_runtime import CallIdentity, CallSession, create_call_se
 from klanker_voice.config import DuplexConfig, KnowledgeConfig, PipelineConfig, QuotaConfig
 from klanker_voice.pipeline import greet_now, speak_goodbye
 from klanker_voice.telephony.ari import AriClient, AriError
+from klanker_voice.telephony.call_event import elapsed_seconds, emit_call_event
 from klanker_voice.telephony.config import AnnouncementEntry, TelephonyConfig
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf
 from klanker_voice.telephony.pickup_cue import play_pickup_cue
@@ -169,6 +170,19 @@ PASSPHRASE_WORDS_ENV_VAR = "TELEPHONY_PASSPHRASE_WORDS"
 GATE_FAIL_CLOSED_COPY = (
     "Sorry, I wasn't able to verify access on this line. Goodbye."
 )
+
+#: Quick task 260727-v5e (D-04 telemetry): maps ``_gate_fail_closed``'s
+#: existing ``reason`` strings to the D-04 outcome label the emitted
+#: ``game_call_event`` line carries for that failure. Looked up with
+#: ``.get(reason, "gate_timeout")`` so an unmapped future reason degrades to
+#: the fail label rather than crashing. A quota rejection discovered right
+#: after gate unlock is neither a window timeout nor a successful factor --
+#: Claude's-discretion call (CONTEXT) maps it to "error".
+GATE_FAIL_OUTCOMES: dict[str, str] = {
+    "gate window expired": "gate_timeout",
+    "caller-id mint failed": "gate_timeout",
+    "quota denied after gate unlock": "error",
+}
 
 #: Short timeout for the /tel mint HTTP call (D-02, Phase 12 Plan 06): this
 #: happens once, on the call-setup critical path, before the caller ever
@@ -831,6 +845,26 @@ class ActiveCall:
     #: ``_gate_announcement``'s grace sleep). NEVER awaited on the teardown
     #: path. ``None`` unless the announcement was sms-eligible.
     sms_task: asyncio.Task[bool] | None = None
+    #: Quick task 260727-v5e (D-03 telemetry): the true ARI-answer
+    #: timestamp -- distinct from ``created_at`` above, which is stamped
+    #: after the mint round trip and pipeline build and is therefore too
+    #: late for "answer -> teardown" timing. ``0.0`` (the "unset" sentinel
+    #: ``call_event.elapsed_seconds`` recognizes) when not yet stamped.
+    answered_at: float = 0.0
+    #: Quick task 260727-v5e (D-03 telemetry): count of DTMF digits
+    #: received pre-unlock -- the ``digits_entered`` field's source. A COUNT
+    #: only, never the digit sequence itself (D-05).
+    dtmf_count: int = 0
+    #: Quick task 260727-v5e (D-04 telemetry): the FIRST-WINS resolved
+    #: outcome label for this call, or ``None`` before any resolution site
+    #: has fired. Set only via ``AsteriskCallController._record_outcome``.
+    outcome: str | None = None
+    #: Quick task 260727-v5e (D-03 telemetry): the ``time.time()`` at which
+    #: ``outcome`` was recorded -- the ``seconds_to_outcome`` field's other
+    #: endpoint (paired with ``answered_at``). ``None`` until an outcome is
+    #: recorded, so a caller who simply hangs up (no resolution) correctly
+    #: reports a null ``seconds_to_outcome``.
+    outcome_at: float | None = None
 
 
 def _normalize_token(raw: Any) -> str:
@@ -970,6 +1004,18 @@ class AsteriskCallController:
         self._ari.on("ChannelDestroyed", self.on_channel_destroyed)
         self._ari.on("ChannelDtmfReceived", self.on_channel_dtmf_received)
 
+    def _record_outcome(self, active_call: ActiveCall, outcome: str) -> None:
+        """Quick task 260727-v5e (D-04 telemetry): FIRST WINS -- a no-op if
+        ``active_call.outcome`` is already set, else records ``outcome`` and
+        stamps ``outcome_at = time.time()``. Every resolution site
+        (``_gate_unlock``, ``_gate_fail_closed``, the DTMF/spoken
+        announcement dispatches) calls this; ``_close_active_call`` only
+        ever supplies a FALLBACK label for a call that never resolved."""
+        if active_call.outcome is not None:
+            return
+        active_call.outcome = outcome
+        active_call.outcome_at = time.time()
+
     # --- StasisStart: allocate + construct (Task 1) ------------------------
 
     async def on_stasis_start(self, event: dict[str, Any]) -> None:
@@ -1020,6 +1066,12 @@ class AsteriskCallController:
         logger.info(f"on_stasis_start: channel={sip_channel_id} caller={caller_id} did={did}")
 
         await self._ari.answer(sip_channel_id)
+        # Quick task 260727-v5e (D-03 telemetry): the true ARI-answer
+        # timestamp -- threaded into both finish paths below as the
+        # `answered_at` ActiveCall field, and into a media/bridge
+        # allocation failure's own `_teardown_gate_resources` call (the
+        # only teardown path that never gets a registered ActiveCall).
+        answered_at = time.time()
 
         # Per-DID SMS reply -- resolve the ACTUAL dialed DID via Approach C
         # (quick 260717-buf, live-confirmed 2026-07-17). Resolution order:
@@ -1067,7 +1119,13 @@ class AsteriskCallController:
                 f"on_stasis_start: failed to establish media/bridge for channel={sip_channel_id}"
             )
             await self._teardown_gate_resources(
-                bridge_id, external_media_channel_id, media, sip_channel_id
+                bridge_id,
+                external_media_channel_id,
+                media,
+                sip_channel_id,
+                caller_id=caller_id,
+                dialed_did=dialed_did,
+                answered_at=answered_at,
             )
             return
 
@@ -1094,6 +1152,7 @@ class AsteriskCallController:
                 external_media_channel_id=external_media_channel_id,
                 transport=transport,
                 identity=identity,
+                answered_at=answered_at,
             )
             return
 
@@ -1114,6 +1173,7 @@ class AsteriskCallController:
             transport=transport,
             identity=identity,
             otp_only=otp_only,
+            answered_at=answered_at,
         )
 
     def _register_pickup_cue(self, transport: TelephonyTransport, call_session: CallSession) -> None:
@@ -1154,6 +1214,7 @@ class AsteriskCallController:
         external_media_channel_id: str,
         transport: TelephonyTransport,
         identity: CallIdentity,
+        answered_at: float = 0.0,
     ) -> None:
         """``telephony_cfg.require_gate=False`` escape hatch: Plan 05's
         interim behavior, preserved byte-for-byte -- grant
@@ -1183,7 +1244,13 @@ class AsteriskCallController:
                 f"on_stasis_start: quota denied ({exc.error_type}) channel={sip_channel_id}"
             )
             await self._teardown_gate_resources(
-                bridge_id, external_media_channel_id, media, sip_channel_id
+                bridge_id,
+                external_media_channel_id,
+                media,
+                sip_channel_id,
+                caller_id=caller_id,
+                dialed_did=dialed_did,
+                answered_at=answered_at,
             )
             return
 
@@ -1209,6 +1276,7 @@ class AsteriskCallController:
             did=did,
             dialed_did=dialed_did,
             created_at=time.time(),
+            answered_at=answered_at,
         )
         self.calls[sip_channel_id] = active_call
         self._register_pickup_cue(transport, call_session)
@@ -1287,6 +1355,7 @@ class AsteriskCallController:
         transport: TelephonyTransport,
         identity: CallIdentity,
         otp_only: bool = False,
+        answered_at: float = 0.0,
     ) -> None:
         """The §24 silent answer-gate (D-05, Plan 06): build the persistent
         pipeline with an inline ``GateProcessor`` NOW (using a zeroed
@@ -1389,6 +1458,7 @@ class AsteriskCallController:
             if entry_words is None:
                 return
             entry, _words = entry_words
+            self._record_outcome(active_call, "announcement_words")
             await self._gate_announcement(active_call, entry)
 
         # Quick task 260727-pdh (D-04/T-pdh-03): fail-closed per-call DID
@@ -1458,6 +1528,7 @@ class AsteriskCallController:
             created_at=time.time(),
             gate=gate,
             grant_tier_id=grant_tier_id,
+            answered_at=answered_at,
         )
         self.calls[sip_channel_id] = active_call
         active_call_holder["call"] = active_call
@@ -1540,6 +1611,20 @@ class AsteriskCallController:
             await self._gate_fail_closed(active_call, "quota denied after gate unlock")
             return
 
+        # Quick task 260727-v5e (D-04 telemetry): record the outcome from
+        # WHICH factor actually resolved the gate (read-only via
+        # GateProcessor.unlock_method). The `else "error"` branch is
+        # unreachable in practice -- _on_unlock only fires from
+        # gate.unlock(method) with method in ("dtmf", "passphrase") -- but
+        # keeps the mapping total rather than silently recording nothing.
+        unlock_method = active_call.gate.unlock_method if active_call.gate is not None else None
+        if unlock_method == "dtmf":
+            self._record_outcome(active_call, "concierge_unlock_dtmf")
+        elif unlock_method == "passphrase":
+            self._record_outcome(active_call, "concierge_unlock_passphrase")
+        else:
+            self._record_outcome(active_call, "error")
+
         await active_call.call_session.lifecycle.upgrade_from_bypass(
             tier=gate_result.tier, session_id=gate_result.session_id, user_id=gate_identity.sub
         )
@@ -1576,6 +1661,7 @@ class AsteriskCallController:
         channel exactly once. Hanging up here too would double the call
         (harmless against real ARI, a 404 swallowed by ``_safe_ari`` --
         but the fake test client would double-count it)."""
+        self._record_outcome(active_call, GATE_FAIL_OUTCOMES.get(reason, "gate_timeout"))
         await speak_goodbye(active_call.call_session.worker, GATE_FAIL_CLOSED_COPY)
         await asyncio.sleep(self._quota_cfg.goodbye_grace_seconds)
         await self._close_active_call(active_call, reason)
@@ -1721,6 +1807,12 @@ class AsteriskCallController:
         active_call = self.calls.get(channel_id)
         if active_call is None or active_call.gate is None or not digit:
             return
+        # Quick task 260727-v5e (D-03 telemetry): count every ARI-delivered
+        # digit for this call -- a gate_mode="passphrase" deployment returns
+        # above (gate_mode not in ("dtmf", "either")) and therefore never
+        # reaches this point, correctly reporting zero digits (DTMF is
+        # ignored entirely in that mode; production runs "either").
+        active_call.dtmf_count += 1
         active_call.dtmf_raw = (active_call.dtmf_raw + digit)[-DTMF_RAW_MAX_DIGITS:]
         if not active_call.otp_only:
             active_call.dtmf_buffer, matched = accumulate_dtmf(
@@ -1734,6 +1826,7 @@ class AsteriskCallController:
                 continue
             if not _announcement_matches_did(entry, active_call.dialed_did):
                 continue
+            self._record_outcome(active_call, "announcement_code")
             await self._gate_announcement(active_call, entry)
             return
 
@@ -1743,6 +1836,11 @@ class AsteriskCallController:
         external_media_channel_id: str | None,
         media_session: RtpMediaSession,
         sip_channel_id: str,
+        *,
+        caller_id: str = "",
+        dialed_did: str = "",
+        answered_at: float = 0.0,
+        outcome: str = "error",
     ) -> None:
         """Tear down the gate-only bridge/external-media channel/socket
         allocated before a quota rejection (or an unexpected allocation
@@ -1750,7 +1848,29 @@ class AsteriskCallController:
         is NOT routed through :meth:`_close_active_call` (R6). A played
         goodbye is deferred to Plan 06's real §24 gate (no TTS-capable
         pipeline exists yet at this point in the flow); this plan hangs up
-        directly so no PSTN charge is ever left silently open (§17)."""
+        directly so no PSTN charge is ever left silently open (§17).
+
+        Quick task 260727-v5e (D-01/D-06 telemetry): this is the OTHER
+        emission seam -- the only teardown path :meth:`_close_active_call`
+        can never see, since no ``ActiveCall`` is ever registered here.
+        Emits exactly one ``game_call_event`` line, zeroed counts and a null
+        ``seconds_to_outcome`` (this call never reached any resolution
+        site), using ``sip_channel_id`` as ``call_id`` and
+        ``otp_only=False``. Both call sites (media/bridge allocation
+        failure, ungated quota denial) pass ``outcome="error"`` per the
+        discretionary reading in CONTEXT (neither is a window timeout nor a
+        successful factor)."""
+        emit_call_event(
+            call_id=sip_channel_id,
+            dialed_did=dialed_did,
+            caller_id=caller_id,
+            otp_only=False,
+            outcome=outcome,
+            digits_entered=0,
+            words_heard=0,
+            seconds_to_outcome=None,
+            duration_seconds=elapsed_seconds(answered_at, time.time()) or 0.0,
+        )
         if bridge_id is not None:
             await self._safe_ari(self._ari.destroy_bridge(bridge_id), "destroy_bridge (gate)")
         if external_media_channel_id is not None:
@@ -1788,6 +1908,35 @@ class AsteriskCallController:
             active_call.closed = True
 
         logger.info(f"_close_active_call: channel={active_call.sip_channel_id} reason={reason!r}")
+
+        # Quick task 260727-v5e (D-01 telemetry): emit the ONE
+        # game_call_event line for every registered call HERE -- immediately
+        # after the idempotency flag flip above and BEFORE any teardown
+        # work, so a raising ``call_session.close()`` can never swallow the
+        # event and so ``duration_seconds`` measures answer -> teardown
+        # rather than including teardown. The `closed` check-and-set under
+        # ``active_call.lock`` already ran, so this position is
+        # exactly-once for free -- including a simultaneous hangup +
+        # hard-timeout race. The fallback label is NOT stamped into
+        # ``outcome_at``, so a caller who simply gave up correctly reports
+        # a null ``seconds_to_outcome``.
+        now = time.time()
+        outcome = active_call.outcome or (
+            "ungated_grant" if active_call.gate is None else "early_hangup"
+        )
+        emit_call_event(
+            call_id=active_call.sip_channel_id,
+            dialed_did=active_call.dialed_did,
+            caller_id=active_call.caller_id,
+            otp_only=active_call.otp_only,
+            outcome=outcome,
+            digits_entered=active_call.dtmf_count,
+            words_heard=active_call.gate.token_count if active_call.gate is not None else 0,
+            seconds_to_outcome=elapsed_seconds(
+                active_call.answered_at, active_call.outcome_at or 0.0
+            ),
+            duration_seconds=elapsed_seconds(active_call.answered_at, now) or 0.0,
+        )
 
         await active_call.call_session.close(reason)
         await self._safe_ari(self._ari.destroy_bridge(active_call.bridge_id), "destroy_bridge")

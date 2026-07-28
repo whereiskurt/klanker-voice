@@ -18,6 +18,7 @@ rig exactly (same fakes, same ``_build_controller``/``_gated_cfg``/
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from pipecat.processors.frame_processor import FrameDirection
 
 from klanker_voice.auth import AuthError, SessionIdentity
 from klanker_voice.config import load_config, load_knowledge_config
+from klanker_voice.telephony.call_event import CALL_EVENT_MARKER, CALL_EVENT_OUTCOMES
 from klanker_voice.telephony.config import AnnouncementEntry
 from klanker_voice.telephony.controller import (
     ANNOUNCEMENT_WORDS_UNSET_SENTINEL,
@@ -35,6 +37,7 @@ from klanker_voice.telephony.controller import (
 )
 
 from tests.test_call_runtime import _gate_result, _quota_config, fake_aws, reset_active_count  # noqa: F401
+from tests.test_telephony_gate import loguru_caplog  # noqa: F401 -- shared loguru->caplog bridge fixture
 from tests.test_telephony_lifecycle import (  # noqa: F401 -- stub_call_session_run is an autouse fixture
     FakeAriClient,
     FakeRtpMediaSession,
@@ -1091,3 +1094,176 @@ async def test_words_registry_global_entry_armed_regardless_of_did_resolution(
     assert gate_announcement_calls[0][1] is global_entry
 
     assert controller._announcements_by_code == {}
+
+
+# --- Quick task 260727-v5e: game outcomes + the D-05 redaction gate --------
+
+
+def _extract_call_events(text: str) -> list[dict[str, Any]]:
+    """Pull every ``game_call_event`` marker line out of ``loguru_caplog.
+    text`` and parse its JSON payload -- shared helper for the tests below."""
+    events: list[dict[str, Any]] = []
+    marker = CALL_EVENT_MARKER + " "
+    for line in text.splitlines():
+        idx = line.find(marker)
+        if idx == -1:
+            continue
+        events.append(json.loads(line[idx + len(marker) :]))
+    return events
+
+
+async def test_dtmf_code_game_trigger_emits_exactly_one_announcement_code_event(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 7: a DTMF-code game trigger produces exactly one marker line
+    with outcome="announcement_code"."""
+
+    async def _fake_fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
+        return "123456"
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._fetch_ctf_otp", _fake_fetch_ctf_otp
+    )
+
+    async def _spy_speak_goodbye(worker, copy):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS", 0.01
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.ANNOUNCEMENT_GAG_TAIL_SECONDS", 0.01
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.ANNOUNCEMENT_SLOW_DIGIT_SECONDS", 0.0
+    )
+
+    entry = _announcement_entry()
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        announcement_codes={ANNOUNCEMENT_CODE: entry},
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "announcement_code"
+
+
+async def test_spoken_words_game_trigger_emits_exactly_one_announcement_words_event(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 8: a spoken-words game trigger produces exactly one marker line
+    with outcome="announcement_words"."""
+
+    async def _fake_fetch_ctf_otp(url: str, headers: dict[str, str]) -> str | None:
+        return "123456"
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller._fetch_ctf_otp", _fake_fetch_ctf_otp
+    )
+
+    async def _spy_speak_goodbye(worker, copy):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.ANNOUNCEMENT_PLAYBACK_GRACE_SECONDS", 0.01
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.ANNOUNCEMENT_GAG_TAIL_SECONDS", 0.01
+    )
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.ANNOUNCEMENT_SLOW_DIGIT_SECONDS", 0.0
+    )
+
+    entry = _announcement_entry(
+        code_env_var="CTF_ANNOUNCEMENT_CODE_UCTF", words_env_var="CTF_ANNOUNCEMENT_WORDS_UCTF"
+    )
+    controller, ari = _build_controller_words(
+        make_config_file,
+        telephony_cfg=_gated_cfg(announcements=(entry,)),
+        announcement_words={"CTF_ANNOUNCEMENT_WORDS_UCTF": "hack the planet"},
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+    await asyncio.sleep(0.3)  # let the spawned announcement task run to completion
+
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "announcement_words"
+
+
+async def test_wrong_code_gate_timeout_redacts_digits_words_and_code(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Test 9 (D-05 redaction proof): a gated game call where the caller
+    dials a WRONG code, speaks a distinctive nonsense word, and the gate
+    then fails closed (window expiry). The emitted event carries the COUNT
+    (digits_entered == 6) but neither the entered digits, the armed game
+    code, nor the heard word ever appear in the payload -- only counts, an
+    outcome label, and timings."""
+    caller_id = "+15550000123"
+    wrong_digits = "874321"
+    armed_code = "333266"
+
+    async def _spy_speak_goodbye(worker, copy):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_window_seconds=0.05),
+        quota_cfg=_quota_config(reconnect_grace_seconds=3600.0, goodbye_grace_seconds=0.01),
+        access_pin="112233",  # distinct from wrong_digits and armed_code
+        announcement_codes={armed_code: _announcement_entry()},
+    )
+
+    await controller.on_stasis_start(_stasis_event(caller_number=caller_id))
+    active_call = controller.calls["chan-1"]
+
+    for event in _dial(wrong_digits):
+        await controller.on_channel_dtmf_received(event)
+
+    await active_call.gate.process_frame(
+        TranscriptionFrame(text="zorblattflibber", user_id="", timestamp=""),
+        FrameDirection.DOWNSTREAM,
+    )
+
+    await asyncio.sleep(0.3)  # gate window expiry -> fail-closed -> teardown
+
+    events = _extract_call_events(loguru_caplog.text)
+    assert len(events) == 1
+    event = events[0]
+
+    assert event["digits_entered"] == 6
+    assert set(event.keys()) == {
+        "call_id",
+        "dialed_did",
+        "caller_id",
+        "otp_only",
+        "outcome",
+        "digits_entered",
+        "words_heard",
+        "seconds_to_outcome",
+        "duration_seconds",
+    }
+    assert event["outcome"] in CALL_EVENT_OUTCOMES
+    assert event["words_heard"] > 0
+
+    payload_text = json.dumps(event)
+    assert wrong_digits not in payload_text
+    assert armed_code not in payload_text
+    assert "zorblattflibber" not in payload_text

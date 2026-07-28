@@ -11,6 +11,7 @@ asserting ZERO frames reach a downstream sink during the locked window.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import pytest
@@ -26,6 +27,13 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.tests.utils import run_test
 
+from klanker_voice.telephony.call_event import (
+    CALL_EVENT_MARKER,
+    CALL_EVENT_OUTCOMES,
+    build_call_event,
+    elapsed_seconds,
+    emit_call_event,
+)
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf, match_passphrase
 
 
@@ -715,3 +723,168 @@ async def test_announcement_words_no_registry_is_byte_identical_default():
 
     assert unlock_calls == ["unlocked"]
     assert gate.unlocked is True
+
+
+# --- Quick task 260727-v5e: per-call structured telemetry -------------------
+#
+# call_event.py's pure builder/clock-helper (tests 1-4) and the two D-05e-safe
+# GateProcessor read-only views (tests 5-6, D-04 telemetry).
+
+
+class TestBuildCallEvent:
+    def test_single_line_marker_prefix_and_exact_field_set_in_order(self):
+        """Test 1: build_call_event emits a single line whose prefix is the
+        marker plus one space and whose remainder parses as JSON with
+        exactly the nine D-03 keys, in D-03 order."""
+        line = build_call_event(
+            call_id="chan-1",
+            dialed_did="7254043234",
+            caller_id="+15550001234",
+            otp_only=False,
+            outcome="concierge_unlock_dtmf",
+            digits_entered=4,
+            words_heard=0,
+            seconds_to_outcome=12.3,
+            duration_seconds=45.6,
+        )
+        prefix, _, remainder = line.partition(" ")
+        assert prefix == CALL_EVENT_MARKER
+        payload = json.loads(remainder)
+        assert list(payload.keys()) == [
+            "call_id",
+            "dialed_did",
+            "caller_id",
+            "otp_only",
+            "outcome",
+            "digits_entered",
+            "words_heard",
+            "seconds_to_outcome",
+            "duration_seconds",
+        ]
+
+    def test_null_seconds_to_outcome_and_one_decimal_rounding(self):
+        """Test 2: seconds_to_outcome=None renders as JSON null, and both
+        timing floats are rounded to one decimal."""
+        line = build_call_event(
+            call_id="chan-2",
+            dialed_did="",
+            caller_id="",
+            otp_only=True,
+            outcome="early_hangup",
+            digits_entered=0,
+            words_heard=0,
+            seconds_to_outcome=None,
+            duration_seconds=3.14159,
+        )
+        payload = json.loads(line.partition(" ")[2])
+        assert payload["seconds_to_outcome"] is None
+        assert payload["duration_seconds"] == 3.1
+
+        line2 = build_call_event(
+            call_id="chan-3",
+            dialed_did="",
+            caller_id="",
+            otp_only=False,
+            outcome="gate_timeout",
+            digits_entered=0,
+            words_heard=0,
+            seconds_to_outcome=7.777,
+            duration_seconds=7.777,
+        )
+        payload2 = json.loads(line2.partition(" ")[2])
+        assert payload2["seconds_to_outcome"] == 7.8
+        assert payload2["duration_seconds"] == 7.8
+
+
+class TestElapsedSeconds:
+    def test_boundaries(self):
+        """Test 3: unset start returns None, unset end returns None, an end
+        before the start clamps to 0.0, and a normal span rounds to one
+        decimal."""
+        assert elapsed_seconds(0.0, 10.0) is None
+        assert elapsed_seconds(10.0, 0.0) is None
+        assert elapsed_seconds(10.0, 5.0) == 0.0
+        assert elapsed_seconds(10.0, 12.345) == 2.3
+
+
+class TestEmitCallEventNeverRaises:
+    def test_never_raises_on_unserializable_value(self, loguru_caplog):
+        """Test 4: emit_call_event never raises -- an unserializable value
+        (an object json.dumps refuses) returns normally and logs a warning
+        rather than propagating."""
+
+        class _Unserializable:
+            pass
+
+        # dialed_did is typed str, but the redaction-boundary signature is
+        # keyword-only Python, not runtime-enforced -- deliberately smuggle
+        # a value json.dumps refuses to prove the never-raise contract.
+        emit_call_event(
+            call_id="chan-4",
+            dialed_did=_Unserializable(),  # type: ignore[arg-type]
+            caller_id="",
+            otp_only=False,
+            outcome="error",
+            digits_entered=0,
+            words_heard=0,
+            seconds_to_outcome=None,
+            duration_seconds=0.0,
+        )
+
+        assert "call event emit failed" in loguru_caplog.text
+        assert CALL_EVENT_MARKER not in loguru_caplog.text
+
+
+class TestGateProcessorUnlockMethod:
+    def test_none_initially_then_dtmf_then_passphrase_each_on_a_fresh_gate(self):
+        """Test 5: unlock_method is None initially, becomes "dtmf" /
+        "passphrase" after a real unlock, and STAYS None when
+        concierge_unlock_enabled=False suppresses the factor."""
+        gate, _, _ = _gate()
+        assert gate.unlock_method is None
+
+    async def test_becomes_dtmf_after_dtmf_unlock(self):
+        gate, unlock_calls, _ = _gate()
+        await gate.unlock("dtmf")
+        assert unlock_calls == ["unlocked"]
+        assert gate.unlock_method == "dtmf"
+
+    async def test_becomes_passphrase_after_passphrase_unlock(self):
+        gate, unlock_calls, _ = _gate()
+        frames = [
+            TranscriptionFrame(text="purple falcon midnight compass", user_id="", timestamp=""),
+        ]
+        await run_test(gate, frames_to_send=frames)
+        assert unlock_calls == ["unlocked"]
+        assert gate.unlock_method == "passphrase"
+
+    async def test_stays_none_when_concierge_unlock_disabled(self):
+        gate, unlock_calls, _ = _gate(concierge_unlock_enabled=False)
+        await gate.unlock("dtmf")
+        await gate.unlock("passphrase")
+        assert unlock_calls == []
+        assert gate.unlock_method is None
+
+
+class TestGateProcessorTokenCount:
+    async def test_counts_distinct_accumulated_tokens_and_is_an_int(self):
+        """Test 6: token_count counts distinct accumulated tokens after
+        feeding TranscriptionFrames, and the property is an int (never the
+        set)."""
+        gate, _, _ = _gate(passphrase_words=set())  # never unlocks, keeps accumulating
+        assert gate.token_count == 0
+        assert isinstance(gate.token_count, int)
+
+        await gate.process_frame(
+            TranscriptionFrame(text="hack the planet", user_id="", timestamp=""),
+            FrameDirection.DOWNSTREAM,
+        )
+        assert gate.token_count == 3
+        assert isinstance(gate.token_count, int)
+
+        # A repeated token does not inflate the count -- it's a SET.
+        await gate.process_frame(
+            TranscriptionFrame(text="hack it again", user_id="", timestamp=""),
+            FrameDirection.DOWNSTREAM,
+        )
+        assert gate.token_count == 5  # {hack, the, planet, it, again}
