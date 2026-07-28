@@ -94,12 +94,14 @@ gate_window_seconds = 20             # fail-closed goodbye + hangup if neither f
 gate_debug_log_heard = true          # ENABLED 260714 (operator KPH) to debug an accent/STT miss on the passphrase (a caller with an Indian accent couldn't pass "hack the planet"). TEMPORARY: gather a few real gate_fail_heard{...} lines, then flip back to false once the phase-2 fix (Deepgram keyterm boosting favored) lands. OPT-IN debug; default is false (keeps D-05e byte-identical). When true, a fail-closed call (gate-window expiry, no unlock) logs ONE gate_fail_heard{call_id, caller_id, heard_tokens, token_count} line to telephony-edge CloudWatch — the caller's number + what STT actually heard — for accent/STT debugging of the passphrase. Deliberate D-05e relaxation for the FAIL path ONLY: a failed attempt's heard words are by definition not the passphrase (no secret leak); NEVER on the success path; NEVER logs the passphrase words or the DTMF PIN. Flip to true + redeploy telephony-edge to gather real failed attempts.
 unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (minimal identity seam, D-05a). Dedicated PUBLIC from-anywhere caller tier (session 180s / period 900s / maxConcurrent 4), created live in kmv-auth-electro (thin-token, no redeploy) — see docs/operators/phase12-seed-data.md Task 3. Replaces the prior kph-tier grant (Kurt's own 24h tier stays untouched). NOTE: caller-ID→code mint (tel_mint_url) still resolves entitled callers to THEIR tier; this is only the fallback for un-entitled public callers. The row MUST exist live before this resolves — an absent tier fails closed (no-access).
 # Per-DID gate policy Part A (quick 260717-o2q; extended to a third DID by
-# quick 260727-pdh): all three Las Vegas DIDs are OTP-only -- the concierge
-# passphrase/PIN are suppressed on every one of them; only that DID's own
-# per-game [[telephony.announcement]] entry (below) + the fail-closed timer
-# apply. Resolved via the [telephony.cid_prefix_dids] tags KVD3234/KVD3283/
-# KVD8283 above.
-otp_only_dids = ["7254043234", "7254043283", "7254048283"]
+# quick 260727-pdh, a fourth by 260728-tfn): the three Las Vegas DIDs plus
+# the toll-free DID are OTP-only -- the concierge passphrase/PIN are
+# suppressed on every one of them; only that DID's own per-game
+# [[telephony.announcement]] entry (below) + the fail-closed timer apply.
+# Resolved via the [telephony.cid_prefix_dids] tags KVD3234/KVD3283/KVD8283/
+# KVD1800 above. The fourth entry is the 260728-tfn PLACEHOLDER toll-free
+# DID -- see the loud note on the cid_prefix_dids table.
+otp_only_dids = ["7254043234", "7254043283", "7254048283", "8005550199"]
 # Secrets (ARI creds, PIN, passphrase words) live in env/SSM, NEVER here (D-09):
 # ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
 # TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.
@@ -118,6 +120,17 @@ otp_only_dids = ["7254043234", "7254043283", "7254048283"]
 "KVD3234" = "7254043234"
 "KVD3283" = "7254043283"
 "KVD8283" = "7254048283"
+# ⚠ PLACEHOLDER (quick 260728-tfn): 8005550199 is the reserved-fictional
+# 800-555-0199 standing in for a toll-free DID that is NOT ORDERED YET.
+# LIVE-STEP (go-live swap, ONE edit): replace 8005550199 here, in
+# otp_only_dids above, and in the Game 4 entry's `dids` below with the real
+# toll-free digits, then set callerid_prefix=KVD1800 (and cnam=0) on that
+# DID in VoIP.ms. Until VoIP.ms sends the KVD1800 prefix, this row is inert
+# -- no live call can ever resolve to the placeholder digits. The shipped-
+# config tests deliberately assert the 1800 entry by CONSISTENCY with this
+# row (never by the literal placeholder digits), so the swap is a pure TOML
+# edit with no test churn.
+"KVD1800" = "8005550199"
 
 # CTF phone-OTP announcement games (quick task 260716-1g0, Revision 2 --
 # design doc docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-
@@ -238,3 +251,32 @@ sms_dids = []
 sms_reply_dids = ["7254048283"]
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
 sms_claim_url_template = "https://q.defcon.run/c8283?v={code}"
+
+# Game 4: the 1-800 toll-free game (quick task 260728-tfn) -- numeric-only,
+# same OTP gag script as the three Vegas games above. ⚠ Its `dids` entry is
+# the PLACEHOLDER 8005550199 (see the loud note on [telephony.cid_prefix_dids])
+# until the operator orders the real toll-free number; the whole entry is
+# inert until VoIP.ms sends the KVD1800 callerid_prefix. SEED-BEFORE-APPLY:
+# unlike the three games above, this game's SSM parameters
+# (/kmv/secrets/use1/ctf/announcement_code_1800 + .../otp_secret_1800) do
+# NOT exist yet -- they must be seeded (announcement code DISTINCT from the
+# other three games' values, per the distinct-code-value constraint noted
+# above the 3234 entry) BEFORE the service.hcl valueFrom wiring is applied,
+# or ECS fails task launch.
+#
+# SMS deliberately OFF at launch (sms_reply_dids = []): US carriers block
+# SMS from an UNVERIFIED toll-free number, and the operator's documented
+# preference (per-DID SMS reply v2) is text-FROM-the-dialed-number or
+# nothing. LIVE-STEP (later): after VoIP.ms toll-free SMS verification
+# clears, set sms_reply_dids to the real toll-free digits -- the relay URL
+# and claim template below are already wired for that day.
+[[telephony.announcement]]
+dids = ["8005550199"]
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=1800"
+otp_env_var = "CTF_OTP_AUTH_TOKEN"
+code_env_var = "CTF_ANNOUNCEMENT_CODE_1800"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_1800), never TOML (D-09)
+line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
+sms_dids = []
+sms_reply_dids = []
+sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
+sms_claim_url_template = "https://q.defcon.run/c1800?v={code}"
