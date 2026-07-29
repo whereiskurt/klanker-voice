@@ -112,6 +112,22 @@ locals {
       actions   = ["s3:PutObject"]
       resources = ["arn:aws:s3:::kmv-ledger-*/ledger/*"]
     },
+    {
+      # Quick 260729-rck: boot-time playback-clip sync (audio_sync.py).
+      # The RICK game's audio lives under the PRIVATE media/telephony/
+      # prefix of the same ledger bucket (clips the operator may play over
+      # a phone line but must not publish in this public repo). Read-only,
+      # media/* objects only; the list grant is bucket-level because S3
+      # ListBucket cannot be scoped to an object ARN.
+      sid       = "TelephonyMediaRead"
+      actions   = ["s3:GetObject"]
+      resources = ["arn:aws:s3:::kmv-ledger-*/media/*"]
+    },
+    {
+      sid       = "TelephonyMediaList"
+      actions   = ["s3:ListBucket"]
+      resources = ["arn:aws:s3:::kmv-ledger-*"]
+    },
   ]
 
   task = {
@@ -274,6 +290,26 @@ locals {
             # live regardless.
             name      = "CTF_ANNOUNCEMENT_WORDS_UCTF"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_words_uctf"
+          },
+          {
+            # Fourth game: the 1-800 toll-free DID (quick 260728-tfn) --
+            # numeric trigger only, no words secret. ⚠ SEED-BEFORE-APPLY:
+            # unlike the four parameters above (all seeded 2026-07-27),
+            # announcement_code_1800 does NOT exist yet -- ECS fails task
+            # launch on a missing valueFrom parameter, so seed a DTMF code
+            # (DISTINCT from the other three games' values, per the
+            # distinct-code-value constraint in configs/telephony.toml)
+            # BEFORE applying this change.
+            name      = "CTF_ANNOUNCEMENT_CODE_1800"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_1800"
+          },
+          {
+            # RICK -- the second code on the same toll-free DID (quick
+            # 260729-rck): triggers the audio-playback game instead of the
+            # OTP gag. Seeded + readback-verified 2026-07-29 alongside the
+            # 1800 pair, so this valueFrom is deploy-safe.
+            name      = "CTF_ANNOUNCEMENT_CODE_RICK"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_rick"
           },
           # The telephony pipeline runs IN this container (Phase-9
           # call_runtime): after gate unlock it builds the same

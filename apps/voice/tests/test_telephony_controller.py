@@ -557,6 +557,129 @@ async def test_announcement_success_speaks_digitspaced_line_then_closes(
     assert controller.calls == {}
 
 
+# --- Quick task 260729-rck: audio-playback announcement (audio_dir) --------
+
+
+def _write_wav(path: Path, seconds: float = 0.01, channels: int = 1, rate: int = 8000) -> None:
+    """Write a tiny silent PCM wav for loader/playback tests."""
+    import struct
+    import wave as wave_mod
+
+    n = max(1, int(rate * seconds))
+    with wave_mod.open(str(path), "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(struct.pack("<h", 0) * n * channels)
+
+
+def _audio_entry(audio_dir: Path, max_play_seconds: float = 0.08) -> AnnouncementEntry:
+    return AnnouncementEntry(
+        otp_url="",
+        code_env_var="CTF_ANNOUNCEMENT_CODE_AUDIO_TEST",
+        audio_dir=str(audio_dir),
+        max_play_seconds=max_play_seconds,
+    )
+
+
+def test_load_audio_clips_skips_unplayable_files(tmp_path):
+    """The loader returns only 16-bit-mono .wav clips (with duration), and
+    silently skips stereo files, non-wav files, garbage bytes, and a
+    missing directory -- never raising."""
+    from klanker_voice.telephony.controller import _load_audio_clips
+
+    _write_wav(tmp_path / "a.wav", seconds=0.5)
+    _write_wav(tmp_path / "b-stereo.wav", seconds=0.5, channels=2)
+    (tmp_path / "c.mp3").write_bytes(b"ID3 not a wav")
+    (tmp_path / "d.wav").write_bytes(b"RIFFgarbage")
+
+    clips = _load_audio_clips(str(tmp_path))
+    assert len(clips) == 1
+    pcm, rate, duration = clips[0]
+    assert rate == 8000
+    assert abs(duration - 0.5) < 0.01
+    assert len(pcm) == int(8000 * 0.5) * 2
+
+    assert _load_audio_clips(str(tmp_path / "nope")) == []
+
+
+async def test_audio_announcement_plays_shuffle_then_closes(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, tmp_path
+):
+    """An audio entry's code match plays clips via the pickup-cue seam until
+    max_play_seconds, then a single teardown -- never speak_goodbye, never
+    the OTP fetch, never quota.start_gate/greet_now."""
+    _write_wav(tmp_path / "one.wav", seconds=0.01)
+    _write_wav(tmp_path / "two.wav", seconds=0.01)
+
+    played: list[int] = []
+
+    async def _spy_play_audio_clip(worker, pcm, sample_rate):
+        played.append(sample_rate)
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.play_audio_clip", _spy_play_audio_clip
+    )
+
+    async def _fail_fetch(url, headers):
+        raise AssertionError("the OTP issuer must never be called for an audio entry")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller._fetch_ctf_otp", _fail_fetch)
+
+    async def _fail_speak(worker, copy):
+        raise AssertionError("speak_goodbye must never be called for an audio entry")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _fail_speak)
+
+    def _fail_start_gate(identity, **kwargs):
+        raise AssertionError("quota.start_gate must never be called for an audio entry")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.quota.start_gate", _fail_start_gate)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        announcement_codes={ANNOUNCEMENT_CODE: _audio_entry(tmp_path)},
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert len(played) >= 1
+    assert all(rate == 8000 for rate in played)
+    assert ari.count("hangup", arg="chan-1") == 1
+    assert ari.count("destroy_bridge", arg="bridge-1") == 1
+    assert sessions[0].closed is True
+    assert controller.calls == {}
+
+
+async def test_audio_announcement_empty_dir_tears_down_silently(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, tmp_path
+):
+    """No playable clips -> immediate single teardown with zero audio,
+    mirroring the OTP-fetch-failure degrade."""
+
+    async def _fail_play(worker, pcm, sample_rate):
+        raise AssertionError("play_audio_clip must never be called with no clips")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.play_audio_clip", _fail_play)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(),
+        announcement_codes={ANNOUNCEMENT_CODE: _audio_entry(tmp_path / "empty")},
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert ari.count("hangup", arg="chan-1") == 1
+    assert sessions[0].closed is True
+    assert controller.calls == {}
+
+
 async def test_gate_mode_passphrase_ignores_announcement_code(
     make_config_file, stub_provider_keys, fake_aws, monkeypatch
 ):

@@ -268,11 +268,11 @@ def test_real_checked_in_telephony_toml_has_announcement_entry():
     """apps/voice/configs/telephony.toml (the standalone telephony-edge
     harness config, NOT pipeline.toml) is code-keyed (Revision 2,
     260716-1g0) -- the trigger value itself lives only in SSM. Quick task
-    260727-pdh: three per-DID game entries now, the first (3234) renamed off
-    the retired bare CTF_ANNOUNCEMENT_CODE name."""
+    260727-pdh: per-DID game entries now (four as of 260728-tfn), the first
+    (3234) renamed off the retired bare CTF_ANNOUNCEMENT_CODE name."""
     telephony_toml_path = APP_ROOT / "configs" / "telephony.toml"
     cfg = load_telephony_config(telephony_toml_path)
-    assert len(cfg.announcements) == 3
+    assert len(cfg.announcements) == 5
     entry = cfg.announcements[0]
     assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_3234"
     assert entry.otp_env_var == "CTF_OTP_AUTH_TOKEN"
@@ -408,13 +408,21 @@ def test_cid_prefix_dids_non_table_rejected(make_config_file):
 
 def test_shipped_telephony_toml_maps_both_vegas_cid_prefixes(make_config_file):
     """The shipped configs/telephony.toml maps all three Las Vegas CID-name-prefix
-    tags to their DIDs (Approach C per-DID reply resolution)."""
+    tags to their DIDs (Approach C per-DID reply resolution), plus the KVD1800
+    toll-free tag (quick 260728-tfn -- 855-916-INFO, ordered 2026-07-28).
+    The 1800 row is asserted by SHAPE only (a non-empty digit string), never
+    by its literal digits, so a future number change stays a pure TOML edit
+    with no test churn."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
-    assert cfg.cid_prefix_did_map == {
+    assert {
+        k: v for k, v in cfg.cid_prefix_did_map.items() if k != "KVD1800"
+    } == {
         "KVD3234": "7254043234",
         "KVD3283": "7254043283",
         "KVD8283": "7254048283",
     }
+    tollfree = cfg.cid_prefix_did_map.get("KVD1800", "")
+    assert tollfree.isdigit() and len(tollfree) >= 10
 
 
 # --- Quick task 260717-o2q: [telephony].otp_only_dids (per-DID gate policy Part A) ---
@@ -448,9 +456,13 @@ def test_otp_only_dids_non_list_rejected(make_config_file):
 def test_shipped_telephony_toml_seeds_all_three_vegas_otp_only_dids(make_config_file):
     """The shipped configs/telephony.toml seeds otp_only_dids with exactly the
     three Las Vegas DIDs (per-DID gate policy Part A, extended to 8283 by
-    quick task 260727-pdh)."""
+    quick task 260727-pdh) plus the toll-free DID (260728-tfn) -- the latter
+    asserted by consistency with the KVD1800 cid-prefix row, never by its
+    placeholder digits."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
-    assert cfg.otp_only_dids == ("7254043234", "7254043283", "7254048283")
+    assert cfg.otp_only_dids[:3] == ("7254043234", "7254043283", "7254048283")
+    assert len(cfg.otp_only_dids) == 4
+    assert cfg.otp_only_dids[3] == cfg.cid_prefix_did_map["KVD1800"]
 
 
 # --- Quick task 260727-ohq: [[telephony.announcement]].dids (per-DID scoping) --
@@ -498,30 +510,38 @@ def test_announcement_dids_non_list_rejected(make_config_file):
 
 
 def test_shipped_telephony_toml_announcement_dids_now_per_game_scoped(make_config_file):
-    """D-04/D-02 (amended, quick task 260727-pdh): the shipped
-    configs/telephony.toml now ships THREE per-DID game entries, each
-    scoped to its own single DID -- no entry stays GLOBAL any more."""
+    """D-04/D-02 (amended, quick task 260727-pdh; fourth entry 260728-tfn):
+    the shipped configs/telephony.toml now ships FOUR per-DID game entries,
+    each scoped to its own single DID -- no entry stays GLOBAL any more.
+    The 1800 entry's DID is asserted by consistency with the KVD1800
+    cid-prefix row (number-swap-safe); the RICK playback entry (quick
+    260729-rck) shares that same DID."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
-    assert len(cfg.announcements) == 3
+    assert len(cfg.announcements) == 5
     assert cfg.announcements[0].dids == ("7254043234",)
     assert cfg.announcements[1].dids == ("7254043283",)
     assert cfg.announcements[2].dids == ("7254048283",)
+    assert cfg.announcements[3].dids == (cfg.cid_prefix_did_map["KVD1800"],)
+    assert cfg.announcements[4].dids == (cfg.cid_prefix_did_map["KVD1800"],)
 
 
 def test_shipped_telephony_toml_three_games_share_template_distinct_code_names(
     make_config_file,
 ):
-    """All three shipped game entries carry ONE identical line_template
-    containing a {code} placeholder, and all three code_env_var names are
-    distinct (the cheapest available proxy for the distinct-code-value
-    constraint, since the values themselves live only in SSM)."""
+    """All four shipped OTP game entries carry ONE identical line_template
+    containing a {code} placeholder (the RICK playback entry has none by
+    design), and all five code_env_var names are distinct (the cheapest
+    available proxy for the distinct-code-value constraint, since the
+    values themselves live only in SSM)."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
-    assert len(cfg.announcements) == 3
-    templates = {e.line_template for e in cfg.announcements}
+    assert len(cfg.announcements) == 5
+    otp_entries = [e for e in cfg.announcements if not e.audio_dir]
+    assert len(otp_entries) == 4
+    templates = {e.line_template for e in otp_entries}
     assert len(templates) == 1
     assert "{code}" in next(iter(templates))
     code_env_vars = [e.code_env_var for e in cfg.announcements]
-    assert len(set(code_env_vars)) == len(code_env_vars) == 3
+    assert len(set(code_env_vars)) == len(code_env_vars) == 5
 
 
 def test_shipped_telephony_toml_3283_game_entry(make_config_file):
@@ -547,6 +567,116 @@ def test_shipped_telephony_toml_8283_game_entry(make_config_file):
     assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_UCTF"
     assert entry.words_env_var == "CTF_ANNOUNCEMENT_WORDS_UCTF"
     assert entry.sms_reply_dids == ("7254048283",)
+
+
+# --- Quick task 260729-rck: [[telephony.announcement]].audio_dir ------------
+#
+# A playback game: on code match the controller plays a continuous shuffle
+# of the .wav clips in audio_dir instead of the OTP script. Mutually
+# exclusive with otp_url/line_template; max_play_seconds caps the loop.
+
+AUDIO_ANNOUNCEMENT_TOML = """
+[[telephony.announcement]]
+code_env_var = "CTF_ANNOUNCEMENT_CODE_AUDIO_TEST"
+audio_dir = "assets/telephony/rick"
+"""
+
+
+def test_announcement_audio_dir_parses_without_otp_fields(make_config_file):
+    """An audio entry needs NO otp_url/line_template -- both default to ""
+    and max_play_seconds defaults to 180."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + AUDIO_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    entry = cfg.announcements[0]
+    assert entry.audio_dir == "assets/telephony/rick"
+    assert entry.otp_url == ""
+    assert entry.line_template == ""
+    assert entry.max_play_seconds == 180.0
+
+
+def test_announcement_audio_dir_mutually_exclusive_with_otp_url(make_config_file):
+    """audio_dir + otp_url in one entry is a hard config error -- an entry
+    is either a playback game or an OTP game, never both."""
+    bad_toml = AUDIO_ANNOUNCEMENT_TOML.rstrip() + '\notp_url = "https://example.test/otp"\n'
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="mutually exclusive"):
+        load_telephony_config(path)
+
+
+def test_announcement_audio_dir_mutually_exclusive_with_line_template(make_config_file):
+    bad_toml = AUDIO_ANNOUNCEMENT_TOML.rstrip() + '\nline_template = "here is {code}"\n'
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="mutually exclusive"):
+        load_telephony_config(path)
+
+
+def test_announcement_max_play_seconds_parses_and_bounds(make_config_file):
+    """max_play_seconds accepts a positive number <= 3600; zero, negative,
+    over-bound, and non-numeric values are hard config errors."""
+    ok_toml = AUDIO_ANNOUNCEMENT_TOML.rstrip() + "\nmax_play_seconds = 60\n"
+    cfg = load_telephony_config(make_config_file(append=VALID_TELEPHONY_TOML + ok_toml))
+    assert cfg.announcements[0].max_play_seconds == 60.0
+
+    for bad_value in ("0", "-5", "3601", '"long"', "true"):
+        bad_toml = AUDIO_ANNOUNCEMENT_TOML.rstrip() + f"\nmax_play_seconds = {bad_value}\n"
+        with pytest.raises(ConfigError, match="max_play_seconds"):
+            load_telephony_config(make_config_file(append=VALID_TELEPHONY_TOML + bad_toml))
+
+
+def test_announcement_max_play_seconds_requires_audio_dir(make_config_file):
+    """max_play_seconds on an OTP entry (no audio_dir) is a hard config
+    error naming the constraint."""
+    bad_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + "\nmax_play_seconds = 60\n"
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="only valid with audio_dir"):
+        load_telephony_config(path)
+
+
+def test_announcement_otp_entry_unaffected_by_audio_fields(make_config_file):
+    """A plain OTP entry (no audio fields) parses byte-identically to the
+    pre-rck shape: audio_dir "" and the max_play_seconds default."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].audio_dir == ""
+    assert cfg.announcements[0].max_play_seconds == 180.0
+
+
+def test_shipped_telephony_toml_1800_game_entry(make_config_file):
+    """The 1800 toll-free game entry (quick 260728-tfn, 855-916-INFO): its
+    own DID (asserted via consistency with the KVD1800 cid-prefix row, so a
+    future number change never causes test churn), its own distinct
+    code_env_var NAME, numeric-only
+    (no words_env_var), and SMS deliberately OFF at launch
+    (sms_reply_dids == ()) -- US carriers block SMS from an unverified
+    toll-free number, and the operator preference is text-FROM-the-dialed-
+    number or nothing. The relay URL stays wired for the day verification
+    clears."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    entry = cfg.announcements[3]
+    assert entry.dids == (cfg.cid_prefix_did_map["KVD1800"],)
+    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_1800"
+    assert entry.words_env_var == ""
+    assert entry.sms_dids == ()
+    assert entry.sms_reply_dids == ()
+    assert entry.sms_relay_url == "https://auth.klankermaker.ai/use1/ctf/sms"
+
+
+def test_shipped_telephony_toml_rick_game_entry(make_config_file):
+    """The RICK playback entry (quick 260729-rck): same DID as the 1800
+    OTP game (two codes, one line), its own distinct code_env_var NAME, a
+    playback shape (audio_dir set, no otp_url/line_template/SMS), and the
+    180s toll-free spend cap."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    entry = cfg.announcements[4]
+    assert entry.dids == (cfg.cid_prefix_did_map["KVD1800"],)
+    assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_RICK"
+    assert entry.audio_dir == "assets/telephony/rick"
+    assert entry.max_play_seconds == 180.0
+    assert entry.otp_url == ""
+    assert entry.line_template == ""
+    assert entry.words_env_var == ""
+    assert entry.sms_reply_dids == ()
+    assert entry.sms_relay_url == ""
 
 
 # --- Quick task 260727-pdh: [[telephony.announcement]].words_env_var --------
@@ -644,31 +774,38 @@ def test_sms_claim_url_template_key_clears_credential_gate(make_config_file):
 
 
 def test_shipped_telephony_toml_per_game_otp_urls_and_claim_templates(make_config_file):
-    """D-06/D-07: each of the three shipped entries' `otp_url` carries its
-    own game query, and each `sms_claim_url_template` carries its own
-    didhtp slug -- all six values distinct, all three templates contain
-    `{code}`, and every value is pure 7-bit ASCII (the shared GSM-7 rule)."""
+    """D-06/D-07: each of the four shipped OTP entries' `otp_url` carries
+    its own game query, and each `sms_claim_url_template` carries its own
+    didhtp slug -- all eight values distinct, all four templates contain
+    `{code}`, and every value is pure 7-bit ASCII (the shared GSM-7 rule).
+    The RICK playback entry (audio_dir set) is excluded by design -- it
+    has no issuer and no claim URL."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
-    assert len(cfg.announcements) == 3
+    assert len(cfg.announcements) == 5
+    otp_entries = [e for e in cfg.announcements if not e.audio_dir]
+    assert len(otp_entries) == 4
 
-    otp_urls = [e.otp_url for e in cfg.announcements]
+    otp_urls = [e.otp_url for e in otp_entries]
     assert otp_urls == [
         "https://auth.klankermaker.ai/use1/ctf/otp?g=3234",
         "https://auth.klankermaker.ai/use1/ctf/otp?g=3283",
         "https://auth.klankermaker.ai/use1/ctf/otp?g=8283",
+        "https://auth.klankermaker.ai/use1/ctf/otp?g=1800",
     ]
-    assert len(set(otp_urls)) == 3
+    assert len(set(otp_urls)) == 4
 
-    claim_templates = [e.sms_claim_url_template for e in cfg.announcements]
-    # Per-game q.defcon.run slugs (c3234/c3283/c8283): the resolver's shared
-    # /c slug hardcodes c=didhtp1 in its destination and preserveQuery cannot
-    # override it, so each game gets its own Qr row (live 2026-07-27).
+    claim_templates = [e.sms_claim_url_template for e in otp_entries]
+    # Per-game q.defcon.run slugs (c3234/c3283/c8283/c1800): the resolver's
+    # shared /c slug hardcodes c=didhtp1 in its destination and preserveQuery
+    # cannot override it, so each game gets its own Qr row (live 2026-07-27;
+    # the c1800 row is a forward contract, DC34-side, not yet created).
     assert claim_templates == [
         "https://q.defcon.run/c3234?v={code}",
         "https://q.defcon.run/c3283?v={code}",
         "https://q.defcon.run/c8283?v={code}",
+        "https://q.defcon.run/c1800?v={code}",
     ]
-    assert len(set(claim_templates)) == 3
+    assert len(set(claim_templates)) == 4
     for template in claim_templates:
         assert "{code}" in template
         assert all(ord(c) < 128 for c in template)

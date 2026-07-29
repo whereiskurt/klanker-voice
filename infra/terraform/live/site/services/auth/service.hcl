@@ -188,6 +188,13 @@ locals {
           { name = "CTF_OTP_SECRET_3234", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret_3234" },
           { name = "CTF_OTP_SECRET_3283", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret_3283" },
           { name = "CTF_OTP_SECRET_8283", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret_8283" },
+          # Fourth game: the 1-800 toll-free DID (quick 260728-tfn).
+          # ⚠ SEED-BEFORE-APPLY: unlike the three parameters above (seeded
+          # 2026-07-27), otp_secret_1800 does NOT exist yet -- ECS fails task
+          # launch on a missing valueFrom parameter, so seed a base32 TOTP
+          # secret at this path (and share it with the DC34/meshtk verifier)
+          # BEFORE applying this change.
+          { name = "CTF_OTP_SECRET_1800", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/otp_secret_1800" },
           { name = "CTF_OTP_AUTH_TOKEN", valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/auth_token" },
           # VoIP.ms REST API creds (quick 260716-hg5 follow-up): the internal
           # /ctf/sms relay sends the CTF OTP text via VoIP.ms sendSMS. The relay

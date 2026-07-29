@@ -94,12 +94,14 @@ gate_window_seconds = 20             # fail-closed goodbye + hangup if neither f
 gate_debug_log_heard = true          # ENABLED 260714 (operator KPH) to debug an accent/STT miss on the passphrase (a caller with an Indian accent couldn't pass "hack the planet"). TEMPORARY: gather a few real gate_fail_heard{...} lines, then flip back to false once the phase-2 fix (Deepgram keyterm boosting favored) lands. OPT-IN debug; default is false (keeps D-05e byte-identical). When true, a fail-closed call (gate-window expiry, no unlock) logs ONE gate_fail_heard{call_id, caller_id, heard_tokens, token_count} line to telephony-edge CloudWatch — the caller's number + what STT actually heard — for accent/STT debugging of the passphrase. Deliberate D-05e relaxation for the FAIL path ONLY: a failed attempt's heard words are by definition not the passphrase (no secret leak); NEVER on the success path; NEVER logs the passphrase words or the DTMF PIN. Flip to true + redeploy telephony-edge to gather real failed attempts.
 unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (minimal identity seam, D-05a). Dedicated PUBLIC from-anywhere caller tier (session 180s / period 900s / maxConcurrent 4), created live in kmv-auth-electro (thin-token, no redeploy) — see docs/operators/phase12-seed-data.md Task 3. Replaces the prior kph-tier grant (Kurt's own 24h tier stays untouched). NOTE: caller-ID→code mint (tel_mint_url) still resolves entitled callers to THEIR tier; this is only the fallback for un-entitled public callers. The row MUST exist live before this resolves — an absent tier fails closed (no-access).
 # Per-DID gate policy Part A (quick 260717-o2q; extended to a third DID by
-# quick 260727-pdh): all three Las Vegas DIDs are OTP-only -- the concierge
-# passphrase/PIN are suppressed on every one of them; only that DID's own
-# per-game [[telephony.announcement]] entry (below) + the fail-closed timer
-# apply. Resolved via the [telephony.cid_prefix_dids] tags KVD3234/KVD3283/
-# KVD8283 above.
-otp_only_dids = ["7254043234", "7254043283", "7254048283"]
+# quick 260727-pdh, a fourth by 260728-tfn): the three Las Vegas DIDs plus
+# the toll-free DID are OTP-only -- the concierge passphrase/PIN are
+# suppressed on every one of them; only that DID's own per-game
+# [[telephony.announcement]] entry (below) + the fail-closed timer apply.
+# Resolved via the [telephony.cid_prefix_dids] tags KVD3234/KVD3283/KVD8283/
+# KVD1800 above. The fourth entry is the toll-free 855-916-INFO line
+# (ordered 2026-07-28, US/CAN reach).
+otp_only_dids = ["7254043234", "7254043283", "7254048283", "8559164636"]
 # Secrets (ARI creds, PIN, passphrase words) live in env/SSM, NEVER here (D-09):
 # ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
 # TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.
@@ -118,6 +120,13 @@ otp_only_dids = ["7254043234", "7254043283", "7254048283"]
 "KVD3234" = "7254043234"
 "KVD3283" = "7254043283"
 "KVD8283" = "7254048283"
+# 855-916-INFO (quick 260728-tfn): the toll-free game line, ordered
+# 2026-07-28 via `kv voipms order-tollfree` (US/CAN reach, routed to
+# 557010_klanker-pbx, callerid_prefix=KVD1800 + cnam=0 set live and
+# readback-verified via `kv voipms set-cid-prefix`). The shipped-config
+# tests assert the 1800 entry by CONSISTENCY with this row (never by
+# literal digits), so a future number change stays a pure TOML edit.
+"KVD1800" = "8559164636"
 
 # CTF phone-OTP announcement games (quick task 260716-1g0, Revision 2 --
 # design doc docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-
@@ -238,3 +247,50 @@ sms_dids = []
 sms_reply_dids = ["7254048283"]
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
 sms_claim_url_template = "https://q.defcon.run/c8283?v={code}"
+
+# Game 4: 855-916-INFO -- the toll-free game (quick task 260728-tfn) --
+# numeric-only, same OTP gag script as the three Vegas games above. The
+# DID is live (ordered 2026-07-28, US/CAN reach, KVD1800 prefix set).
+# SEED-BEFORE-APPLY: unlike the three games above, this game's SSM
+# parameters (/kmv/secrets/use1/ctf/announcement_code_1800 +
+# .../otp_secret_1800) do NOT exist yet -- they must be seeded
+# (announcement code DISTINCT from the other three games' values, per the
+# distinct-code-value constraint noted above the 3234 entry) BEFORE the
+# service.hcl valueFrom wiring is applied, or ECS fails task launch.
+#
+# SMS deliberately OFF at launch (sms_reply_dids = []): US carriers block
+# SMS from an UNVERIFIED toll-free number, and the operator's documented
+# preference (per-DID SMS reply v2) is text-FROM-the-dialed-number or
+# nothing. LIVE-STEP (later): after VoIP.ms toll-free SMS verification
+# clears, set sms_reply_dids to the real toll-free digits -- the relay URL
+# and claim template below are already wired for that day.
+[[telephony.announcement]]
+dids = ["8559164636"]
+otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=1800"
+otp_env_var = "CTF_OTP_AUTH_TOKEN"
+code_env_var = "CTF_ANNOUNCEMENT_CODE_1800"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_1800), never TOML (D-09)
+line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
+sms_dids = []
+sms_reply_dids = []
+sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
+sms_claim_url_template = "https://q.defcon.run/c1800?v={code}"
+
+# Game 5: RICK -- the second code on the SAME 855-916-INFO line (quick task
+# 260729-rck). A PLAYBACK entry, not an OTP game: on code match the caller
+# hears a continuous shuffle of the .wav clips in audio_dir, hard-capped at
+# max_play_seconds, then hangup. No otp_url/line_template (mutually
+# exclusive with audio_dir, enforced by the loader), no SMS. Same DID as
+# Game 4 -- the registry is keyed by resolved code VALUE and DID-filtered
+# per call, so LOST and RICK coexist on one line; the two SSM-seeded values
+# (announcement_code_1800 / announcement_code_rick) must stay DISTINCT per
+# the constraint noted above the 3234 entry. CLIPS ARE NEVER COMMITTED
+# (public repo): they live in PRIVATE S3 (s3://$KMV_LEDGER_BUCKET/media/
+# telephony/rick/) and telephony/audio_sync.py mirrors them into audio_dir
+# at boot -- normalize + upload via `make -C apps/voice rick-audio` then
+# the `aws s3 cp` in assets/telephony/rick/README.md. An empty clip folder
+# degrades to an immediate hangup (deploy-safe before any clips exist).
+[[telephony.announcement]]
+dids = ["8559164636"]
+code_env_var = "CTF_ANNOUNCEMENT_CODE_RICK"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_rick), never TOML (D-09)
+audio_dir = "assets/telephony/rick"
+max_play_seconds = 180
