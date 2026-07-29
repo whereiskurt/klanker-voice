@@ -60,6 +60,7 @@ from loguru import logger
 from klanker_voice import ledger
 from klanker_voice.config import ConfigError, load_config, load_knowledge_config, load_quota_config
 from klanker_voice.telephony.ari import AriClient
+from klanker_voice.telephony.audio_sync import sync_s3_audio
 from klanker_voice.telephony.config import load_telephony_config
 from klanker_voice.telephony.controller import DEFAULT_APP_NAME, AsteriskCallController
 
@@ -100,6 +101,11 @@ async def main() -> None:
             "KLANKER_PIPELINE_CONFIG=configs/telephony.toml."
         )
         return
+
+    # Quick task 260729-rck: mirror private S3 playback clips (RICK game)
+    # into assets/telephony/ before the controller starts. Never raises --
+    # an S3 problem degrades to the image's baked-in assets.
+    sync_s3_audio()
 
     ari_url = os.environ.get(ARI_URL_ENV_VAR, DEFAULT_ARI_URL)
     ari_username = os.environ.get(ARI_USERNAME_ENV_VAR, "")

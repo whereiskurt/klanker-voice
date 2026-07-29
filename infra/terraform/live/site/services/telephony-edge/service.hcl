@@ -112,6 +112,22 @@ locals {
       actions   = ["s3:PutObject"]
       resources = ["arn:aws:s3:::kmv-ledger-*/ledger/*"]
     },
+    {
+      # Quick 260729-rck: boot-time playback-clip sync (audio_sync.py).
+      # The RICK game's audio lives under the PRIVATE media/telephony/
+      # prefix of the same ledger bucket (clips the operator may play over
+      # a phone line but must not publish in this public repo). Read-only,
+      # media/* objects only; the list grant is bucket-level because S3
+      # ListBucket cannot be scoped to an object ARN.
+      sid       = "TelephonyMediaRead"
+      actions   = ["s3:GetObject"]
+      resources = ["arn:aws:s3:::kmv-ledger-*/media/*"]
+    },
+    {
+      sid       = "TelephonyMediaList"
+      actions   = ["s3:ListBucket"]
+      resources = ["arn:aws:s3:::kmv-ledger-*"]
+    },
   ]
 
   task = {

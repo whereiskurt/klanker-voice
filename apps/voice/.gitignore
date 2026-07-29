@@ -18,3 +18,10 @@ __pycache__/
 client/node_modules/
 client/dist/
 client/*.tsbuildinfo
+
+# RICK phone-game audio (quick 260729-rck): clips live in PRIVATE S3
+# (s3://$KMV_LEDGER_BUCKET/media/telephony/rick/, synced at boot by
+# telephony/audio_sync.py) -- never commit audio to this public repo.
+assets/telephony/rick/*.wav
+assets/telephony/rick-src/*
+!assets/telephony/rick-src/README.md

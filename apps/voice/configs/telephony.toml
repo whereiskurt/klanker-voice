@@ -277,18 +277,18 @@ sms_claim_url_template = "https://q.defcon.run/c1800?v={code}"
 
 # Game 5: RICK -- the second code on the SAME 855-916-INFO line (quick task
 # 260729-rck). A PLAYBACK entry, not an OTP game: on code match the caller
-# hears a continuous shuffle of the .wav clips in audio_dir (drop sources in
-# assets/telephony/rick-src/ and run `make -C apps/voice rick-audio` to
-# normalize them to 8kHz mono s16 wavs here), hard-capped at
+# hears a continuous shuffle of the .wav clips in audio_dir, hard-capped at
 # max_play_seconds, then hangup. No otp_url/line_template (mutually
 # exclusive with audio_dir, enforced by the loader), no SMS. Same DID as
 # Game 4 -- the registry is keyed by resolved code VALUE and DID-filtered
 # per call, so LOST and RICK coexist on one line; the two SSM-seeded values
 # (announcement_code_1800 / announcement_code_rick) must stay DISTINCT per
-# the constraint noted above the 3234 entry. An empty clip folder makes
-# this entry degrade to an immediate hangup (deploy-safe before any clips
-# are committed). NOTE: this repo is public -- commit only clips you can
-# publish.
+# the constraint noted above the 3234 entry. CLIPS ARE NEVER COMMITTED
+# (public repo): they live in PRIVATE S3 (s3://$KMV_LEDGER_BUCKET/media/
+# telephony/rick/) and telephony/audio_sync.py mirrors them into audio_dir
+# at boot -- normalize + upload via `make -C apps/voice rick-audio` then
+# the `aws s3 cp` in assets/telephony/rick/README.md. An empty clip folder
+# degrades to an immediate hangup (deploy-safe before any clips exist).
 [[telephony.announcement]]
 dids = ["8559164636"]
 code_env_var = "CTF_ANNOUNCEMENT_CODE_RICK"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_rick), never TOML (D-09)
