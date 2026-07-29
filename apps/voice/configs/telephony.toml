@@ -99,9 +99,9 @@ unlock_tier_id = "pstn-public-tier"  # tier granted on successful gate unlock (m
 # suppressed on every one of them; only that DID's own per-game
 # [[telephony.announcement]] entry (below) + the fail-closed timer apply.
 # Resolved via the [telephony.cid_prefix_dids] tags KVD3234/KVD3283/KVD8283/
-# KVD1800 above. The fourth entry is the 260728-tfn PLACEHOLDER toll-free
-# DID -- see the loud note on the cid_prefix_dids table.
-otp_only_dids = ["7254043234", "7254043283", "7254048283", "8005550199"]
+# KVD1800 above. The fourth entry is the toll-free 855-916-INFO line
+# (ordered 2026-07-28, US/CAN reach).
+otp_only_dids = ["7254043234", "7254043283", "7254048283", "8559164636"]
 # Secrets (ARI creds, PIN, passphrase words) live in env/SSM, NEVER here (D-09):
 # ASTERISK_ARI_URL, ASTERISK_ARI_USERNAME, ASTERISK_ARI_PASSWORD,
 # TELEPHONY_ACCESS_PIN, TELEPHONY_PASSPHRASE_WORDS.
@@ -120,17 +120,13 @@ otp_only_dids = ["7254043234", "7254043283", "7254048283", "8005550199"]
 "KVD3234" = "7254043234"
 "KVD3283" = "7254043283"
 "KVD8283" = "7254048283"
-# ⚠ PLACEHOLDER (quick 260728-tfn): 8005550199 is the reserved-fictional
-# 800-555-0199 standing in for a toll-free DID that is NOT ORDERED YET.
-# LIVE-STEP (go-live swap, ONE edit): replace 8005550199 here, in
-# otp_only_dids above, and in the Game 4 entry's `dids` below with the real
-# toll-free digits, then set callerid_prefix=KVD1800 (and cnam=0) on that
-# DID in VoIP.ms. Until VoIP.ms sends the KVD1800 prefix, this row is inert
-# -- no live call can ever resolve to the placeholder digits. The shipped-
-# config tests deliberately assert the 1800 entry by CONSISTENCY with this
-# row (never by the literal placeholder digits), so the swap is a pure TOML
-# edit with no test churn.
-"KVD1800" = "8005550199"
+# 855-916-INFO (quick 260728-tfn): the toll-free game line, ordered
+# 2026-07-28 via `kv voipms order-tollfree` (US/CAN reach, routed to
+# 557010_klanker-pbx, callerid_prefix=KVD1800 + cnam=0 set live and
+# readback-verified via `kv voipms set-cid-prefix`). The shipped-config
+# tests assert the 1800 entry by CONSISTENCY with this row (never by
+# literal digits), so a future number change stays a pure TOML edit.
+"KVD1800" = "8559164636"
 
 # CTF phone-OTP announcement games (quick task 260716-1g0, Revision 2 --
 # design doc docs/superpowers/specs/2026-07-15-ctf-phone-otp-announcement-
@@ -252,17 +248,15 @@ sms_reply_dids = ["7254048283"]
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
 sms_claim_url_template = "https://q.defcon.run/c8283?v={code}"
 
-# Game 4: the 1-800 toll-free game (quick task 260728-tfn) -- numeric-only,
-# same OTP gag script as the three Vegas games above. ⚠ Its `dids` entry is
-# the PLACEHOLDER 8005550199 (see the loud note on [telephony.cid_prefix_dids])
-# until the operator orders the real toll-free number; the whole entry is
-# inert until VoIP.ms sends the KVD1800 callerid_prefix. SEED-BEFORE-APPLY:
-# unlike the three games above, this game's SSM parameters
-# (/kmv/secrets/use1/ctf/announcement_code_1800 + .../otp_secret_1800) do
-# NOT exist yet -- they must be seeded (announcement code DISTINCT from the
-# other three games' values, per the distinct-code-value constraint noted
-# above the 3234 entry) BEFORE the service.hcl valueFrom wiring is applied,
-# or ECS fails task launch.
+# Game 4: 855-916-INFO -- the toll-free game (quick task 260728-tfn) --
+# numeric-only, same OTP gag script as the three Vegas games above. The
+# DID is live (ordered 2026-07-28, US/CAN reach, KVD1800 prefix set).
+# SEED-BEFORE-APPLY: unlike the three games above, this game's SSM
+# parameters (/kmv/secrets/use1/ctf/announcement_code_1800 +
+# .../otp_secret_1800) do NOT exist yet -- they must be seeded
+# (announcement code DISTINCT from the other three games' values, per the
+# distinct-code-value constraint noted above the 3234 entry) BEFORE the
+# service.hcl valueFrom wiring is applied, or ECS fails task launch.
 #
 # SMS deliberately OFF at launch (sms_reply_dids = []): US carriers block
 # SMS from an UNVERIFIED toll-free number, and the operator's documented
@@ -271,7 +265,7 @@ sms_claim_url_template = "https://q.defcon.run/c8283?v={code}"
 # clears, set sms_reply_dids to the real toll-free digits -- the relay URL
 # and claim template below are already wired for that day.
 [[telephony.announcement]]
-dids = ["8005550199"]
+dids = ["8559164636"]
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=1800"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"
 code_env_var = "CTF_ANNOUNCEMENT_CODE_1800"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_1800), never TOML (D-09)

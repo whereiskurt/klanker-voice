@@ -92,12 +92,24 @@ status: complete
 - **Local vitest run needed two environment fixes (not code changes):** `npm ci` skipped the rolldown darwin-arm64 native binding (installed explicitly, `--no-save`), and the workstation's node v22.1.0 predates unflagged `require(esm)` — tests run with `NODE_OPTIONS=--experimental-require-module` (or any node ≥22.12). No repo files affected.
 - **gsd-tools was not on PATH in this worktree** — the quick workflow's artifacts (PLAN/SUMMARY/STATE row, atomic commits) were produced manually to the same contract.
 
-## User Setup Required (go-live choreography, in order)
+## Live provisioning DONE 2026-07-28 (all from `kv`, operator-approved)
 
-1. **VoIP.ms portal: cancel the 613 DID** (operator-approved trade; irreversible — the number returns to the pool) → frees the account's 5-DID slot.
-2. **Order the toll-free number** (US+Canada coverage; ~$0.99/mo + ~1.9¢/min US / ~8¢/min CAD inbound; $15 one-time if custom/vanity true-800).
-3. **Swap the placeholder**: replace `8005550199` with the real digits in `apps/voice/configs/telephony.toml` (three spots: `otp_only_dids`, `[telephony.cid_prefix_dids]` KVD1800 row, Game 4 `dids`). No test churn by design.
-4. **Route + tag in VoIP.ms**: `kv route-did` to the full `557010_klanker-pbx` username; set `callerid_prefix=KVD1800` and `cnam=0` on the DID (Approach C resolution depends on the prefix arriving — verify on the first test call).
+The number is **855-916-INFO (855-916-4636)**, picked by the operator from a
+`kv voipms search-tollfree` pattern hunt (INFO=4636 phoneword ending; LOST/
+HELP/HACK/6969/1337-ending patterns had no true-word stock). Executed:
+
+1. ✅ `kv voipms cancel-did 6134805878 --yes` — the Belleville 613 line released (slot freed; codebase had zero references).
+2. ✅ `kv voipms order-tollfree 8559164636` — ordered with the live-proven defaults (routing=account:557010_klanker-pbx, pop=45, cnam=0, per-minute billing, US/CAN reach). New `search-tollfree`/`order-tollfree` commands shipped in this same task.
+3. ✅ `kv voipms set-cid-prefix 8559164636 KVD1800` — cnam forced 0, readback-verified.
+4. ✅ Real digits swapped into `telephony.toml` (placeholder retired); zero test churn, as designed.
+5. ✅ `kv telephony list` confirms 5/5 DIDs incl. `8559164636 TOLL FREE US/CAN → account:557010_klanker-pbx`.
+
+Prerequisite noted for future kv-API work: the workstation's public IP must
+be on the VoIP.ms API allowlist (Account Settings → API) — `ip_not_enabled`
+otherwise; the runbook's step 8 deliberately re-locks this list.
+
+## User Setup Required (remaining go-live steps, in order)
+
 5. **Seed SSM BEFORE terraform apply** (ECS fails task launch on a missing valueFrom):
    - `/kmv/secrets/use1/ctf/announcement_code_1800` — DTMF code, DISTINCT from 333266 / 1337 / 696969 (distinct-code-value constraint).
    - `/kmv/secrets/use1/ctf/otp_secret_1800` — base32 TOTP seed (HMAC-SHA1 / 6 digits / 120s); share with the DC34/meshtk verifier.

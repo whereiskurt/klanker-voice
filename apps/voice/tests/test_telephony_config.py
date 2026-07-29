@@ -409,10 +409,10 @@ def test_cid_prefix_dids_non_table_rejected(make_config_file):
 def test_shipped_telephony_toml_maps_both_vegas_cid_prefixes(make_config_file):
     """The shipped configs/telephony.toml maps all three Las Vegas CID-name-prefix
     tags to their DIDs (Approach C per-DID reply resolution), plus the KVD1800
-    toll-free tag (quick 260728-tfn). The 1800 row is asserted by SHAPE only
-    (a non-empty digit string), never by its literal digits -- it ships as a
-    placeholder until the real toll-free number is ordered, and the go-live
-    digits swap must be a pure TOML edit with no test churn."""
+    toll-free tag (quick 260728-tfn -- 855-916-INFO, ordered 2026-07-28).
+    The 1800 row is asserted by SHAPE only (a non-empty digit string), never
+    by its literal digits, so a future number change stays a pure TOML edit
+    with no test churn."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
     assert {
         k: v for k, v in cfg.cid_prefix_did_map.items() if k != "KVD1800"
@@ -565,10 +565,10 @@ def test_shipped_telephony_toml_8283_game_entry(make_config_file):
 
 
 def test_shipped_telephony_toml_1800_game_entry(make_config_file):
-    """The 1800 toll-free game entry (quick 260728-tfn): its own DID
-    (consistency with the KVD1800 cid-prefix row -- the digits are a
-    placeholder until the real toll-free number is ordered, so no literal
-    digit assertion here), its own distinct code_env_var NAME, numeric-only
+    """The 1800 toll-free game entry (quick 260728-tfn, 855-916-INFO): its
+    own DID (asserted via consistency with the KVD1800 cid-prefix row, so a
+    future number change never causes test churn), its own distinct
+    code_env_var NAME, numeric-only
     (no words_env_var), and SMS deliberately OFF at launch
     (sms_reply_dids == ()) -- US carriers block SMS from an unverified
     toll-free number, and the operator preference is text-FROM-the-dialed-
