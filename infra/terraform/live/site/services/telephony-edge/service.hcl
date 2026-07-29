@@ -287,6 +287,14 @@ locals {
             name      = "CTF_ANNOUNCEMENT_CODE_1800"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_1800"
           },
+          {
+            # RICK -- the second code on the same toll-free DID (quick
+            # 260729-rck): triggers the audio-playback game instead of the
+            # OTP gag. Seeded + readback-verified 2026-07-29 alongside the
+            # 1800 pair, so this valueFrom is deploy-safe.
+            name      = "CTF_ANNOUNCEMENT_CODE_RICK"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_rick"
+          },
           # The telephony pipeline runs IN this container (Phase-9
           # call_runtime): after gate unlock it builds the same
           # STT/LLM/TTS cascade the voice service runs, so it needs the
