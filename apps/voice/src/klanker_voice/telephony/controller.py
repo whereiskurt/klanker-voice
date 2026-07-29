@@ -120,6 +120,8 @@ import random
 import re
 import time
 import uuid
+import wave
+from pathlib import Path
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -131,13 +133,19 @@ from loguru import logger
 from klanker_voice import quota
 from klanker_voice.auth import AuthError, SessionIdentity, validate_access_token
 from klanker_voice.call_runtime import CallIdentity, CallSession, create_call_session
-from klanker_voice.config import DuplexConfig, KnowledgeConfig, PipelineConfig, QuotaConfig
+from klanker_voice.config import (
+    APP_ROOT,
+    DuplexConfig,
+    KnowledgeConfig,
+    PipelineConfig,
+    QuotaConfig,
+)
 from klanker_voice.pipeline import greet_now, speak_goodbye
 from klanker_voice.telephony.ari import AriClient, AriError
 from klanker_voice.telephony.call_event import elapsed_seconds, emit_call_event
 from klanker_voice.telephony.config import AnnouncementEntry, TelephonyConfig
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf
-from klanker_voice.telephony.pickup_cue import play_pickup_cue
+from klanker_voice.telephony.pickup_cue import play_audio_clip, play_pickup_cue
 from klanker_voice.telephony.rtp_socket import SocketRtpMediaSession
 from klanker_voice.telephony.transport import TelephonyTransport
 from klanker_voice.telephony.types import RtpMediaSession, TelephonyTransportParams
@@ -653,6 +661,47 @@ def _select_sms_send_dids(entry: AnnouncementEntry, dialed_did: str) -> tuple[st
     if dialed_did:
         return (dialed_did,) if dialed_did in entry.sms_reply_dids else ()
     return entry.sms_dids
+
+
+def _load_audio_clips(audio_dir: str) -> list[tuple[bytes, int, float]]:
+    """Load every playable ``.wav`` in ``audio_dir`` (quick task 260729-rck)
+    as ``(pcm_bytes, sample_rate, duration_seconds)`` tuples, sorted by
+    filename for determinism (the shuffle happens at play time, not here).
+
+    APP_ROOT-relative paths resolve against the app root (the shipped
+    ``audio_dir = "assets/telephony/rick"`` shape); absolute paths are used
+    as-is. Only 16-bit mono files are accepted -- anything else (the
+    ``make rick-audio`` ffmpeg target normalizes to 8kHz mono s16) is
+    skipped with a warning rather than played garbled. NEVER raises: a
+    missing/unreadable directory or file degrades to fewer (possibly zero)
+    clips, mirroring ``pickup_cue.load_hey_clip``'s discipline -- audio
+    problems must never crash call control."""
+    base = Path(audio_dir)
+    if not base.is_absolute():
+        base = APP_ROOT / audio_dir
+    try:
+        paths = sorted(base.glob("*.wav"))
+    except OSError:
+        return []
+    clips: list[tuple[bytes, int, float]] = []
+    for path in paths:
+        try:
+            with wave.open(str(path), "rb") as wf:
+                if wf.getnchannels() != 1 or wf.getsampwidth() != 2:
+                    logger.warning(
+                        f"audio clips: skipping non-16-bit-mono file {path.name!r} "
+                        "(run `make rick-audio` to normalize)"
+                    )
+                    continue
+                sample_rate = wf.getframerate()
+                n_frames = wf.getnframes()
+                pcm = wf.readframes(n_frames)
+            if not pcm or sample_rate <= 0:
+                continue
+            clips.append((pcm, sample_rate, n_frames / sample_rate))
+        except Exception:  # noqa: BLE001 -- any read/parse failure skips the clip, never crashes call control
+            logger.warning(f"audio clips: failed to read {path.name!r} -- skipping")
+    return clips
 
 
 def _announcement_matches_did(entry: AnnouncementEntry, dialed_did: str) -> bool:
@@ -1693,6 +1742,14 @@ class AsteriskCallController:
         Logging discipline (§13/T-OTP-04/D-05e): never logs the DTMF
         trigger code, the OTP code, the otp_url, or the bearer -- only the
         channel id."""
+        # Quick task 260729-rck: a playback entry (audio_dir set, mutually
+        # exclusive with otp_url at load time) takes the audio branch --
+        # both the DTMF and spoken-words dispatch sites flow through here,
+        # so this one fork covers every trigger path, and the dispatch-site
+        # _record_outcome calls stay untouched.
+        if entry.audio_dir:
+            await self._gate_audio_announcement(active_call, entry)
+            return
         if active_call.gate is not None:
             active_call.gate.cancel_for_takeover("announcement")
 
@@ -1762,6 +1819,71 @@ class AsteriskCallController:
         )
         await asyncio.sleep(grace)
         logger.info(f"announcement: played channel={active_call.sip_channel_id!r}")
+        await self._close_active_call(active_call, "announcement complete")
+
+    async def _gate_audio_announcement(
+        self, active_call: ActiveCall, entry: AnnouncementEntry
+    ) -> None:
+        """Audio-playback announcement (quick task 260729-rck): on code
+        match, play a CONTINUOUS SHUFFLE of the ``.wav`` clips in
+        ``entry.audio_dir`` over the same persistent pipeline/worker the
+        §24 gate built, until ``entry.max_play_seconds`` of play time has
+        elapsed, then tear the call down. MIRRORS :meth:`_gate_announcement`
+        exactly: gate resolved via ``cancel_for_takeover`` (never
+        ``unlock``), no ``quota.start_gate``, no ``greet_now``, no TTS/LLM
+        call ever (the clips are pre-rendered, injected via the same
+        barge-in-safe ``pickup_cue`` seam -- D-05d's "no billed API before
+        unlock" is trivially preserved because nothing here bills at all),
+        no SMS, exactly one :meth:`_close_active_call`.
+
+        Shuffle semantics: clips play in a reshuffled order each pass, and
+        with 2+ clips a reshuffle never repeats the clip that just played
+        back-to-back. Caller speech mid-clip triggers the pipeline's
+        existing barge-in (the queued ``OutputAudioRawFrame`` is
+        interruptible by design -- see ``pickup_cue``'s Task 2 spike); the
+        loop simply proceeds to the next clip on schedule. The
+        ``max_play_seconds`` deadline is a HARD cap (it bounds toll-free
+        inbound-minute spend): a clip still playing at the deadline is cut
+        off by the teardown.
+
+        An empty/unreadable clip directory tears down immediately with no
+        audio -- same degrade discipline as the OTP-fetch-failure path.
+
+        Logging discipline (D-05e): never logs the trigger code or clip
+        directory contents -- only the channel id and clip count."""
+        if active_call.gate is not None:
+            active_call.gate.cancel_for_takeover("announcement")
+
+        clips = _load_audio_clips(entry.audio_dir)
+        if not clips:
+            logger.warning(
+                f"announcement: no playable audio clips channel={active_call.sip_channel_id!r}"
+            )
+            await self._close_active_call(active_call, "announcement audio missing")
+            return
+
+        logger.info(
+            f"announcement: audio loop start clips={len(clips)} "
+            f"channel={active_call.sip_channel_id!r}"
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + entry.max_play_seconds
+        order = list(range(len(clips)))
+        last_played = -1
+        while loop.time() < deadline:
+            random.shuffle(order)
+            if len(order) > 1 and order[0] == last_played:
+                order[0], order[-1] = order[-1], order[0]
+            for idx in order:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                pcm, sample_rate, duration = clips[idx]
+                await play_audio_clip(active_call.call_session.worker, pcm, sample_rate)
+                last_played = idx
+                await asyncio.sleep(min(duration, remaining))
+
+        logger.info(f"announcement: audio loop finished channel={active_call.sip_channel_id!r}")
         await self._close_active_call(active_call, "announcement complete")
 
     # --- ChannelDtmfReceived: the §24 gate's DTMF PIN path (Task 3) --------

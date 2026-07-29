@@ -141,6 +141,23 @@ def load_hey_clip(path: Path = HEY_CLIP_PATH) -> tuple[bytes, int]:
         return b"", _DEFAULT_SAMPLE_RATE
 
 
+async def play_audio_clip(worker, pcm: bytes, sample_rate: int) -> None:
+    """Queue ONE pre-rendered PCM clip on ``worker`` (quick task 260729-rck),
+    bracketed as bot speech exactly like :func:`play_pickup_cue` -- the same
+    barge-in-safe ``OutputAudioRawFrame`` injection seam (see the module
+    docstring's Task 2 spike: interruptible by design, never labeled as TTS
+    output, no provider call). A no-op for empty PCM."""
+    if not pcm:
+        return
+    await worker.queue_frames(
+        [
+            BotStartedSpeakingFrame(),
+            OutputAudioRawFrame(audio=pcm, sample_rate=sample_rate, num_channels=1),
+            BotStoppedSpeakingFrame(),
+        ]
+    )
+
+
 async def play_pickup_cue(worker) -> None:
     """Queue the ring + hey pickup cue on ``worker`` (a
     ``pipecat.pipeline.worker.PipelineWorker``), bracketed as bot speech so
