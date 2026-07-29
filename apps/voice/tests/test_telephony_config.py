@@ -569,6 +569,29 @@ def test_shipped_telephony_toml_8283_game_entry(make_config_file):
     assert entry.sms_reply_dids == ("7254048283",)
 
 
+# --- Quick task 260729-gfr: [telephony].gate_fail_audio ---------------------
+
+
+def test_gate_fail_audio_absent_defaults_empty(make_config_file):
+    """No `gate_fail_audio` line -> "" (spoken goodbye, byte-identical to
+    pre-gfr behavior)."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    assert load_telephony_config(path).gate_fail_audio == ""
+
+
+def test_gate_fail_audio_parses_and_strips(make_config_file):
+    toml = VALID_TELEPHONY_TOML + '\ngate_fail_audio = "  assets/telephony/rick/fail.wav  "\n'
+    cfg = load_telephony_config(make_config_file(append=toml))
+    assert cfg.gate_fail_audio == "assets/telephony/rick/fail.wav"
+
+
+def test_shipped_telephony_toml_gate_fail_audio_is_short_rickroll(make_config_file):
+    """The shipped config points the gate-fail clip at the short rickroll
+    (S3-synced at boot; a missing file degrades to the spoken goodbye)."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    assert cfg.gate_fail_audio == "assets/telephony/rick/rick-roll-sound-effect.wav"
+
+
 # --- Quick task 260729-rck: [[telephony.announcement]].audio_dir ------------
 #
 # A playback game: on code match the controller plays a continuous shuffle

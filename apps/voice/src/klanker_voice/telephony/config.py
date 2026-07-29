@@ -284,6 +284,16 @@ class TelephonyConfig:
     hangup_on_pipeline_error: bool = True
     # --- §24 silent answer-gate (D-05) ---
     require_gate: bool = True
+    #: OPTIONAL gate-fail audio (quick task 260729-gfr): a path (APP_ROOT-
+    #: relative or absolute) to ONE ``.wav`` played INSTEAD of the spoken
+    #: ``GATE_FAIL_CLOSED_COPY`` goodbye when the gate window expires with
+    #: no valid factor -- the "wrong code gets rickrolled" knob. Applies
+    #: ONLY to the window-expiry reason: a caller-ID-mint failure or a
+    #: post-unlock quota denial keeps the spoken goodbye (those callers
+    #: didn't fail a code). Empty (default), a missing file, or an
+    #: unreadable wav all degrade to the spoken goodbye -- byte-identical
+    #: pre-gfr behavior. A PUBLIC filesystem path, never a credential.
+    gate_fail_audio: str = ""
     gate_mode: str = "either"
     gate_window_seconds: int = 10
     unlock_tier_id: str = "kph-tier"
@@ -363,6 +373,7 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         answer_timeout_seconds=int(table.get("answer_timeout_seconds", 15)),
         hangup_on_pipeline_error=bool(table.get("hangup_on_pipeline_error", True)),
         require_gate=bool(table.get("require_gate", True)),
+        gate_fail_audio=str(table.get("gate_fail_audio", "")).strip(),
         gate_mode=gate_mode,
         gate_window_seconds=int(table.get("gate_window_seconds", 10)),
         unlock_tier_id=str(table.get("unlock_tier_id", "kph-tier")),
