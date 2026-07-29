@@ -265,19 +265,21 @@ sms_claim_url_template = "https://q.defcon.run/c8283?v={code}"
 # distinct-code-value constraint noted above the 3234 entry) BEFORE the
 # service.hcl valueFrom wiring is applied, or ECS fails task launch.
 #
-# SMS deliberately OFF at launch (sms_reply_dids = []): US carriers block
-# SMS from an UNVERIFIED toll-free number, and the operator's documented
-# preference (per-DID SMS reply v2) is text-FROM-the-dialed-number or
-# nothing. LIVE-STEP (later): after VoIP.ms toll-free SMS verification
-# clears, set sms_reply_dids to the real toll-free digits -- the relay URL
-# and claim template below are already wired for that day.
+# SMS from the Vegas pool (operator decision 2026-07-29, "keep it simple"):
+# US carriers block SMS from an UNVERIFIED toll-free number, so the claim
+# text for THIS game is sent from the 725 numbers instead -- the legacy
+# ordered-fallback pool below (sms_reply_dids stays EMPTY, which makes
+# _select_sms_send_dids return the pool unconditionally; tried in order
+# until one send succeeds). LIVE-STEP (later, optional): after VoIP.ms
+# toll-free SMS verification clears, drop the pool and set
+# sms_reply_dids = ["8559164636"] to text from the dialed number itself.
 [[telephony.announcement]]
 dids = ["8559164636"]
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=1800"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"
 code_env_var = "CTF_ANNOUNCEMENT_CODE_1800"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_1800), never TOML (D-09)
 line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
-sms_dids = []
+sms_dids = ["7254043234", "7254043283", "7254048283"]
 sms_reply_dids = []
 sms_relay_url = "https://auth.klankermaker.ai/use1/ctf/sms"
 sms_claim_url_template = "https://q.defcon.run/c1800?v={code}"
