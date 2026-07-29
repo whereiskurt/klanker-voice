@@ -311,6 +311,13 @@ locals {
             name      = "CTF_ANNOUNCEMENT_CODE_RICK"
             valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_code_rick"
           },
+          {
+            # The 1800 game's spoken trigger ("lost" -- any utterance
+            # containing it). Seeded + readback-verified 2026-07-29 BEFORE
+            # this wiring shipped, so the valueFrom is deploy-safe.
+            name      = "CTF_ANNOUNCEMENT_WORDS_1800"
+            valueFrom = "arn:aws:ssm:us-east-1:052251888500:parameter/kmv/secrets/use1/ctf/announcement_words_1800"
+          },
           # The telephony pipeline runs IN this container (Phase-9
           # call_runtime): after gate unlock it builds the same
           # STT/LLM/TTS cascade the voice service runs, so it needs the

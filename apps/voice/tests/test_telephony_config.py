@@ -668,16 +668,17 @@ def test_shipped_telephony_toml_1800_game_entry(make_config_file):
     """The 1800 toll-free game entry (quick 260728-tfn, 855-916-INFO): its
     own DID (asserted via consistency with the KVD1800 cid-prefix row, so a
     future number change never causes test churn), its own distinct
-    code_env_var NAME, numeric-only (no words_env_var), and the claim SMS
-    sent from the VEGAS ordered-fallback pool (operator decision
-    2026-07-29): an unverified toll-free number cannot send SMS on US
-    carriers, so sms_reply_dids stays empty (pool-mode) and sms_dids
-    carries the three 725 numbers, tried in order."""
+    code_env_var NAME, an either-factor spoken trigger (words_env_var --
+    the word "lost", value SSM-only), and the claim SMS sent from the
+    VEGAS ordered-fallback pool (operator decision 2026-07-29): an
+    unverified toll-free number cannot send SMS on US carriers, so
+    sms_reply_dids stays empty (pool-mode) and sms_dids carries the three
+    725 numbers, tried in order."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
     entry = cfg.announcements[3]
     assert entry.dids == (cfg.cid_prefix_did_map["KVD1800"],)
     assert entry.code_env_var == "CTF_ANNOUNCEMENT_CODE_1800"
-    assert entry.words_env_var == ""
+    assert entry.words_env_var == "CTF_ANNOUNCEMENT_WORDS_1800"
     assert entry.sms_dids == ("7254043234", "7254043283", "7254048283")
     assert entry.sms_reply_dids == ()
     assert entry.sms_relay_url == "https://auth.klankermaker.ai/use1/ctf/sms"
