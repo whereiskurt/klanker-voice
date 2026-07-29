@@ -986,14 +986,169 @@ func TestCancelVoipmsDID_RejectsBlankDid(t *testing.T) {
 // TestVoipmsSearchOrderCancelSubcommandsRegistered extends
 // TestVoipmsCmdHelpListsSubcommands to assert search-dids, order-did, and
 // cancel-did are registered alongside the existing sub-commands.
+// --------------------------------------------------------------------------
+// Toll-free search/order (quick 260728-tfn)
+
+// TestSearchVoipmsTollFree_BuildsRequestAndParses asserts the Canada+US
+// method, the type/query params, and array-shape row parsing.
+func TestSearchVoipmsTollFree_BuildsRequestAndParses(t *testing.T) {
+	var gotQuery url.Values
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":[
+			{"did":"18449060450","ratecenter":"TOLLFREE","perminute_monthly":"0.99","perminute_minute":"0.019","sms":"0","mms":"0"},
+			{"did":"18332221800","ratecenter":"TOLLFREE","perminute_monthly":"0.99","perminute_minute":"0.019","sms":"0","mms":"0"}
+		]}`))
+	})
+
+	got, err := searchVoipmsTollFree(t.Context(), vc, voipmsMethodSearchTollFreeCanUS, "contains", "1800")
+	if err != nil {
+		t.Fatalf("searchVoipmsTollFree() error: %v", err)
+	}
+	if got := gotQuery.Get("method"); got != voipmsMethodSearchTollFreeCanUS {
+		t.Errorf("method = %q, want %q", got, voipmsMethodSearchTollFreeCanUS)
+	}
+	if got := gotQuery.Get("type"); got != "contains" {
+		t.Errorf("type param = %q, want %q", got, "contains")
+	}
+	if got := gotQuery.Get("query"); got != "1800" {
+		t.Errorf("query param = %q, want %q", got, "1800")
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	if got[0].DID != "18449060450" || got[0].PerMinuteRate != "0.019" {
+		t.Errorf("got[0] = %+v, want DID=18449060450 PerMinuteRate=0.019", got[0])
+	}
+}
+
+// TestSearchVoipmsTollFree_EmptyQueryOmitsTypeAndQuery asserts a stock
+// listing (no --query) sends neither pattern param, and that the USA-only
+// method flows through.
+func TestSearchVoipmsTollFree_EmptyQueryOmitsTypeAndQuery(t *testing.T) {
+	var gotQuery url.Values
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","dids":[]}`))
+	})
+
+	if _, err := searchVoipmsTollFree(t.Context(), vc, voipmsMethodSearchTollFreeUSA, "contains", ""); err != nil {
+		t.Fatalf("searchVoipmsTollFree() error: %v", err)
+	}
+	if got := gotQuery.Get("method"); got != voipmsMethodSearchTollFreeUSA {
+		t.Errorf("method = %q, want %q", got, voipmsMethodSearchTollFreeUSA)
+	}
+	if _, present := gotQuery["type"]; present {
+		t.Error("type param sent on an empty query, want omitted")
+	}
+	if _, present := gotQuery["query"]; present {
+		t.Error("query param sent on an empty query, want omitted")
+	}
+}
+
+// TestOrderVoipmsTollFree_BuildsRequest asserts the orderTollFree method,
+// the full param set, and that a failure status surfaces as a safe error
+// (API status only, never a credential).
+func TestOrderVoipmsTollFree_BuildsRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		responseJS string
+		wantErr    bool
+		wantErrSub string
+	}{
+		{name: "success", responseJS: `{"status":"success"}`},
+		{
+			name:       "did_limit_reached",
+			responseJS: `{"status":"did_limit_reached","message":"account DID limit reached"}`,
+			wantErr:    true,
+			wantErrSub: "did_limit_reached",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotQuery url.Values
+			vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.Query()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tt.responseJS))
+			})
+
+			opts := orderDIDOptions{
+				Routing:     "account:557010_klanker-pbx",
+				POP:         "45",
+				Dialtime:    "60",
+				CNAM:        "0",
+				BillingType: "1",
+			}
+			err := orderVoipmsTollFree(t.Context(), vc, "18449060450", opts)
+
+			if got := gotQuery.Get("method"); got != voipmsMethodOrderTollFree {
+				t.Errorf("method = %q, want %q", got, voipmsMethodOrderTollFree)
+			}
+			if got := gotQuery.Get("did"); got != "18449060450" {
+				t.Errorf("did param = %q, want %q", got, "18449060450")
+			}
+			if got := gotQuery.Get("routing"); got != "account:557010_klanker-pbx" {
+				t.Errorf("routing param = %q, want %q", got, "account:557010_klanker-pbx")
+			}
+			if got := gotQuery.Get("cnam"); got != "0" {
+				t.Errorf("cnam param = %q, want %q", got, "0")
+			}
+			if got := gotQuery.Get("billing_type"); got != "1" {
+				t.Errorf("billing_type param = %q, want %q", got, "1")
+			}
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("orderVoipmsTollFree() returned nil error, want an error")
+				}
+				msg := err.Error()
+				if !strings.Contains(msg, tt.wantErrSub) {
+					t.Errorf("orderVoipmsTollFree() error = %q, want it to contain %q", msg, tt.wantErrSub)
+				}
+				if strings.Contains(msg, "test-pass") || strings.Contains(msg, "api_password") {
+					t.Errorf("orderVoipmsTollFree() error leaked a credential: %q", msg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("orderVoipmsTollFree() error: %v", err)
+			}
+		})
+	}
+}
+
+// TestOrderVoipmsTollFree_RejectsBlankDid asserts a blank DID never reaches
+// the network layer.
+func TestOrderVoipmsTollFree_RejectsBlankDid(t *testing.T) {
+	called := false
+	vc, _ := newTestVoipmsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success"}`))
+	})
+
+	if err := orderVoipmsTollFree(t.Context(), vc, "", orderDIDOptions{}); err == nil {
+		t.Fatal("orderVoipmsTollFree(\"\") returned nil error, want an error")
+	}
+	if called {
+		t.Error("orderVoipmsTollFree(\"\") made an HTTP call, want none")
+	}
+}
+
 func TestVoipmsSearchOrderCancelSubcommandsRegistered(t *testing.T) {
 	cfg := &Config{}
 	voipmsCmd := NewVoipmsCmd(cfg)
 
 	want := map[string]bool{
-		"search-dids": false,
-		"order-did":   false,
-		"cancel-did":  false,
+		"search-dids":     false,
+		"order-did":       false,
+		"cancel-did":      false,
+		"search-tollfree": false,
+		"order-tollfree":  false,
 	}
 	for _, sub := range voipmsCmd.Commands() {
 		name := sub.Name()

@@ -91,6 +91,25 @@ const (
 	// VERIFIED live 2026-07-21: cancels (permanently releases) a DID back
 	// to the VoIP.ms pool. Param: `did`.
 	voipmsMethodCancelDID = "cancelDID"
+
+	// VERIFIED 2026-07-28 via no-credential probes against the live REST
+	// endpoint (a real method answers missing_credentials; a bogus name
+	// answers invalid_method): searches the available toll-free stock
+	// reachable from BOTH Canada and the US — the coverage the klanker
+	// lines need. Optional params: `type` (starts|contains|ends) +
+	// `query` (digit pattern).
+	voipmsMethodSearchTollFreeCanUS = "searchTollFreeCanUS"
+
+	// VERIFIED 2026-07-28 (same probe): the US-only-reach variant of the
+	// search above. A US-only toll-free number REJECTS Canadian callers —
+	// exposed only behind an explicit --usa-only flag.
+	voipmsMethodSearchTollFreeUSA = "searchTollFreeUSA"
+
+	// VERIFIED 2026-07-28 (same probe): orders a toll-free number. The
+	// geographic orderDID does not cover toll-free stock; this is its
+	// toll-free twin, taking the same param set minus geography: `did`,
+	// `routing`, `pop`, `dialtime`, `cnam`, `billing_type`.
+	voipmsMethodOrderTollFree = "orderTollFree"
 )
 
 // --------------------------------------------------------------------------
@@ -215,7 +234,7 @@ type voipmsClient struct {
 // newVoipmsClient builds a client against the real VoIP.ms endpoint.
 func newVoipmsClient(creds voipmsCreds) *voipmsClient {
 	return &voipmsClient{
-		baseURL:    voipmsBaseURL,
+		baseURL: voipmsBaseURL,
 		// 45s: createSubAccount/orderDID are observed to take >15s server-side
 		// behind VoIP.ms's Cloudflare front; a timeout here does NOT mean the
 		// operation failed server-side — verify with a read call before retrying.
@@ -757,6 +776,66 @@ func cancelVoipmsDID(ctx context.Context, vc *voipmsClient, did string) error {
 }
 
 // --------------------------------------------------------------------------
+// Toll-free search/order (quick 260728-tfn) — the toll-free twins of the
+// geographic search/order wrappers above. Toll-free stock lives behind its
+// own API methods (searchTollFreeCanUS/searchTollFreeUSA/orderTollFree);
+// the geographic getDIDsUSA/orderDID pair never sees it. Rows are parsed
+// with the same defensive voipmsStringField coercion as the geographic
+// search, so a field VoIP.ms names differently for toll-free renders blank
+// rather than failing the whole search.
+
+// searchVoipmsTollFree searches available toll-free numbers via method
+// (one of voipmsMethodSearchTollFreeCanUS/voipmsMethodSearchTollFreeUSA).
+// A non-empty query pattern-matches digits with searchType
+// (starts|contains|ends); an empty query lists the general stock and
+// omits both params entirely.
+func searchVoipmsTollFree(ctx context.Context, vc *voipmsClient, method, searchType, query string) ([]AvailableDIDRecord, error) {
+	params := url.Values{}
+	if query != "" {
+		params.Set("type", searchType)
+		params.Set("query", query)
+	}
+	out, err := vc.do(ctx, method, params)
+	if err != nil {
+		return nil, err
+	}
+	records := []AvailableDIDRecord{}
+	switch dids := out["dids"].(type) {
+	case []any:
+		for _, item := range dids {
+			if m, ok := item.(map[string]any); ok {
+				records = append(records, availableDIDRecordFromMap(m))
+			}
+		}
+	case map[string]any:
+		records = append(records, availableDIDRecordFromMap(dids))
+	}
+	return records, nil
+}
+
+// orderVoipmsTollFree orders a toll-free did via voipmsMethodOrderTollFree
+// with the same routing/pop/dialtime/cnam/billing_type params as the
+// geographic orderVoipmsDID. Returns nil on status=success; otherwise the
+// do()-surfaced error (safe API status only — never the request URL or
+// credentials).
+func orderVoipmsTollFree(ctx context.Context, vc *voipmsClient, did string, opts orderDIDOptions) error {
+	if did == "" {
+		return fmt.Errorf("did must not be blank")
+	}
+	params := url.Values{}
+	params.Set("did", did)
+	params.Set("routing", opts.Routing)
+	params.Set("pop", opts.POP)
+	params.Set("dialtime", opts.Dialtime)
+	params.Set("cnam", opts.CNAM)
+	params.Set("billing_type", opts.BillingType)
+	if _, err := vc.do(ctx, voipmsMethodOrderTollFree, params); err != nil {
+		return fmt.Errorf("order toll-free DID %s: %w", did, err)
+	}
+	return nil
+}
+
+// --------------------------------------------------------------------------
 // Cobra command tree.
 
 // NewVoipmsCmd builds the "kv voipms" parent command, mirroring NewCodeCmd's
@@ -1005,6 +1084,76 @@ func NewVoipmsCmd(cfg *Config) *cobra.Command {
 	}
 	cancelDid.Flags().BoolVar(&cancelYes, "yes", false, "confirm the irreversible DID release")
 	voipmsCmd.AddCommand(cancelDid)
+
+	var tfUSAOnly bool
+	var tfType, tfQuery string
+	searchTollFree := &cobra.Command{
+		Use:   "search-tollfree",
+		Short: "Search available toll-free numbers (Canada+US reach by default)",
+		Long: "Searches the available toll-free stock. Defaults to numbers reachable\n" +
+			"from BOTH Canada and the US (searchTollFreeCanUS) — a US-only\n" +
+			"toll-free number rejects Canadian callers, so --usa-only is an\n" +
+			"explicit opt-in. --query pattern-matches digits with --type\n" +
+			"(starts|contains|ends); omit --query to list the general stock.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
+			if err != nil {
+				return err
+			}
+			vc := newVoipmsClient(creds)
+			method := voipmsMethodSearchTollFreeCanUS
+			if tfUSAOnly {
+				method = voipmsMethodSearchTollFreeUSA
+			}
+			dids, err := searchVoipmsTollFree(c.Context(), vc, method, tfType, tfQuery)
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(c.OutOrStdout(), 0, 2, 2, ' ', 0)
+			fmt.Fprintln(w, "DID\tRATECENTER\tPER-MIN/MO\tPER-MIN\tSMS\tMMS")
+			for _, r := range dids {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.DID, r.RateCenter, r.PerMinuteMonthly, r.PerMinuteRate, r.SMS, r.MMS)
+			}
+			return w.Flush()
+		},
+	}
+	searchTollFree.Flags().BoolVar(&tfUSAOnly, "usa-only", false, "search the US-only-reach pool (rejects Canadian callers)")
+	searchTollFree.Flags().StringVar(&tfType, "type", "contains", "digit-pattern match mode: starts|contains|ends (used only with --query)")
+	searchTollFree.Flags().StringVar(&tfQuery, "query", "", "digit pattern to match (omit to list general stock)")
+	voipmsCmd.AddCommand(searchTollFree)
+
+	var tfRouting, tfPOP, tfDialtime, tfCNAM, tfBillingType string
+	orderTollFreeCmd := &cobra.Command{
+		Use:   "order-tollfree <did>",
+		Short: "Order a toll-free number using the same live-proven defaults as order-did",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			creds, err := cfg.resolveVoipmsCreds(c.Context())
+			if err != nil {
+				return err
+			}
+			vc := newVoipmsClient(creds)
+			opts := orderDIDOptions{
+				Routing:     tfRouting,
+				POP:         tfPOP,
+				Dialtime:    tfDialtime,
+				CNAM:        tfCNAM,
+				BillingType: tfBillingType,
+			}
+			if err := orderVoipmsTollFree(c.Context(), vc, args[0], opts); err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "ordered toll-free DID %s (routing=%s pop=%s)\n", args[0], tfRouting, tfPOP)
+			return nil
+		},
+	}
+	orderTollFreeCmd.Flags().StringVar(&tfRouting, "routing", "account:557010_klanker-pbx", "routing target for the new DID")
+	orderTollFreeCmd.Flags().StringVar(&tfPOP, "pop", "45", "VoIP.ms POP id to order the DID on")
+	orderTollFreeCmd.Flags().StringVar(&tfDialtime, "dialtime", "60", "dial timeout (seconds) before failover")
+	orderTollFreeCmd.Flags().StringVar(&tfCNAM, "cnam", "0", "enable CNAM (Caller ID Name) lookup (0/1)")
+	orderTollFreeCmd.Flags().StringVar(&tfBillingType, "billing-type", "1", "billing type (1=per-minute; toll-free has no flat option)")
+	voipmsCmd.AddCommand(orderTollFreeCmd)
 
 	// cfg is accepted (mirroring NewCodeCmd's signature / root.go's uniform
 	// registration call) though unused today — no DynamoDB/table access is
