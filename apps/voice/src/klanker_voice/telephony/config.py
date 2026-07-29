@@ -195,6 +195,20 @@ class AnnouncementEntry:
     #: full rule (PUBLIC URL template, ``{code}`` required when present,
     #: empty means the controller's built-in default claim URL is used).
     sms_claim_url_template: str = ""
+    #: OPTIONAL audio-playback action (quick task 260729-rck). Non-empty
+    #: turns this entry into a PLAYBACK game instead of an OTP game: on code
+    #: match the controller plays a continuous shuffle of the ``.wav`` clips
+    #: in this directory (APP_ROOT-relative or absolute) over the call, then
+    #: tears down -- no OTP fetch, no TTS, no SMS. Mutually exclusive with
+    #: ``otp_url``/``line_template`` (enforced at load time). A PUBLIC
+    #: filesystem path baked into the image, never a credential.
+    audio_dir: str = ""
+    #: Playback cap in seconds for an ``audio_dir`` entry (quick task
+    #: 260729-rck) -- the shuffle loop stops and the call tears down once
+    #: this much play time has elapsed. Bounds the per-call toll-free
+    #: inbound-minute spend. Only meaningful (and only accepted) alongside
+    #: ``audio_dir``; defaults to 180.
+    max_play_seconds: float = 180.0
 
 
 @dataclass(frozen=True)
@@ -385,19 +399,52 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
         # the edge). No validation, no error on absence.
         did = str(item.get("did", "")).strip()
 
-        otp_url = item.get("otp_url")
-        if not otp_url or not isinstance(otp_url, str):
-            raise ConfigError(f"telephony.announcement[{i}].otp_url must be a non-empty string")
+        # Quick task 260729-rck: an entry is EITHER an OTP game (otp_url +
+        # line_template, the original shape) OR a playback game (audio_dir)
+        # -- never both. The playback shape needs no OTP issuer and no
+        # spoken template, so those validations only apply to OTP entries.
+        audio_dir = str(item.get("audio_dir", "")).strip()
 
+        raw_max_play = item.get("max_play_seconds", None)
+        if raw_max_play is not None and not audio_dir:
+            raise ConfigError(
+                f"telephony.announcement[{i}].max_play_seconds is only valid with audio_dir"
+            )
+        max_play_seconds = 180.0
+        if raw_max_play is not None:
+            if isinstance(raw_max_play, bool) or not isinstance(raw_max_play, (int, float)):
+                raise ConfigError(
+                    f"telephony.announcement[{i}].max_play_seconds must be a number"
+                )
+            max_play_seconds = float(raw_max_play)
+            if not 0 < max_play_seconds <= 3600:
+                raise ConfigError(
+                    f"telephony.announcement[{i}].max_play_seconds must be in (0, 3600]"
+                )
+
+        otp_url = item.get("otp_url")
         line_template = item.get("line_template")
-        if not line_template or not isinstance(line_template, str):
-            raise ConfigError(
-                f"telephony.announcement[{i}].line_template must be a non-empty string"
-            )
-        if "{code}" not in line_template:
-            raise ConfigError(
-                f"telephony.announcement[{i}].line_template must contain a {{code}} placeholder"
-            )
+        if audio_dir:
+            if otp_url or line_template:
+                raise ConfigError(
+                    f"telephony.announcement[{i}].audio_dir is mutually exclusive with "
+                    "otp_url/line_template (an entry is either a playback game or an OTP game)"
+                )
+            otp_url = ""
+            line_template = ""
+        else:
+            if not otp_url or not isinstance(otp_url, str):
+                raise ConfigError(
+                    f"telephony.announcement[{i}].otp_url must be a non-empty string"
+                )
+            if not line_template or not isinstance(line_template, str):
+                raise ConfigError(
+                    f"telephony.announcement[{i}].line_template must be a non-empty string"
+                )
+            if "{code}" not in line_template:
+                raise ConfigError(
+                    f"telephony.announcement[{i}].line_template must contain a {{code}} placeholder"
+                )
 
         otp_env_var = str(item.get("otp_env_var", ""))
 
@@ -440,6 +487,8 @@ def _parse_announcements(raw: object) -> tuple[AnnouncementEntry, ...]:
                 dids=dids,
                 words_env_var=words_env_var,
                 sms_claim_url_template=sms_claim_url_template,
+                audio_dir=audio_dir,
+                max_play_seconds=max_play_seconds,
             )
         )
 

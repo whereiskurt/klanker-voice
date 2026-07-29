@@ -564,6 +564,78 @@ def test_shipped_telephony_toml_8283_game_entry(make_config_file):
     assert entry.sms_reply_dids == ("7254048283",)
 
 
+# --- Quick task 260729-rck: [[telephony.announcement]].audio_dir ------------
+#
+# A playback game: on code match the controller plays a continuous shuffle
+# of the .wav clips in audio_dir instead of the OTP script. Mutually
+# exclusive with otp_url/line_template; max_play_seconds caps the loop.
+
+AUDIO_ANNOUNCEMENT_TOML = """
+[[telephony.announcement]]
+code_env_var = "CTF_ANNOUNCEMENT_CODE_AUDIO_TEST"
+audio_dir = "assets/telephony/rick"
+"""
+
+
+def test_announcement_audio_dir_parses_without_otp_fields(make_config_file):
+    """An audio entry needs NO otp_url/line_template -- both default to ""
+    and max_play_seconds defaults to 180."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + AUDIO_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    entry = cfg.announcements[0]
+    assert entry.audio_dir == "assets/telephony/rick"
+    assert entry.otp_url == ""
+    assert entry.line_template == ""
+    assert entry.max_play_seconds == 180.0
+
+
+def test_announcement_audio_dir_mutually_exclusive_with_otp_url(make_config_file):
+    """audio_dir + otp_url in one entry is a hard config error -- an entry
+    is either a playback game or an OTP game, never both."""
+    bad_toml = AUDIO_ANNOUNCEMENT_TOML.rstrip() + '\notp_url = "https://example.test/otp"\n'
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="mutually exclusive"):
+        load_telephony_config(path)
+
+
+def test_announcement_audio_dir_mutually_exclusive_with_line_template(make_config_file):
+    bad_toml = AUDIO_ANNOUNCEMENT_TOML.rstrip() + '\nline_template = "here is {code}"\n'
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="mutually exclusive"):
+        load_telephony_config(path)
+
+
+def test_announcement_max_play_seconds_parses_and_bounds(make_config_file):
+    """max_play_seconds accepts a positive number <= 3600; zero, negative,
+    over-bound, and non-numeric values are hard config errors."""
+    ok_toml = AUDIO_ANNOUNCEMENT_TOML.rstrip() + "\nmax_play_seconds = 60\n"
+    cfg = load_telephony_config(make_config_file(append=VALID_TELEPHONY_TOML + ok_toml))
+    assert cfg.announcements[0].max_play_seconds == 60.0
+
+    for bad_value in ("0", "-5", "3601", '"long"', "true"):
+        bad_toml = AUDIO_ANNOUNCEMENT_TOML.rstrip() + f"\nmax_play_seconds = {bad_value}\n"
+        with pytest.raises(ConfigError, match="max_play_seconds"):
+            load_telephony_config(make_config_file(append=VALID_TELEPHONY_TOML + bad_toml))
+
+
+def test_announcement_max_play_seconds_requires_audio_dir(make_config_file):
+    """max_play_seconds on an OTP entry (no audio_dir) is a hard config
+    error naming the constraint."""
+    bad_toml = VALID_ANNOUNCEMENT_TOML.rstrip() + "\nmax_play_seconds = 60\n"
+    path = make_config_file(append=VALID_TELEPHONY_TOML + bad_toml)
+    with pytest.raises(ConfigError, match="only valid with audio_dir"):
+        load_telephony_config(path)
+
+
+def test_announcement_otp_entry_unaffected_by_audio_fields(make_config_file):
+    """A plain OTP entry (no audio fields) parses byte-identically to the
+    pre-rck shape: audio_dir "" and the max_play_seconds default."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + VALID_ANNOUNCEMENT_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.announcements[0].audio_dir == ""
+    assert cfg.announcements[0].max_play_seconds == 180.0
+
+
 def test_shipped_telephony_toml_1800_game_entry(make_config_file):
     """The 1800 toll-free game entry (quick 260728-tfn, 855-916-INFO): its
     own DID (asserted via consistency with the KVD1800 cid-prefix row, so a
