@@ -454,9 +454,10 @@ func TestParseTelephonyGames_ShippedConfigMatchesTask2Entries(t *testing.T) {
 	}
 	// The 1800 toll-free game (quick 260728-tfn, 855-916-INFO): digits are
 	// deliberately NOT asserted (a number change must stay a pure TOML
-	// edit) -- only its shape: one DID, its own code env var, numeric-only.
-	if len(got[3].DIDs) != 1 || got[3].DIDs[0] == "" || got[3].CodeEnvVar != "CTF_ANNOUNCEMENT_CODE_1800" || got[3].WordsEnvVar != "" {
-		t.Errorf("got[3] (1800 game) = %+v, want one non-empty DID, code=CTF_ANNOUNCEMENT_CODE_1800, words=\"\"", got[3])
+	// edit) -- only its shape: one DID, its own code env var, and (since
+	// 2026-07-29) the either-factor spoken trigger.
+	if len(got[3].DIDs) != 1 || got[3].DIDs[0] == "" || got[3].CodeEnvVar != "CTF_ANNOUNCEMENT_CODE_1800" || got[3].WordsEnvVar != "CTF_ANNOUNCEMENT_WORDS_1800" {
+		t.Errorf("got[3] (1800 game) = %+v, want one non-empty DID, code=CTF_ANNOUNCEMENT_CODE_1800, words=CTF_ANNOUNCEMENT_WORDS_1800", got[3])
 	}
 	// The RICK playback game (quick 260729-rck): the second code on the
 	// same toll-free DID -- same digits as got[3], its own code env var.

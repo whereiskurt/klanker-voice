@@ -278,6 +278,15 @@ dids = ["8559164636"]
 otp_url = "https://auth.klankermaker.ai/use1/ctf/otp?g=1800"
 otp_env_var = "CTF_OTP_AUTH_TOKEN"
 code_env_var = "CTF_ANNOUNCEMENT_CODE_1800"   # NAME only; trigger VALUE in SSM (/kmv/secrets/use1/ctf/announcement_code_1800), never TOML (D-09)
+# Spoken trigger (quick 260729, operator KPH): EITHER factor fires this game
+# -- the DTMF code above OR the spoken word(s) held by this env var (SSM
+# /kmv/secrets/use1/ctf/announcement_words_1800, seeded live BEFORE the
+# valueFrom wiring shipped). match_passphrase is an order-independent token
+# subset, so any utterance containing the word(s) unlocks ("I'm lost",
+# "Help, I'm lost!"). ⚠ The 8s gate window is tight for speech: cue ~4s +
+# utterance + Deepgram finalization ~2.8s -- if live calls miss the window,
+# gate_window_seconds is the knob (the 260714 overrun mode).
+words_env_var = "CTF_ANNOUNCEMENT_WORDS_1800"   # NAME only; spoken-trigger VALUE in SSM, never TOML (D-09)
 line_template = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
 sms_dids = ["7254043234", "7254043283", "7254048283"]
 sms_reply_dids = []
