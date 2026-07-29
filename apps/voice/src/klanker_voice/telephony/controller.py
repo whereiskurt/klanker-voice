@@ -145,7 +145,7 @@ from klanker_voice.telephony.ari import AriClient, AriError
 from klanker_voice.telephony.call_event import elapsed_seconds, emit_call_event
 from klanker_voice.telephony.config import AnnouncementEntry, TelephonyConfig
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf
-from klanker_voice.telephony.pickup_cue import play_audio_clip, play_pickup_cue
+from klanker_voice.telephony.pickup_cue import load_wav_clip, play_audio_clip, play_pickup_cue
 from klanker_voice.telephony.rtp_socket import SocketRtpMediaSession
 from klanker_voice.telephony.transport import TelephonyTransport
 from klanker_voice.telephony.types import RtpMediaSession, TelephonyTransportParams
@@ -1709,8 +1709,31 @@ class AsteriskCallController:
         hard-timeout path, T-11-05-02) -- that hook hangs up the SIP
         channel exactly once. Hanging up here too would double the call
         (harmless against real ARI, a 404 swallowed by ``_safe_ari`` --
-        but the fake test client would double-count it)."""
+        but the fake test client would double-count it).
+
+        Quick task 260729-gfr: when ``[telephony].gate_fail_audio`` is
+        configured AND the reason is the gate-window expiry (a failed or
+        absent code -- NOT a mint failure or post-unlock quota denial,
+        whose callers didn't fail a code), the spoken goodbye is replaced
+        by that one pre-rendered clip (the short rickroll) via the same
+        barge-in-safe ``play_audio_clip`` seam, then the identical single
+        teardown. An unset knob / missing / unreadable clip degrades to
+        the spoken goodbye -- byte-identical pre-gfr behavior. Outcome
+        telemetry is recorded before the branch either way."""
         self._record_outcome(active_call, GATE_FAIL_OUTCOMES.get(reason, "gate_timeout"))
+        if reason == "gate window expired" and self._telephony_cfg.gate_fail_audio:
+            clip_path = Path(self._telephony_cfg.gate_fail_audio)
+            if not clip_path.is_absolute():
+                clip_path = APP_ROOT / clip_path
+            pcm, sample_rate = load_wav_clip(clip_path)
+            if pcm and sample_rate > 0:
+                await play_audio_clip(active_call.call_session.worker, pcm, sample_rate)
+                # Clip duration (16-bit mono) + a short pad so the tail is
+                # never cut off by the teardown -- mirrors the announcement
+                # grace discipline (a fixed sleep, never a frame event).
+                await asyncio.sleep(len(pcm) / 2 / sample_rate + 1.0)
+                await self._close_active_call(active_call, reason)
+                return
         await speak_goodbye(active_call.call_session.worker, GATE_FAIL_CLOSED_COPY)
         await asyncio.sleep(self._quota_cfg.goodbye_grace_seconds)
         await self._close_active_call(active_call, reason)

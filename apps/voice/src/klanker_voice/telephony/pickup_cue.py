@@ -141,6 +141,28 @@ def load_hey_clip(path: Path = HEY_CLIP_PATH) -> tuple[bytes, int]:
         return b"", _DEFAULT_SAMPLE_RATE
 
 
+@lru_cache(maxsize=8)
+def load_wav_clip(path: Path) -> tuple[bytes, int]:
+    """Read ONE pre-rendered WAV via stdlib ``wave``, cached (quick task
+    260729-gfr -- the gate-fail clip is re-played on every failed call, so
+    repeated reads are wasted work). Returns ``(pcm_bytes, sample_rate)``.
+    Never raises: a missing/unreadable file degrades to ``(b"", 0)`` --
+    same discipline as :func:`load_hey_clip`, but with its own cache slot
+    pool so alternating clips never evict the pickup cue."""
+    path = Path(path)
+    if not path.exists():
+        logger.warning(f"load_wav_clip: clip not found at {path} -- degrading to no audio")
+        return b"", 0
+    try:
+        with wave.open(str(path), "rb") as wf:
+            sample_rate = wf.getframerate()
+            pcm = wf.readframes(wf.getnframes())
+        return pcm, sample_rate
+    except Exception:  # noqa: BLE001 -- any read/parse failure degrades, never crashes call control
+        logger.warning(f"load_wav_clip: failed to read clip at {path} -- degrading to no audio")
+        return b"", 0
+
+
 async def play_audio_clip(worker, pcm: bytes, sample_rate: int) -> None:
     """Queue ONE pre-rendered PCM clip on ``worker`` (quick task 260729-rck),
     bracketed as bot speech exactly like :func:`play_pickup_cue` -- the same

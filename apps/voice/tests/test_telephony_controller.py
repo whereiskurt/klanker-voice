@@ -32,6 +32,7 @@ from klanker_voice.telephony.call_event import CALL_EVENT_MARKER, CALL_EVENT_OUT
 from klanker_voice.telephony.config import AnnouncementEntry
 from klanker_voice.telephony.controller import (
     ANNOUNCEMENT_WORDS_UNSET_SENTINEL,
+    GATE_FAIL_CLOSED_COPY,
     AsteriskCallController,
     _build_announcement_script,
 )
@@ -555,6 +556,112 @@ async def test_announcement_success_speaks_digitspaced_line_then_closes(
     assert ari.count("destroy_bridge", arg="bridge-1") == 1
     assert sessions[0].closed is True
     assert controller.calls == {}
+
+
+# --- Quick task 260729-gfr: gate-fail rickroll clip -------------------------
+
+
+async def test_gate_fail_audio_plays_clip_instead_of_goodbye(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, tmp_path
+):
+    """With [telephony].gate_fail_audio configured, a gate-window expiry
+    plays the clip via play_audio_clip and NEVER speaks the goodbye line --
+    then the same single teardown."""
+    clip = tmp_path / "fail.wav"
+    _write_wav(clip, seconds=0.01)
+
+    played: list[int] = []
+
+    async def _spy_play_audio_clip(worker, pcm, sample_rate):
+        played.append(sample_rate)
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.play_audio_clip", _spy_play_audio_clip
+    )
+
+    async def _fail_speak(worker, copy):
+        raise AssertionError("speak_goodbye must not run when the gate-fail clip plays")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _fail_speak)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_fail_audio=str(clip)),
+        quota_cfg=_quota_config(goodbye_grace_seconds=0.01),
+    )
+    await controller.on_stasis_start(_stasis_event())
+    active_call = next(iter(controller.calls.values()))
+
+    await controller._gate_fail_closed(active_call, "gate window expired")
+
+    assert played == [8000]
+    assert ari.count("hangup", arg="chan-1") == 1
+    assert controller.calls == {}
+
+
+async def test_gate_fail_audio_missing_file_falls_back_to_goodbye(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, tmp_path
+):
+    """A configured-but-missing clip degrades to the spoken goodbye --
+    byte-identical pre-gfr behavior."""
+    goodbye_calls: list[str] = []
+
+    async def _spy_speak_goodbye(worker, copy):
+        goodbye_calls.append(copy)
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+
+    async def _fail_play(worker, pcm, sample_rate):
+        raise AssertionError("play_audio_clip must not run for a missing clip")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.play_audio_clip", _fail_play)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_fail_audio=str(tmp_path / "nope.wav")),
+        quota_cfg=_quota_config(goodbye_grace_seconds=0.01),
+    )
+    await controller.on_stasis_start(_stasis_event())
+    active_call = next(iter(controller.calls.values()))
+
+    await controller._gate_fail_closed(active_call, "gate window expired")
+
+    assert goodbye_calls == [GATE_FAIL_CLOSED_COPY]
+    assert ari.count("hangup", arg="chan-1") == 1
+
+
+async def test_gate_fail_audio_not_used_for_quota_denial(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, tmp_path
+):
+    """A post-unlock quota denial keeps the SPOKEN goodbye even with the
+    clip configured and readable -- that caller didn't fail a code."""
+    clip = tmp_path / "fail.wav"
+    _write_wav(clip, seconds=0.01)
+
+    goodbye_calls: list[str] = []
+
+    async def _spy_speak_goodbye(worker, copy):
+        goodbye_calls.append(copy)
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+
+    async def _fail_play(worker, pcm, sample_rate):
+        raise AssertionError("play_audio_clip must not run for a quota denial")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.play_audio_clip", _fail_play)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_fail_audio=str(clip)),
+        quota_cfg=_quota_config(goodbye_grace_seconds=0.01),
+    )
+    await controller.on_stasis_start(_stasis_event())
+    active_call = next(iter(controller.calls.values()))
+
+    await controller._gate_fail_closed(active_call, "quota denied after gate unlock")
+
+    assert goodbye_calls == [GATE_FAIL_CLOSED_COPY]
+    assert ari.count("hangup", arg="chan-1") == 1
 
 
 # --- Quick task 260729-rck: audio-playback announcement (audio_dir) --------
