@@ -27,3 +27,8 @@ apps/voice/knowledge/transcripts/incoming/
 
 # kv CLI: locally-built operator binary (see kv/Makefile `build`)
 kv/bin/
+
+temp/
+
+kv
+kv/bin/kv
