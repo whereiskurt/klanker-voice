@@ -38,6 +38,7 @@ from klanker_voice.telephony.controller import (
 )
 
 from tests.test_call_runtime import _gate_result, _quota_config, fake_aws, reset_active_count  # noqa: F401
+from tests.test_controller_pickup_cue import _capture_transports, _fire_connected
 from tests.test_telephony_gate import loguru_caplog  # noqa: F401 -- shared loguru->caplog bridge fixture
 from tests.test_telephony_lifecycle import (  # noqa: F401 -- stub_call_session_run is an autouse fixture
     FakeAriClient,
@@ -1497,3 +1498,322 @@ async def test_wrong_code_gate_timeout_redacts_digits_words_and_code(
     assert wrong_digits not in payload_text
     assert armed_code not in payload_text
     assert "zorblattflibber" not in payload_text
+
+
+# --- Cue-relative gate defer + D-05d backstop (quick task 260805-fki) -------
+#
+# The controller-side wiring: on_client_connected calls gate.defer_for_cue
+# with the computed cue duration BEFORE playing the cue, on the gated path
+# only. The unconditional gate.start_timer() call is the fail-closed
+# backstop the defer can only ever bound, never remove or delay.
+
+
+async def test_gated_flow_defers_gate_deadline_before_playing_the_cue(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """on_client_connected calls gate.defer_for_cue(pickup_cue_duration_seconds())
+    exactly once, BEFORE queuing the cue -- and the cue still plays."""
+    call_order: list[str] = []
+
+    async def _spy_pickup_cue(worker):
+        call_order.append("play_pickup_cue")
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.play_pickup_cue", _spy_pickup_cue)
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.pickup_cue_duration_seconds", lambda: 4.265
+    )
+
+    captured = _capture_transports(monkeypatch)
+    controller, ari, sessions = _build_controller(make_config_file, telephony_cfg=_gated_cfg())
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+    gate = active_call.gate
+    assert gate is not None
+
+    original_defer_for_cue = gate.defer_for_cue
+
+    def _spy_defer_for_cue(cue_seconds):
+        call_order.append(f"defer_for_cue({cue_seconds})")
+        return original_defer_for_cue(cue_seconds)
+
+    gate.defer_for_cue = _spy_defer_for_cue  # type: ignore[method-assign]
+
+    await _fire_connected(captured[0])
+
+    assert call_order == ["defer_for_cue(4.265)", "play_pickup_cue"]
+
+
+async def test_gated_call_cue_handler_never_fires_still_fails_closed_at_gate_window_seconds(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """D-05d backstop, tested explicitly: even if on_client_connected NEVER
+    fires (the cue never plays, defer_for_cue is never called), the gate
+    still fails closed at gate_window_seconds after timer start -- the
+    fail-closed guarantee never depends on the cue seam firing at all."""
+
+    async def _spy_speak_goodbye(worker, copy):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_window_seconds=0.1),
+        quota_cfg=_quota_config(reconnect_grace_seconds=3600.0, goodbye_grace_seconds=0.01),
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+
+    # Deliberately never fire on_client_connected.
+    await asyncio.sleep(0.05)
+    assert "gate fail-closed" not in loguru_caplog.text
+    await asyncio.sleep(0.15)  # now past gate_window_seconds
+
+    assert "gate fail-closed call_id" in loguru_caplog.text
+    assert active_call.gate.unlocked is False
+
+
+async def test_gated_call_missing_cue_asset_defers_by_ring_duration_only_still_fails_closed(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Cue-asset-missing case: pickup_cue_duration_seconds() (the REAL
+    function, exercising the real load_hey_clip degrade) returns the 1.2s
+    ring-only duration when the hey clip is absent. The controller still
+    defers by that (smaller) lead, and the gate still fails closed within
+    the bound -- D-05d holds on the degraded cue path too."""
+    from klanker_voice.telephony import pickup_cue as pickup_cue_module
+
+    async def _spy_speak_goodbye(worker, copy):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.speak_goodbye", _spy_speak_goodbye)
+
+    async def _noop_pickup_cue(worker):
+        return None
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.play_pickup_cue", _noop_pickup_cue)
+    # Simulate the missing-hey-clip degrade at its own source (load_hey_clip)
+    # -- pickup_cue_duration_seconds() is NOT mocked, so this exercises the
+    # real ring-only computation.
+    monkeypatch.setattr(pickup_cue_module, "load_hey_clip", lambda path=None: (b"", 24000))
+
+    captured = _capture_transports(monkeypatch)
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_window_seconds=0.05),
+        quota_cfg=_quota_config(reconnect_grace_seconds=3600.0, goodbye_grace_seconds=0.01),
+    )
+
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+
+    await _fire_connected(captured[0])
+
+    # Deadline is ~gate_window_seconds(0.05) + the 1.2s ring-only lead ==
+    # ~1.25s away -- well short of that, still locked, no fail-closed yet.
+    await asyncio.sleep(0.3)
+    assert active_call.gate.unlocked is False
+    assert "gate fail-closed" not in loguru_caplog.text
+
+    await asyncio.sleep(1.1)  # now past ~1.25s total
+    assert "gate fail-closed call_id" in loguru_caplog.text
+
+
+# --- gate_debug_log_dtmf: opt-in DTMF-arrival logging (quick task 260805-fki) -
+#
+# Deliberate D-05e relaxation: arrival evidence only (call_id, caller_id,
+# arrival_count, tracked) -- NEVER the digit value, the DTMF buffer, the
+# PIN, or an announcement code. Placed BEFORE every guard in
+# on_channel_dtmf_received so an arrival for an unknown channel or a
+# gate_mode that excludes DTMF is still visible -- precisely the invisible
+# cases the flag exists to surface.
+
+
+async def test_dtmf_debug_log_off_by_default_emits_no_arrival_line(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """Default posture (flag off, the shipped default) is byte-identical:
+    no dtmf_received line, and the existing PIN-unlock behavior works
+    unaffected."""
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.quota.start_gate",
+        lambda identity, **kwargs: _gate_result(),
+    )
+    controller, ari, sessions = _build_controller(
+        make_config_file, telephony_cfg=_gated_cfg(), access_pin="4242"
+    )
+    await controller.on_stasis_start(_stasis_event())
+
+    for event in _dial("4242"):
+        await controller.on_channel_dtmf_received(event)
+
+    assert controller.calls["chan-1"].gate.unlocked is True
+    assert "dtmf_received" not in loguru_caplog.text
+
+
+async def test_dtmf_debug_log_on_emits_one_line_per_event_with_incrementing_count(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """With the flag on, THREE ARI DTMF events produce THREE dtmf_received
+    lines with a running per-call arrival count that increments 1, 2, 3."""
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_debug_log_dtmf=True),
+        # Long enough that dialing "123" never accidentally matches the PIN.
+        access_pin="99999999",
+    )
+    await controller.on_stasis_start(_stasis_event())
+
+    for digit in "123":
+        await controller.on_channel_dtmf_received(
+            {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": digit}
+        )
+
+    lines = [line for line in loguru_caplog.text.splitlines() if "dtmf_received" in line]
+    assert len(lines) == 3
+    for i, line in enumerate(lines, start=1):
+        assert f"arrival_count: {i}" in line
+        assert "tracked: True" in line
+        assert "'1001'" in line  # _stasis_event's default caller_number
+    assert controller.calls["chan-1"].dtmf_arrivals == 3
+
+
+async def test_dtmf_debug_log_on_emits_for_unknown_channel_tracked_false(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """An ARI event for a channel the controller never registered still
+    logs ONE arrival line -- tracked: False, arrival_count: 0, an unknown
+    caller_id placeholder -- proving a dropped/untracked arrival is visible
+    at all (the CONTEXT evidence: a caller registering zero digits while
+    STT heard them speak)."""
+    controller, ari, sessions = _build_controller(
+        make_config_file, telephony_cfg=_gated_cfg(gate_debug_log_dtmf=True)
+    )
+
+    await controller.on_channel_dtmf_received(
+        {"type": "ChannelDtmfReceived", "channel": {"id": "ghost-channel"}, "digit": "5"}
+    )
+
+    text = loguru_caplog.text
+    assert "dtmf_received" in text
+    assert "tracked: False" in text
+    assert "arrival_count: 0" in text
+    assert "'ghost-channel'" in text
+    assert "'unknown'" in text
+
+
+async def test_dtmf_debug_log_on_emits_even_when_gate_mode_excludes_dtmf(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """gate_mode='passphrase' (the DTMF factor entirely excluded) still logs
+    the arrival line -- this is precisely the invisible case the flag
+    exists for. dtmf_count (the guarded counter) stays 0, unaffected."""
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_mode="passphrase", gate_debug_log_dtmf=True),
+        access_pin="4242",
+    )
+    await controller.on_stasis_start(_stasis_event())
+
+    await controller.on_channel_dtmf_received(
+        {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": "4"}
+    )
+
+    active_call = controller.calls["chan-1"]
+    assert active_call.dtmf_count == 0  # gate_mode excluded DTMF -- unaffected
+    text = loguru_caplog.text
+    assert "dtmf_received" in text
+    assert "arrival_count: 1" in text
+    assert "tracked: True" in text
+
+
+async def test_dtmf_debug_log_exact_key_set_and_never_carries_the_pressed_digit(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch, loguru_caplog
+):
+    """D-05e redaction proof: the emitted line's key set is EXACTLY the
+    four allowed keys, in order, and the pressed digit character is absent
+    anywhere in the line. The pressed digit ("5") does not collide with
+    the fixture's call_id ("chan-1"), caller_id ("1738"), or the arrival
+    count ("1"), so the absence assertion is genuine, not vacuous."""
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_debug_log_dtmf=True),
+        access_pin="99999999",
+    )
+    await controller.on_stasis_start(_stasis_event(caller_number="1738"))
+
+    await controller.on_channel_dtmf_received(
+        {"type": "ChannelDtmfReceived", "channel": {"id": "chan-1"}, "digit": "5"}
+    )
+
+    marker = "dtmf_received"
+    lines = [line for line in loguru_caplog.text.splitlines() if marker in line]
+    assert len(lines) == 1
+    line = lines[0]
+    body = line[line.index(marker) + len(marker) :].strip()
+    assert body.startswith("{") and body.endswith("}")
+    keys = [part.split(":", 1)[0].strip() for part in body[1:-1].split(",")]
+    assert keys == ["call_id", "caller_id", "arrival_count", "tracked"]
+    assert "5" not in line  # the pressed digit never appears anywhere
+
+
+async def test_dtmf_debug_log_on_does_not_change_pin_unlock_or_announcement_dispatch(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """The debug flag is purely additive logging -- PIN unlock and
+    announcement-code dispatch behave identically whether it is on or off."""
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.quota.start_gate",
+        lambda identity, **kwargs: _gate_result(),
+    )
+    greet_calls: list[Any] = []
+
+    async def _spy_greet_now(worker, context):
+        greet_calls.append((worker, context))
+
+    monkeypatch.setattr("klanker_voice.telephony.controller.greet_now", _spy_greet_now)
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_debug_log_dtmf=True),
+        access_pin="4242",
+    )
+    await controller.on_stasis_start(_stasis_event())
+    active_call = controller.calls["chan-1"]
+
+    for event in _dial("4242"):
+        await controller.on_channel_dtmf_received(event)
+
+    assert active_call.gate.unlocked is True
+    assert len(greet_calls) == 1
+    assert active_call.dtmf_count == 4  # unaffected by the debug flag
+
+
+async def test_dtmf_debug_log_on_announcement_code_still_dispatches(
+    make_config_file, stub_provider_keys, fake_aws, monkeypatch
+):
+    """The debug flag being on does not interfere with the announcement-code
+    dispatch branch either."""
+    gate_announcement_calls: list[Any] = []
+
+    async def _spy_gate_announcement(self, active_call, entry):
+        gate_announcement_calls.append((active_call, entry))
+
+    monkeypatch.setattr(
+        "klanker_voice.telephony.controller.AsteriskCallController._gate_announcement",
+        _spy_gate_announcement,
+    )
+
+    controller, ari, sessions = _build_controller(
+        make_config_file,
+        telephony_cfg=_gated_cfg(gate_debug_log_dtmf=True),
+        access_pin="4242",
+        announcement_codes={ANNOUNCEMENT_CODE: _announcement_entry()},
+    )
+    await controller.on_stasis_start(_stasis_event())
+    for event in _dial(ANNOUNCEMENT_CODE):
+        await controller.on_channel_dtmf_received(event)
+
+    assert len(gate_announcement_calls) == 1

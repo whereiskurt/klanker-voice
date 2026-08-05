@@ -330,6 +330,141 @@ async def test_start_timer_is_idempotent():
     assert fail_closed_calls == ["fail_closed"]
 
 
+# --- GateProcessor: deadline-based timer + cue defer (quick task 260805-fki) -
+#
+# The cue-relative fail-closed rebase: defer_for_cue moves the deadline
+# forward by a bounded lead, never removes or delays start_timer's own
+# unconditional fire. Small windows/leads (0.05-0.2s) keep this fast.
+
+
+async def test_never_deferred_gate_still_fires_at_plain_gate_window_seconds():
+    """No behavior change for a gate that is never deferred: fail-closed
+    fires at approximately gate_window_seconds after start_timer(), not at
+    gate_window_seconds + max_cue_lead_seconds."""
+    gate, _, fail_closed_calls = _gate(gate_window_seconds=0.1, max_cue_lead_seconds=1.0)
+
+    gate.start_timer()
+    await asyncio.sleep(0.05)
+    assert fail_closed_calls == []  # not yet -- too early proves no clamp-length firing
+    await asyncio.sleep(0.15)
+    assert fail_closed_calls == ["fail_closed"]
+
+
+async def test_defer_for_cue_rebases_deadline_by_the_lead():
+    """A gate deferred by a cue lead L fires at approximately
+    L + gate_window_seconds after the defer, not gate_window_seconds after
+    timer start."""
+    gate, _, fail_closed_calls = _gate(gate_window_seconds=0.1, max_cue_lead_seconds=1.0)
+
+    gate.start_timer()
+    gate.defer_for_cue(0.1)
+    await asyncio.sleep(0.15)  # would have fired by ~0.1s if the defer had no effect
+    assert fail_closed_calls == []
+    await asyncio.sleep(0.15)  # now past window(0.1) + lead(0.1) = 0.2s
+    assert fail_closed_calls == ["fail_closed"]
+
+
+async def test_defer_for_cue_is_one_shot_second_call_does_not_extend():
+    """A second defer_for_cue call is a no-op -- the window is not extended
+    again."""
+    gate, _, fail_closed_calls = _gate(gate_window_seconds=0.1, max_cue_lead_seconds=2.0)
+
+    gate.start_timer()
+    gate.defer_for_cue(0.1)
+    gate.defer_for_cue(1.0)  # ignored -- one-shot, not additive
+    await asyncio.sleep(0.35)  # well past window+first-lead (0.2s), short of window+second-lead
+
+    assert fail_closed_calls == ["fail_closed"]
+
+
+async def test_defer_for_cue_lead_is_clamped_to_max_cue_lead_seconds():
+    """An absurdly large cue lead is clamped -- the gate still fires within
+    gate_window_seconds + max_cue_lead_seconds of timer start (the D-05d
+    fail-closed bound)."""
+    gate, _, fail_closed_calls = _gate(gate_window_seconds=0.05, max_cue_lead_seconds=0.1)
+
+    gate.start_timer()
+    gate.defer_for_cue(1000.0)  # absurd lead; must clamp to max_cue_lead_seconds
+    await asyncio.sleep(0.1)  # short of window+clamped-lead (0.15s); would still be silent
+    assert fail_closed_calls == []
+    await asyncio.sleep(0.15)  # now past 0.05 + 0.1 = 0.15s
+    assert fail_closed_calls == ["fail_closed"]
+
+
+async def test_defer_for_cue_before_start_timer_yields_same_deadline_as_after():
+    """defer_for_cue before start_timer, or after -- either call order --
+    yields the same (approximate) deferred deadline."""
+    gate_before, _, fail_closed_before = _gate(gate_window_seconds=0.1, max_cue_lead_seconds=1.0)
+    gate_before.defer_for_cue(0.1)
+    gate_before.start_timer()
+
+    gate_after, _, fail_closed_after = _gate(gate_window_seconds=0.1, max_cue_lead_seconds=1.0)
+    gate_after.start_timer()
+    gate_after.defer_for_cue(0.1)
+
+    await asyncio.sleep(0.15)  # short of window(0.1)+lead(0.1)=0.2s for both
+    assert fail_closed_before == []
+    assert fail_closed_after == []
+    await asyncio.sleep(0.15)  # now past 0.2s for both
+    assert fail_closed_before == ["fail_closed"]
+    assert fail_closed_after == ["fail_closed"]
+
+
+async def test_defer_for_cue_after_resolved_is_noop_never_resurrects_timer():
+    """defer_for_cue after the gate has already resolved (unlock) is a
+    no-op and never resurrects a cancelled timer."""
+    gate, unlock_calls, fail_closed_calls = _gate(
+        gate_window_seconds=0.05, max_cue_lead_seconds=1.0
+    )
+
+    gate.start_timer()
+    await gate.unlock("dtmf")
+    gate.defer_for_cue(0.5)  # no-op: already resolved
+    await asyncio.sleep(0.15)
+
+    assert unlock_calls == ["unlocked"]
+    assert fail_closed_calls == []  # timer stays cancelled, never resurrected
+
+
+async def test_negative_or_zero_cue_lead_never_shortens_the_window():
+    gate, _, fail_closed_calls = _gate(gate_window_seconds=0.1, max_cue_lead_seconds=1.0)
+
+    gate.start_timer()
+    gate.defer_for_cue(-5.0)
+    await asyncio.sleep(0.05)
+    assert fail_closed_calls == []
+    await asyncio.sleep(0.1)
+    assert fail_closed_calls == ["fail_closed"]
+
+
+async def test_unlock_still_cancels_a_deferred_timer():
+    gate, unlock_calls, fail_closed_calls = _gate(
+        gate_window_seconds=0.05, max_cue_lead_seconds=1.0
+    )
+
+    gate.start_timer()
+    gate.defer_for_cue(0.5)
+    await gate.unlock("dtmf")
+    await asyncio.sleep(0.2)
+
+    assert unlock_calls == ["unlocked"]
+    assert fail_closed_calls == []
+
+
+async def test_cancel_for_takeover_still_cancels_a_deferred_timer():
+    gate, unlock_calls, fail_closed_calls = _gate(
+        gate_window_seconds=0.05, max_cue_lead_seconds=1.0
+    )
+
+    gate.start_timer()
+    gate.defer_for_cue(0.5)
+    gate.cancel_for_takeover("announcement")
+    await asyncio.sleep(0.2)
+
+    assert fail_closed_calls == []
+    assert unlock_calls == []
+
+
 # --- GateProcessor: cancel_for_takeover (quick task 260716-1g0, Revision 2) -
 
 

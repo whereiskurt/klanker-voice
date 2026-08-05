@@ -91,6 +91,42 @@ def test_gate_debug_log_heard_parses_true_when_set(make_config_file):
     assert cfg.gate_debug_log_heard is True
 
 
+def test_gate_cue_lead_max_seconds_defaults_to_8(make_config_file):
+    """Quick task 260805-fki: absent -> the 8.0s D-05d safety cap default."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.gate_cue_lead_max_seconds == 8.0
+
+
+def test_gate_cue_lead_max_seconds_parses_a_float_when_set(make_config_file):
+    path = make_config_file(append=VALID_TELEPHONY_TOML + "gate_cue_lead_max_seconds = 5.5\n")
+    cfg = load_telephony_config(path)
+    assert cfg.gate_cue_lead_max_seconds == 5.5
+
+
+def test_gate_debug_log_dtmf_defaults_off(make_config_file):
+    """Quick task 260805-fki: the opt-in DTMF-arrival debug flag defaults
+    False -- a [telephony] table without it keeps the D-05e posture
+    byte-identical."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML)
+    cfg = load_telephony_config(path)
+    assert cfg.gate_debug_log_dtmf is False
+
+
+def test_gate_debug_log_dtmf_parses_true_when_set(make_config_file):
+    """When the operator flips gate_debug_log_dtmf = true, it parses through."""
+    path = make_config_file(append=VALID_TELEPHONY_TOML + "gate_debug_log_dtmf = true\n")
+    cfg = load_telephony_config(path)
+    assert cfg.gate_debug_log_dtmf is True
+
+
+def test_shipped_telephony_toml_gate_window_is_12_seconds(make_config_file):
+    """Quick task 260805-fki: the shipped config's fail-closed window is now
+    12s (measured from the end of the pickup cue, not from pipeline start)."""
+    cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
+    assert cfg.gate_window_seconds == 12
+
+
 def test_telephony_table_without_tel_mint_defaults_to_unconfigured(make_config_file):
     """Phase 12 Plan 06 (D-02/D-04): a [telephony] table with no tel_mint_*
     fields at all -- e.g. every existing Phase-11 fixture/checked-in TOML --
