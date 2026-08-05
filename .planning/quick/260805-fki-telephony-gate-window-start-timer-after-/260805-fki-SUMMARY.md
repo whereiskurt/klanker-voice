@@ -9,7 +9,7 @@ provides:
   - "GateProcessor deadline-based fail-closed timer with a bounded, one-shot defer_for_cue rebase"
   - "pickup_cue.pickup_cue_duration_seconds() -- the computed ring+hey cue duration input to the defer"
   - "TelephonyConfig.gate_cue_lead_max_seconds (default 8.0) and gate_debug_log_dtmf (default False) knobs"
-  - "gate_window_seconds 8 -> 10 in the shipped configs/telephony.toml, cue-relative"
+  - "gate_window_seconds 8 -> 12 in the shipped configs/telephony.toml, cue-relative"
   - "Redaction-safe opt-in DTMF-arrival debug logging in on_channel_dtmf_received"
 affects: [telephony-controller, telephony-gate, telephony-config]
 
@@ -35,7 +35,7 @@ key-files:
 key-decisions:
   - "Cue-relative timer start is implemented as a REBASE of an already-started, unconditional timer (defer_for_cue), not by deferring timer creation -- the fail-closed guarantee is a plain arithmetic invariant (deadline can only move forward, capped) rather than depending on the cue seam ever firing."
   - "seconds_to_outcome in game_call_event stays ANSWER-relative, not rebased to the cue -- see the dedicated section below."
-  - "gate_cue_lead_max_seconds defaults to 8.0 (comfortably covers the measured 4.265s cue plus media-setup slack); worst-case fail-closed bound is now gate_window_seconds(10) + gate_cue_lead_max_seconds(8.0) = 18s from timer start on ANY path."
+  - "gate_cue_lead_max_seconds defaults to 8.0 (comfortably covers the measured 4.265s cue plus media-setup slack); worst-case fail-closed bound is now gate_window_seconds(12) + gate_cue_lead_max_seconds(8.0) = 20s from timer start on ANY path."
   - "DTMF arrival logging is placed BEFORE every existing guard in on_channel_dtmf_received (a pure hoist of the existing channel_id/digit parsing + lookup, not a restructure) so it is visible for an unknown channel and for a gate_mode that excludes DTMF -- precisely the two invisible cases the flag exists to diagnose."
 
 requirements-completed: [QT-260805-fki]
@@ -47,16 +47,16 @@ metrics:
 status: complete
 ---
 
-# Quick Task 260805-fki: Telephony gate window — cue-relative timer, 10s, DTMF arrival logging — Summary
+# Quick Task 260805-fki: Telephony gate window — cue-relative timer, 12s, DTMF arrival logging — Summary
 
-**Fail-closed gate timer rebased to fire relative to the end of the ring+hey pickup cue (via a bounded, one-shot `defer_for_cue`), `gate_window_seconds` raised 8→10, and an opt-in DTMF-arrival debug line added — giving a real ~10s post-cue dialing budget instead of today's ~4s, with a strictly stronger (not weaker) fail-closed guarantee.**
+**Fail-closed gate timer rebased to fire relative to the end of the ring+hey pickup cue (via a bounded, one-shot `defer_for_cue`), `gate_window_seconds` raised 8→12, and an opt-in DTMF-arrival debug line added — giving a real ~12s post-cue dialing budget instead of today's ~4s, with a strictly stronger (not weaker) fail-closed guarantee.**
 
 ## Accomplishments
 
 - `GateProcessor`'s fail-closed timer converted from a fixed `asyncio.sleep` to a monotonic-deadline loop. New `defer_for_cue(cue_seconds)` rebases the deadline forward by a clamped, one-shot lead — `start_timer()` stays the unconditional backstop at both of its real call sites (`_finish_stasis_start_gated`, and the pipeline's first `StartFrame`).
 - New `pickup_cue.pickup_cue_duration_seconds()` computes the ring+hey cue's wall-clock duration (there is no completion signal for the queued frames) — this is the value the controller passes into `defer_for_cue`.
 - Two new `TelephonyConfig` knobs: `gate_cue_lead_max_seconds` (default 8.0, the D-05d safety cap) and `gate_debug_log_dtmf` (default False, opt-in arrival-only DTMF debug logging).
-- `configs/telephony.toml`: `gate_window_seconds` 8 → 10, with the inline history comment extended to record the 260805 live-telemetry evidence and the cue-relative rationale; both new knobs added beneath `gate_debug_log_heard`.
+- `configs/telephony.toml`: `gate_window_seconds` 8 → 12, with the inline history comment extended to record the 260805 live-telemetry evidence and the cue-relative rationale; both new knobs added beneath `gate_debug_log_heard`.
 - `_register_pickup_cue` now accepts an optional `gate` kwarg; on the gated path, `on_client_connected` calls `gate.defer_for_cue(pickup_cue_duration_seconds())` immediately before queuing the cue. The ungated path is untouched (no `GateProcessor` exists there).
 - `on_channel_dtmf_received`: `channel_id`/`digit` parsing and the `self.calls.get(...)` lookup hoisted above every guard (a pure hoist — every existing guard/branch keeps its exact order and semantics after that point). With `gate_debug_log_dtmf=true`, emits one `dtmf_received{call_id, caller_id, arrival_count, tracked}` INFO line per ARI event — even for an unknown channel or a `gate_mode` that excludes DTMF.
 - New `ActiveCall.dtmf_arrivals` counter (distinct from `dtmf_count`) feeds only the debug line; `call_event.py` is untouched.
@@ -66,7 +66,7 @@ status: complete
 Each task was committed atomically:
 
 1. **Task 1: Deadline-based gate timer + bounded cue defer + a cue-duration helper** — `724ecb0` (feat)
-2. **Task 2: Config knobs + telephony.toml 8 → 10 with documented history** — `0b19cdd` (feat)
+2. **Task 2: Config knobs + telephony.toml 8 → 12 with documented history** — `0b19cdd` (feat)
 3. **Task 3: Controller wiring — cue defer at the pickup-cue seam + redaction-safe DTMF arrival logging** — `1531248` (feat)
 
 **Plan metadata:** `31d4b89` (docs: telephony gate window plan, committed before execution)
@@ -95,13 +95,13 @@ Each task was committed atomically:
 
 ### `gate_cue_lead_max_seconds` and the resulting worst-case bound (REQUIRED explicit statement)
 
-Chosen value: **8.0** (the D-05d safety cap, `TelephonyConfig.gate_cue_lead_max_seconds` default, also shipped in `configs/telephony.toml`). This comfortably covers the measured 4.265s cue plus media-setup slack while staying tightly bounded. Combined with `gate_window_seconds = 10`, the **absolute worst-case fail-closed fire time on ANY path** (cue plays normally, cue never plays, cue errors, cue is barge-in-flushed, or the cue lead is pathologically large) is now:
+Chosen value: **8.0** (the D-05d safety cap, `TelephonyConfig.gate_cue_lead_max_seconds` default, also shipped in `configs/telephony.toml`). This comfortably covers the measured 4.265s cue plus media-setup slack while staying tightly bounded. Combined with `gate_window_seconds = 12`, the **absolute worst-case fail-closed fire time on ANY path** (cue plays normally, cue never plays, cue errors, cue is barge-in-flushed, or the cue lead is pathologically large) is now:
 
 ```
-timer_start + gate_window_seconds(10) + gate_cue_lead_max_seconds(8.0) = timer_start + 18s
+timer_start + gate_window_seconds(12) + gate_cue_lead_max_seconds(8.0) = timer_start + 20s
 ```
 
-For the expected/normal path (cue plays, ~4.265s lead applied), the caller's real dialing budget is `gate_window_seconds(10)` measured from the end of that ~4.265s cue — i.e. roughly `4.265s + 10s ≈ 14.3s` from timer start to fail-closed, versus today's ~4s of real dialing time inside an 8s window measured from pipeline start.
+For the expected/normal path (cue plays, ~4.265s lead applied), the caller's real dialing budget is `gate_window_seconds(12)` measured from the end of that ~4.265s cue — i.e. roughly `4.265s + 12s ≈ 16.3s` from timer start to fail-closed, versus today's ~4s of real dialing time inside an 8s window measured from pipeline start.
 
 ### Live production path change + operator action required (REQUIRED explicit statement)
 

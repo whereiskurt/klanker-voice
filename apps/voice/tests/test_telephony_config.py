@@ -120,11 +120,11 @@ def test_gate_debug_log_dtmf_parses_true_when_set(make_config_file):
     assert cfg.gate_debug_log_dtmf is True
 
 
-def test_shipped_telephony_toml_gate_window_is_10_seconds(make_config_file):
+def test_shipped_telephony_toml_gate_window_is_12_seconds(make_config_file):
     """Quick task 260805-fki: the shipped config's fail-closed window is now
-    10s (measured from the end of the pickup cue, not from pipeline start)."""
+    12s (measured from the end of the pickup cue, not from pipeline start)."""
     cfg = load_telephony_config(APP_ROOT / "configs" / "telephony.toml")
-    assert cfg.gate_window_seconds == 10
+    assert cfg.gate_window_seconds == 12
 
 
 def test_telephony_table_without_tel_mint_defaults_to_unconfigured(make_config_file):
