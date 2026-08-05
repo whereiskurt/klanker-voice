@@ -246,7 +246,21 @@ class TelephonyConfig:
             (PIN only), ``"passphrase"`` (spoken 4-word phrase only), or
             ``"either"`` (default, D-05b: both factors, either unlocks).
         gate_window_seconds: How long the caller has to unlock before the
-            fail-closed goodbye + hangup (D-05d).
+            fail-closed goodbye + hangup (D-05d). Quick task 260805-fki:
+            measured from the END of the ring+hey pickup cue (via
+            ``GateProcessor.defer_for_cue``), not from pipeline start --
+            see ``gate_cue_lead_max_seconds`` for the bound on that defer.
+        gate_cue_lead_max_seconds: Quick task 260805-fki -- the HARD upper
+            bound on how far the pickup cue may push the fail-closed
+            deadline forward. The gate always fails closed within
+            ``gate_window_seconds + gate_cue_lead_max_seconds`` of timer
+            start, regardless of what the cue does (D-05d safety cap).
+        gate_debug_log_dtmf: Quick task 260805-fki -- opt-in (default False)
+            DTMF ARRIVAL logging at the edge: THAT a digit arrived and a
+            running per-call count, NEVER the digit value. A deliberate,
+            operator-accepted D-05e relaxation, mirroring
+            ``gate_debug_log_heard``'s framing. Off = byte-identical D-05e
+            posture.
         unlock_tier_id: The FALLBACK tier granted on a successful gate unlock
             when the §23 caller-ID mint is unconfigured (``tel_mint_url``
             empty) -- the Phase-11 minimal identity-seam grant (D-05a).
@@ -303,6 +317,23 @@ class TelephonyConfig:
     #: -- never logs the passphrase/PIN, never runs on the success path. Off =
     #: byte-identical D-05e posture.
     gate_debug_log_heard: bool = False
+    #: Quick task 260805-fki: the HARD upper bound (D-05d safety cap) on how
+    #: far the ring+hey pickup cue may push the fail-closed deadline forward
+    #: via ``GateProcessor.defer_for_cue`` -- the gate ALWAYS fails closed
+    #: within ``gate_window_seconds + gate_cue_lead_max_seconds`` of timer
+    #: start, no matter what the cue does (never plays, errors, hangs, or is
+    #: barge-in-flushed). 8.0 comfortably covers the measured 4.265s cue
+    #: (1.2s ring + the committed hey clip) plus media-setup slack while
+    #: staying tightly bounded.
+    gate_cue_lead_max_seconds: float = 8.0
+    #: Quick task 260805-fki: opt-in (default False) DTMF ARRIVAL logging at
+    #: the edge -- a deliberate, operator-accepted, documented D-05e
+    #: relaxation limited to arrival evidence: THAT a digit arrived and how
+    #: many have arrived on this call, NEVER the digit value, the
+    #: accumulated DTMF buffer, the PIN, or any announcement code. Mirrors
+    #: ``gate_debug_log_heard``'s framing exactly. Off = byte-identical
+    #: D-05e posture.
+    gate_debug_log_dtmf: bool = False
     #: Quick task 260717-o2q (per-DID gate policy Part A): the set of
     #: resolved dialed DIDs (bare digits, the same ``dialed_did`` Approach C
     #: already resolves in ``AsteriskCallController.on_stasis_start``) whose
@@ -378,6 +409,8 @@ def load_telephony_config(path: Path | str | None = None) -> TelephonyConfig:
         gate_window_seconds=int(table.get("gate_window_seconds", 10)),
         unlock_tier_id=str(table.get("unlock_tier_id", "kph-tier")),
         gate_debug_log_heard=bool(table.get("gate_debug_log_heard", False)),
+        gate_cue_lead_max_seconds=float(table.get("gate_cue_lead_max_seconds", 8.0)),
+        gate_debug_log_dtmf=bool(table.get("gate_debug_log_dtmf", False)),
         tel_mint_url=str(table.get("tel_mint_url", "")),
         tel_mint_env_var=str(table.get("tel_mint_env_var", "TELEPHONY_ENDPOINT_AUTH_TOKEN")),
         announcements=announcements,
