@@ -10,6 +10,7 @@ from __future__ import annotations
 import wave
 from pathlib import Path
 
+import pytest
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
@@ -95,6 +96,39 @@ def test_load_hey_clip_is_cached_across_repeated_calls(tmp_path):
     info = pickup_cue.load_hey_clip.cache_info()
     assert info.hits == 1
     assert info.misses == 1
+
+
+# --- pickup_cue_duration_seconds (quick task 260805-fki) -------------------
+
+
+def test_pickup_cue_duration_seconds_with_real_asset_is_ring_plus_hey():
+    """Against the committed real hey clip (24kHz, 73561 frames = 3.065s),
+    the computed duration is the 1.2s ring plus that clip -- 4.265s total."""
+    pickup_cue.load_hey_clip.cache_clear()
+
+    duration = pickup_cue.pickup_cue_duration_seconds()
+
+    assert duration == pytest.approx(4.265, abs=0.001)
+
+
+def test_pickup_cue_duration_seconds_missing_asset_is_ring_only(monkeypatch):
+    """A missing/unreadable hey clip degrades to ring-only (1.2s), never
+    raises -- mirrors load_hey_clip's own never-raise discipline."""
+    monkeypatch.setattr(pickup_cue, "load_hey_clip", lambda path=None: (b"", 24000))
+
+    duration = pickup_cue.pickup_cue_duration_seconds()
+
+    assert duration == 1.2
+
+
+def test_pickup_cue_duration_seconds_zero_sample_rate_never_raises(monkeypatch):
+    """A degraded (b"", 0) result (load_wav_clip's own missing-asset shape)
+    must never divide by zero -- still degrades to ring-only."""
+    monkeypatch.setattr(pickup_cue, "load_hey_clip", lambda path=None: (b"", 0))
+
+    duration = pickup_cue.pickup_cue_duration_seconds()
+
+    assert duration == 1.2
 
 
 # --- play_pickup_cue -------------------------------------------------------

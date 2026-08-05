@@ -180,6 +180,29 @@ async def play_audio_clip(worker, pcm: bytes, sample_rate: int) -> None:
     )
 
 
+def pickup_cue_duration_seconds() -> float:
+    """The COMPUTED wall-clock duration of the ring + hey cue that
+    :func:`play_pickup_cue` queues (quick task 260805-fki).
+
+    ``play_pickup_cue`` only *queues* frames via ``worker.queue_frames(...)``
+    and returns immediately -- there is no completion signal for "the cue
+    finished playing". This function computes the duration instead, so the
+    §24 gate's cue-relative timer defer (``GateProcessor.defer_for_cue``) has
+    something concrete to rebase its fail-closed deadline against.
+
+    Returns ``_DEFAULT_DURATION_S`` (ring only, 1.2s) when the hey clip asset
+    is missing/unreadable/empty -- mirrors :func:`load_hey_clip`'s own
+    never-raise, ring-only degrade (a caller with a fresh checkout that
+    hasn't rendered the hey clip still gets a sane, if shorter, cue-relative
+    defer). Reuses the ``lru_cache``d :func:`load_hey_clip`, so repeated
+    calls (once per gated call) are cheap. Never raises."""
+    hey_pcm, hey_sample_rate = load_hey_clip()
+    if not hey_pcm or not hey_sample_rate:
+        return _DEFAULT_DURATION_S
+    hey_duration_s = len(hey_pcm) / 2 / hey_sample_rate  # 16-bit mono PCM
+    return _DEFAULT_DURATION_S + hey_duration_s
+
+
 async def play_pickup_cue(worker) -> None:
     """Queue the ring + hey pickup cue on ``worker`` (a
     ``pipecat.pipeline.worker.PipelineWorker``), bracketed as bot speech so

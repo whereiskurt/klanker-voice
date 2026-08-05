@@ -213,6 +213,7 @@ class GateProcessor(FrameProcessor):
         concierge_unlock_enabled: bool = True,
         announcement_words: Mapping[str, Iterable[str]] | None = None,
         on_announcement_words: AnnouncementWordsCallback | None = None,
+        max_cue_lead_seconds: float = 8.0,
         name: str | None = None,
     ) -> None:
         if name is not None:
@@ -259,6 +260,29 @@ class GateProcessor(FrameProcessor):
         self._suppress_speech_until_new_turn = False
         self._accumulated_tokens: set[str] = set()
         self._timer_task: asyncio.Task | None = None
+        #: Quick task 260805-fki: the HARD upper bound (D-05d safety cap) on
+        #: how far a cue lead may push the fail-closed deadline -- see
+        #: :meth:`defer_for_cue`.
+        self._max_cue_lead_seconds = max_cue_lead_seconds
+        #: Monotonic (``loop.time()``) absolute fail-closed fire time, the
+        #: SINGLE source of truth for when ``_run_timer`` fires. ``None``
+        #: until :meth:`start_timer` runs. ``start_timer`` and
+        #: :meth:`defer_for_cue` are its only writers; ``_run_timer`` only
+        #: reads it.
+        self._deadline: float | None = None
+        #: Monotonic stamp of when the fail-closed timer actually started --
+        #: the fixed anchor :meth:`defer_for_cue`'s fail-closed cap is
+        #: computed against, distinct from the (possibly rebased)
+        #: ``_deadline`` itself.
+        self._timer_started_at: float | None = None
+        #: A cue lead that arrived via :meth:`defer_for_cue` BEFORE
+        #: :meth:`start_timer` ran -- applied when the timer finally starts.
+        #: 0.0 (no-op) once consumed or when no defer has happened yet.
+        self._pending_cue_lead: float = 0.0
+        #: One-shot guard: a cue can only ever rebase the deadline once per
+        #: call, so a duplicate ``defer_for_cue`` call (or a cue re-fired by
+        #: some future retry path) can never accumulate multiple leads.
+        self._cue_deferred: bool = False
 
         # Quick task 260727-pdh: the announcement spoken-trigger registry --
         # opaque entry key -> normalized (strip+lower, empties dropped) word
@@ -308,13 +332,98 @@ class GateProcessor(FrameProcessor):
         timer is already running, or after the gate has already resolved,
         is a no-op) -- callers may call this defensively from more than one
         place (e.g. both on the first ``StartFrame`` and explicitly from the
-        controller right after construction)."""
+        controller right after construction).
+
+        Quick task 260805-fki: stamps ``_timer_started_at`` and computes the
+        initial ``_deadline`` (``_timer_started_at + gate_window_seconds +
+        _pending_cue_lead``) BEFORE creating the timer task -- so a
+        :meth:`defer_for_cue` call that arrived before the timer started is
+        honoured from the very first tick, and ``_run_timer`` never has to
+        compute its own start point.
+
+        D-05d invariant: this call is UNCONDITIONAL at both of this gate's
+        real call sites (the controller's ``_finish_stasis_start_gated``,
+        right after construction, and this processor's own first
+        ``StartFrame``) -- :meth:`defer_for_cue` can only ever move the
+        deadline this establishes FORWARD by a bounded amount, never remove
+        or delay its start. A cue that never plays, errors, hangs, or is
+        barge-in-flushed therefore still fails closed at
+        ``_timer_started_at + gate_window_seconds`` at the absolute latest
+        for the undeferred case, or ``_timer_started_at + gate_window_seconds
+        + max_cue_lead_seconds`` at the absolute latest on ANY path,
+        deferred or not."""
         if self._timer_task is None and not self._resolved:
+            loop = asyncio.get_running_loop()
+            self._timer_started_at = loop.time()
+            self._deadline = (
+                self._timer_started_at + self._gate_window_seconds + self._pending_cue_lead
+            )
             self._timer_task = asyncio.create_task(self._run_timer())
 
+    def defer_for_cue(self, cue_seconds: float) -> None:
+        """Rebase the fail-closed deadline to (approximately) ``cue_seconds``
+        past NOW, so the caller's dialing window starts when the ring+hey
+        pickup cue finishes rather than at pipeline start (quick task
+        260805-fki). One-shot: a second call is always a no-op, so a cue
+        cannot be re-deferred by some future retry path into accumulating
+        multiple leads.
+
+        No-op (and never raises) when the gate has already resolved
+        (unlock, fail-closed, or ``cancel_for_takeover``) -- this can never
+        resurrect an already-cancelled timer. ``cue_seconds`` is clamped to
+        ``[0.0, max_cue_lead_seconds]`` first: a non-positive lead is a
+        pure no-op (it can never SHORTEN the window), and an absurdly large
+        lead is capped at ``max_cue_lead_seconds`` -- the D-05d safety cap.
+
+        If :meth:`start_timer` has not run yet, the clamped lead is stashed
+        in ``_pending_cue_lead`` for ``start_timer`` to apply. Otherwise the
+        deadline is rebased in place:
+        ``_deadline = min(max(_deadline, now + lead + gate_window_seconds),
+        _timer_started_at + gate_window_seconds + max_cue_lead_seconds)`` --
+        the inner ``max`` guarantees the window can only ever be extended,
+        never shortened by a defer call that (for whatever reason) computes
+        a smaller lead than one already applied; the outer ``min`` is the
+        fail-closed cap, so ``_run_timer`` is bounded no matter what value
+        is passed in here.
+
+        This is the D-05d proof for this change: the fail-closed timer is
+        started unconditionally by :meth:`start_timer` regardless of this
+        method ever being called, and this method can only ever move that
+        timer's deadline FORWARD by a bounded amount -- so a cue that never
+        plays, errors, is interrupted, or never signals still fails closed
+        at ``_timer_started_at + gate_window_seconds``, and the absolute
+        worst case on ANY path is
+        ``_timer_started_at + gate_window_seconds + max_cue_lead_seconds``.
+        Synchronous; never raises."""
+        if self._resolved or self._cue_deferred:
+            return
+        self._cue_deferred = True
+        lead = max(0.0, min(cue_seconds, self._max_cue_lead_seconds))
+        if lead <= 0.0:
+            return
+        if self._timer_started_at is None:
+            self._pending_cue_lead = lead
+            return
+        loop = asyncio.get_running_loop()
+        candidate_deadline = loop.time() + lead + self._gate_window_seconds
+        cap = self._timer_started_at + self._gate_window_seconds + self._max_cue_lead_seconds
+        assert self._deadline is not None  # timer started -> always set together
+        self._deadline = min(max(self._deadline, candidate_deadline), cap)
+
     async def _run_timer(self) -> None:
+        """Sleep until ``_deadline`` (re-checking after every wake so a
+        mid-flight :meth:`defer_for_cue` extension actually takes effect),
+        then fire fail-closed exactly once. Cancellation propagates exactly
+        as before (:meth:`unlock` / :meth:`cancel_for_takeover` cancel this
+        task)."""
         try:
-            await asyncio.sleep(self._gate_window_seconds)
+            while True:
+                loop = asyncio.get_running_loop()
+                assert self._deadline is not None  # only started from start_timer
+                remaining = self._deadline - loop.time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(remaining)
         except asyncio.CancelledError:
             raise
         await self._fire_fail_closed()
