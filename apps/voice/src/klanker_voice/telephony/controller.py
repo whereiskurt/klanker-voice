@@ -145,7 +145,12 @@ from klanker_voice.telephony.ari import AriClient, AriError
 from klanker_voice.telephony.call_event import elapsed_seconds, emit_call_event
 from klanker_voice.telephony.config import AnnouncementEntry, TelephonyConfig
 from klanker_voice.telephony.gate import GateProcessor, accumulate_dtmf
-from klanker_voice.telephony.pickup_cue import load_wav_clip, play_audio_clip, play_pickup_cue
+from klanker_voice.telephony.pickup_cue import (
+    load_wav_clip,
+    pickup_cue_duration_seconds,
+    play_audio_clip,
+    play_pickup_cue,
+)
 from klanker_voice.telephony.rtp_socket import SocketRtpMediaSession
 from klanker_voice.telephony.transport import TelephonyTransport
 from klanker_voice.telephony.types import RtpMediaSession, TelephonyTransportParams
@@ -904,6 +909,14 @@ class ActiveCall:
     #: received pre-unlock -- the ``digits_entered`` field's source. A COUNT
     #: only, never the digit sequence itself (D-05).
     dtmf_count: int = 0
+    #: Quick task 260805-fki: a pure counter of ARI ``ChannelDtmfReceived``
+    #: events OBSERVED for this call -- distinct from ``dtmf_count`` above,
+    #: which only counts digits that survived ``on_channel_dtmf_received``'s
+    #: guards (gate_mode, non-empty digit). This field feeds ONLY the
+    #: opt-in ``telephony.gate_debug_log_dtmf`` arrival-evidence line -- it
+    #: is NOT threaded into ``build_call_event`` (``call_event.py`` stays
+    #: untouched by this task).
+    dtmf_arrivals: int = 0
     #: Quick task 260727-v5e (D-04 telemetry): the FIRST-WINS resolved
     #: outcome label for this call, or ``None`` before any resolution site
     #: has fired. Set only via ``AsteriskCallController._record_outcome``.
@@ -1225,7 +1238,13 @@ class AsteriskCallController:
             answered_at=answered_at,
         )
 
-    def _register_pickup_cue(self, transport: TelephonyTransport, call_session: CallSession) -> None:
+    def _register_pickup_cue(
+        self,
+        transport: TelephonyTransport,
+        call_session: CallSession,
+        *,
+        gate: GateProcessor | None = None,
+    ) -> None:
         """Quick task 260713-m9n: register a fire-once ``on_client_connected``
         handler that plays the ring+hey pickup cue the moment the media path
         is ready. Additive -- ``TelephonyTransport`` fires
@@ -1245,10 +1264,29 @@ class AsteriskCallController:
         Caller speech mid-cue flushes it via the pipeline's existing
         ``InterruptionFrame`` (``telephony.pickup_cue`` module docstring,
         T-M9N-02) -- inbound audio still flows to STT for passphrase
-        matching regardless."""
+        matching regardless.
+
+        Quick task 260805-fki: when ``gate`` is given (the gated path only --
+        ``_finish_stasis_start_ungated`` never passes one, since no
+        ``GateProcessor`` exists there), the handler calls
+        ``gate.defer_for_cue(pickup_cue_duration_seconds())`` immediately
+        BEFORE queuing the cue -- the cue's audio begins at approximately the
+        moment it is queued, so deferring right before the queue call is the
+        truest "the caller's window starts when the cue ends". This can only
+        ever move the gate's fail-closed deadline FORWARD by a bounded
+        amount (see ``GateProcessor.defer_for_cue``'s own docstring for the
+        D-05d proof) -- it never replaces, delays, or conditions the
+        unconditional ``gate.start_timer()`` call at the end of
+        ``_finish_stasis_start_gated`` (nor the idempotent StartFrame-
+        triggered one in ``GateProcessor.process_frame``), which stay the
+        fail-closed backstop this defer can only ever bound, never remove.
+        A barge-in that flushes the cue mid-playback still leaves the full
+        deferred window granted -- deliberately generous, never shorter."""
 
         @transport.event_handler("on_client_connected")
         async def _on_pickup_cue_ready(transport, client):  # noqa: ANN001 -- pipecat handler shape
+            if gate is not None:
+                gate.defer_for_cue(pickup_cue_duration_seconds())
             await play_pickup_cue(call_session.worker)
 
     async def _finish_stasis_start_ungated(
@@ -1581,7 +1619,7 @@ class AsteriskCallController:
         )
         self.calls[sip_channel_id] = active_call
         active_call_holder["call"] = active_call
-        self._register_pickup_cue(transport, call_session)
+        self._register_pickup_cue(transport, call_session, gate=gate)
 
         # R6: a hard session timeout (only reachable once the gate has
         # unlocked and SessionLifecycle.upgrade_from_bypass has started the
@@ -1944,12 +1982,36 @@ class AsteriskCallController:
         that is one of its own -- an unresolved dialed DID can only ever
         reach global entries (fail closed). Entries stay code-keyed
         (``_announcements_by_code``), so distinct entries need distinct
-        code values regardless of DID scope."""
-        if self._telephony_cfg.gate_mode not in ("dtmf", "either"):
-            return
+        code values regardless of DID scope.
+
+        Quick task 260805-fki: ``channel_id``/``digit`` parsing and the
+        ``self.calls.get(channel_id)`` lookup are hoisted ABOVE every guard
+        below (a pure hoist -- every existing guard/branch after that point
+        keeps its exact original order and semantics) so the opt-in
+        ``telephony.gate_debug_log_dtmf`` arrival-evidence log can run even
+        for an unknown channel or a ``gate_mode`` that excludes DTMF --
+        precisely the invisible cases this debug line exists to surface
+        (CONTEXT evidence: a caller placed 12 calls across all four game
+        DIDs with zero registered digits while STT demonstrably heard them
+        speak). Logs ONLY ``call_id``, ``caller_id``, ``arrival_count``, and
+        ``tracked`` -- NEVER the digit value, the DTMF buffer, the PIN, or
+        an announcement code (D-05e). Default off keeps the redaction
+        posture byte-identical."""
         channel_id = _normalize_token((event.get("channel", {}) or {}).get("id"))
         digit = _normalize_token(event.get("digit"))
         active_call = self.calls.get(channel_id)
+        if self._telephony_cfg.gate_debug_log_dtmf:
+            if active_call is not None:
+                active_call.dtmf_arrivals += 1
+            arrival_count = active_call.dtmf_arrivals if active_call is not None else 0
+            caller_id_for_log = active_call.caller_id if active_call is not None else "unknown"
+            logger.info(
+                f"dtmf_received{{call_id: {channel_id!r}, "
+                f"caller_id: {caller_id_for_log!r}, "
+                f"arrival_count: {arrival_count}, tracked: {active_call is not None}}}"
+            )
+        if self._telephony_cfg.gate_mode not in ("dtmf", "either"):
+            return
         if active_call is None or active_call.gate is None or not digit:
             return
         # Quick task 260727-v5e (D-03 telemetry): count every ARI-delivered
