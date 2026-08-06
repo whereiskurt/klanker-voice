@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -283,4 +284,403 @@ func parseCIDPrefixDIDs(path string) map[string]string {
 	}
 	_ = scanner.Err()
 	return tagByDID
+}
+
+// --------------------------------------------------------------------------
+// DID-label buckets (resolution-era untagged vs. genuinely pre-resolution —
+// two different unknowns, CONTEXT is explicit these must never be merged or
+// given an invented number).
+
+// untaggedDIDLabel is the bucket for a resolution-era call (a dialed_did key
+// was present on its on_stasis_start line, or its teardown event carried a
+// non-empty dialed_did) whose DID nonetheless resolved empty — in practice
+// the 613/347 concierge lines, which have no callerid_prefix configured.
+const untaggedDIDLabel = "concierge (untagged DIDs)"
+
+// preResolutionDIDLabel is the bucket for a call that predates the
+// Approach-C CID-prefix resolution deploy (~2026-07-17) entirely — its
+// on_stasis_start line never carried a dialed_did key at all, so nothing
+// was even attempted.
+const preResolutionDIDLabel = "unknown (pre-resolution)"
+
+// --------------------------------------------------------------------------
+// Report types.
+
+// CallRecord is one joined call, keyed by ARI channel id. Unlike DIDStats
+// (telephony_stats.go), this type deliberately DOES carry the caller
+// number — `stats` omits it structurally by design (D-09); `calls` is the
+// command where the operator gets identity, so the omission there is a
+// per-command contract, not a package-wide rule.
+type CallRecord struct {
+	ChannelID       string    `json:"channelId"`
+	Caller          string    `json:"caller"`
+	DialedDID       string    `json:"dialedDid"`
+	DIDLabel        string    `json:"didLabel"`
+	Outcome         string    `json:"outcome"`
+	TimeSource      string    `json:"timeSource"`
+	StartedAt       time.Time `json:"startedAt"`
+	DigitsEntered   int       `json:"digitsEntered"`
+	WordsHeard      int       `json:"wordsHeard"`
+	DurationSeconds float64   `json:"durationSeconds"`
+	HasTeardown     bool      `json:"hasTeardown"`
+}
+
+// DIDCount is one DID-label's call count within a CallerRollup's PerDID
+// breakdown.
+type DIDCount struct {
+	DIDLabel string `json:"didLabel"`
+	Calls    int    `json:"calls"`
+}
+
+// CallerRollup is one caller's row in the per-caller view (and, filtered to
+// IsNew, the new-caller view).
+type CallerRollup struct {
+	Caller    string     `json:"caller"`
+	Calls     int        `json:"calls"`
+	FirstSeen time.Time  `json:"firstSeen"`
+	LastSeen  time.Time  `json:"lastSeen"`
+	PerDID    []DIDCount `json:"perDid"`
+	IsNew     bool       `json:"isNew"`
+}
+
+// NumberRollup is one DID's row in the per-number view.
+type NumberRollup struct {
+	DIDLabel        string    `json:"didLabel"`
+	DialedDID       string    `json:"dialedDid"`
+	Calls           int       `json:"calls"`
+	DistinctCallers int       `json:"distinctCallers"`
+	FirstSeen       time.Time `json:"firstSeen"`
+	LastSeen        time.Time `json:"lastSeen"`
+}
+
+// CallsTotals is the totals row shared by every view.
+type CallsTotals struct {
+	Calls           int `json:"calls"`
+	DistinctCallers int `json:"distinctCallers"`
+	DistinctDIDs    int `json:"distinctDids"`
+	WithoutTeardown int `json:"withoutTeardown"`
+}
+
+// TelephonyCallsReport is the full `kv telephony calls` output shape.
+// --json always encodes the WHOLE report regardless of which view is being
+// rendered, so a script never has to re-run the command per view.
+type TelephonyCallsReport struct {
+	LogGroup     string         `json:"logGroup"`
+	Since        string         `json:"since"`
+	NewWithin    string         `json:"newWithin"`
+	View         string         `json:"view"`
+	DIDFilter    string         `json:"didFilter,omitempty"`
+	CallerFilter string         `json:"callerFilter,omitempty"`
+	Calls        []CallRecord   `json:"calls"`
+	Callers      []CallerRollup `json:"callers"`
+	Numbers      []NumberRollup `json:"numbers"`
+	NewCallers   []CallerRollup `json:"newCallers"`
+	Totals       CallsTotals    `json:"totals"`
+}
+
+// --------------------------------------------------------------------------
+// Joining.
+
+// callAccum is JoinCallRecords' per-channel scratch state — the CallRecord
+// under construction, plus the two pieces of state that decide its
+// TimeSource/DIDLabel once every message has been folded in.
+type callAccum struct {
+	rec            CallRecord
+	resolutionSeen bool
+	loguruTimes    []time.Time
+}
+
+// JoinCallRecords merges every on_stasis_start line and every
+// game_call_event line into one CallRecord per ARI channel id — the join
+// key proven exact by controller.py's `call_id=sip_channel_id` at every
+// game_call_event emission site. Returns records sorted ascending by
+// StartedAt (tie-broken by ChannelID) so output is deterministic; a record
+// whose time could not be derived at all sorts first (its zero StartedAt is
+// earlier than every real time) and is still included, never dropped.
+func JoinCallRecords(messages []string, tagByDID map[string]string) []CallRecord {
+	byChannel := map[string]*callAccum{}
+	var order []string
+	getOrCreate := func(channel string) *callAccum {
+		a, ok := byChannel[channel]
+		if !ok {
+			a = &callAccum{rec: CallRecord{ChannelID: channel}}
+			byChannel[channel] = a
+			order = append(order, channel)
+		}
+		return a
+	}
+
+	for _, msg := range messages {
+		var channel string
+
+		if rec, ok := parseStasisLine(msg); ok {
+			channel = rec.Channel
+			a := getOrCreate(channel)
+			if rec.Caller != "" {
+				a.rec.Caller = rec.Caller
+			}
+			if rec.ResolutionSeen {
+				a.resolutionSeen = true
+				if rec.DialedDID != "" {
+					a.rec.DialedDID = rec.DialedDID
+				}
+			}
+		}
+
+		// Reuse the EXISTING game_call_event decoder (telephony_stats.go)
+		// so there is exactly one game_call_event JSON parser in the
+		// package — pass a one-element slice since this file processes
+		// one raw log message at a time.
+		if events := ParseCallEvents([]string{msg}); len(events) == 1 {
+			e := events[0]
+			channel = e.CallID
+			a := getOrCreate(channel)
+			a.rec.HasTeardown = true
+			a.rec.Outcome = e.Outcome
+			a.rec.DigitsEntered = e.DigitsEntered
+			a.rec.WordsHeard = e.WordsHeard
+			a.rec.DurationSeconds = e.DurationSeconds
+			if a.rec.Caller == "" && e.CallerID != "" {
+				a.rec.Caller = e.CallerID
+			}
+			if a.rec.DialedDID == "" && e.DialedDID != "" {
+				a.rec.DialedDID = e.DialedDID
+				a.resolutionSeen = true
+			}
+		}
+
+		if channel != "" {
+			if t, ok := loguruTimestamp(msg); ok {
+				a := getOrCreate(channel)
+				a.loguruTimes = append(a.loguruTimes, t)
+			}
+		}
+	}
+
+	records := make([]CallRecord, 0, len(order))
+	for _, channel := range order {
+		a := byChannel[channel]
+		rec := a.rec
+		if t, ok := channelEpoch(channel); ok {
+			rec.StartedAt = t
+			rec.TimeSource = "channel-id"
+		} else if earliest, ok := earliestTime(a.loguruTimes); ok {
+			rec.StartedAt = earliest
+			rec.TimeSource = "log-timestamp"
+		} else {
+			rec.TimeSource = "unknown"
+		}
+		rec.DIDLabel = didLabel(rec.DialedDID, a.resolutionSeen, tagByDID)
+		records = append(records, rec)
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		if !records[i].StartedAt.Equal(records[j].StartedAt) {
+			return records[i].StartedAt.Before(records[j].StartedAt)
+		}
+		return records[i].ChannelID < records[j].ChannelID
+	})
+	return records
+}
+
+// earliestTime returns the earliest of times, or ok=false for an empty
+// slice.
+func earliestTime(times []time.Time) (time.Time, bool) {
+	if len(times) == 0 {
+		return time.Time{}, false
+	}
+	earliest := times[0]
+	for _, t := range times[1:] {
+		if t.Before(earliest) {
+			earliest = t
+		}
+	}
+	return earliest, true
+}
+
+// didLabel resolves a CallRecord's DID display label: a non-empty
+// dialedDID renders as its bare digits, or "<digits> (<tag>)" when
+// tagByDID has an entry for it; an empty dialedDID with resolutionSeen
+// renders untaggedDIDLabel (resolution was attempted and came up empty);
+// an empty dialedDID without it renders preResolutionDIDLabel (resolution
+// was never attempted on this call at all — CONTEXT: two different
+// unknowns, never merged).
+func didLabel(dialedDID string, resolutionSeen bool, tagByDID map[string]string) string {
+	if dialedDID != "" {
+		if tag, ok := tagByDID[dialedDID]; ok {
+			return fmt.Sprintf("%s (%s)", dialedDID, tag)
+		}
+		return dialedDID
+	}
+	if resolutionSeen {
+		return untaggedDIDLabel
+	}
+	return preResolutionDIDLabel
+}
+
+// --------------------------------------------------------------------------
+// Report building.
+
+// BuildCallsReport applies didFilter/callerFilter (each narrowing every
+// view and the totals consistently) and groups records into all four
+// views. Always returns non-nil slices so the --json encoding is stable
+// (an empty view still encodes as `[]`, never `null`).
+func BuildCallsReport(records []CallRecord, didFilter, callerFilter string, windowEnd time.Time, newWithin time.Duration) TelephonyCallsReport {
+	filtered := make([]CallRecord, 0, len(records))
+	for _, r := range records {
+		if didFilter != "" && r.DialedDID != didFilter {
+			continue
+		}
+		if callerFilter != "" && r.Caller != callerFilter {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+
+	callerGroups := map[string][]CallRecord{}
+	var callerOrder []string
+	numberGroups := map[string][]CallRecord{}
+	var numberOrder []string
+	distinctCallers := map[string]struct{}{}
+	withoutTeardown := 0
+	for _, r := range filtered {
+		if _, ok := callerGroups[r.Caller]; !ok {
+			callerOrder = append(callerOrder, r.Caller)
+		}
+		callerGroups[r.Caller] = append(callerGroups[r.Caller], r)
+
+		if _, ok := numberGroups[r.DIDLabel]; !ok {
+			numberOrder = append(numberOrder, r.DIDLabel)
+		}
+		numberGroups[r.DIDLabel] = append(numberGroups[r.DIDLabel], r)
+
+		distinctCallers[r.Caller] = struct{}{}
+		if !r.HasTeardown {
+			withoutTeardown++
+		}
+	}
+
+	callers := make([]CallerRollup, 0, len(callerOrder))
+	for _, caller := range callerOrder {
+		callers = append(callers, buildCallerRollup(caller, callerGroups[caller], windowEnd, newWithin))
+	}
+	sort.Slice(callers, func(i, j int) bool {
+		if callers[i].Calls != callers[j].Calls {
+			return callers[i].Calls > callers[j].Calls
+		}
+		return callers[i].Caller < callers[j].Caller
+	})
+
+	numbers := make([]NumberRollup, 0, len(numberOrder))
+	for _, label := range numberOrder {
+		numbers = append(numbers, buildNumberRollup(label, numberGroups[label]))
+	}
+	sort.Slice(numbers, func(i, j int) bool {
+		if numbers[i].Calls != numbers[j].Calls {
+			return numbers[i].Calls > numbers[j].Calls
+		}
+		return numbers[i].DIDLabel < numbers[j].DIDLabel
+	})
+
+	newCallers := make([]CallerRollup, 0)
+	for _, c := range callers {
+		if c.IsNew {
+			newCallers = append(newCallers, c)
+		}
+	}
+
+	return TelephonyCallsReport{
+		DIDFilter:    didFilter,
+		CallerFilter: callerFilter,
+		Calls:        filtered,
+		Callers:      callers,
+		Numbers:      numbers,
+		NewCallers:   newCallers,
+		Totals: CallsTotals{
+			Calls:           len(filtered),
+			DistinctCallers: len(distinctCallers),
+			DistinctDIDs:    len(numberGroups),
+			WithoutTeardown: withoutTeardown,
+		},
+	}
+}
+
+// buildCallerRollup aggregates one caller's records into a CallerRollup:
+// call count, first/last seen (over records with a known StartedAt only),
+// and a per-DID breakdown sorted by count descending then label ascending.
+// IsNew is true only when the caller has a known first-seen time AND that
+// time falls within the newWithin tail of windowEnd.
+func buildCallerRollup(caller string, group []CallRecord, windowEnd time.Time, newWithin time.Duration) CallerRollup {
+	rollup := CallerRollup{Caller: caller, Calls: len(group), PerDID: []DIDCount{}}
+
+	didCounts := map[string]int{}
+	var didOrder []string
+	var first, last time.Time
+	haveKnownTime := false
+	for _, r := range group {
+		if _, ok := didCounts[r.DIDLabel]; !ok {
+			didOrder = append(didOrder, r.DIDLabel)
+		}
+		didCounts[r.DIDLabel]++
+
+		if !r.StartedAt.IsZero() {
+			if !haveKnownTime || r.StartedAt.Before(first) {
+				first = r.StartedAt
+			}
+			if !haveKnownTime || r.StartedAt.After(last) {
+				last = r.StartedAt
+			}
+			haveKnownTime = true
+		}
+	}
+	rollup.FirstSeen = first
+	rollup.LastSeen = last
+	for _, label := range didOrder {
+		rollup.PerDID = append(rollup.PerDID, DIDCount{DIDLabel: label, Calls: didCounts[label]})
+	}
+	sort.Slice(rollup.PerDID, func(i, j int) bool {
+		if rollup.PerDID[i].Calls != rollup.PerDID[j].Calls {
+			return rollup.PerDID[i].Calls > rollup.PerDID[j].Calls
+		}
+		return rollup.PerDID[i].DIDLabel < rollup.PerDID[j].DIDLabel
+	})
+
+	rollup.IsNew = haveKnownTime && rollup.FirstSeen.After(windowEnd.Add(-newWithin))
+	return rollup
+}
+
+// buildNumberRollup aggregates one DID label's records into a NumberRollup:
+// call count, distinct-caller count, and active range (over records with a
+// known StartedAt only). DialedDID is carried from the group's first
+// record — every record in a DIDLabel group shares the same raw DialedDID,
+// since DIDLabel is itself derived from DialedDID (+ resolution state), so
+// this is empty for both the pre-resolution and untagged buckets, never an
+// invented number.
+func buildNumberRollup(label string, group []CallRecord) NumberRollup {
+	rollup := NumberRollup{DIDLabel: label, Calls: len(group)}
+	if len(group) > 0 {
+		rollup.DialedDID = group[0].DialedDID
+	}
+
+	callers := map[string]struct{}{}
+	var first, last time.Time
+	haveKnownTime := false
+	for _, r := range group {
+		if r.Caller != "" {
+			callers[r.Caller] = struct{}{}
+		}
+		if !r.StartedAt.IsZero() {
+			if !haveKnownTime || r.StartedAt.Before(first) {
+				first = r.StartedAt
+			}
+			if !haveKnownTime || r.StartedAt.After(last) {
+				last = r.StartedAt
+			}
+			haveKnownTime = true
+		}
+	}
+	rollup.DistinctCallers = len(callers)
+	rollup.FirstSeen = first
+	rollup.LastSeen = last
+	return rollup
 }

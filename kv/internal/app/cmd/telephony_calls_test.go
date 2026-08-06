@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -275,5 +276,345 @@ func TestParseCIDPrefixDIDs_ShippedConfig(t *testing.T) {
 	}
 	if _, ok := got["7254043234"]; !ok {
 		t.Errorf("parseCIDPrefixDIDs(shipped config) missing 7254043234 (KVD3234), got %+v", got)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Task 2: JoinCallRecords + BuildCallsReport.
+
+// gameCallEventLine builds a realistic teardown log line: a loguru default-
+// format leading stamp followed by the marker + JSON payload, mirroring how
+// telephony-edge actually logs it (call_event.py's build_call_event feeds
+// straight into logger.info(...)).
+func gameCallEventLine(stamp, callID, dialedDID, callerID, outcome string, digits, words int, duration float64) string {
+	return stamp + " | INFO     | klanker_voice.telephony.call_event:emit:42 - " +
+		callEventMarker + ` {"call_id":"` + callID + `","dialed_did":"` + dialedDID +
+		`","caller_id":"` + callerID + `","otp_only":false,"outcome":"` + outcome +
+		`","digits_entered":` + fmt.Sprintf("%d", digits) + `,"words_heard":` + fmt.Sprintf("%d", words) +
+		`,"seconds_to_outcome":null,"duration_seconds":` + fmt.Sprintf("%.1f", duration) + `}`
+}
+
+// channelJoinFixture builds one shared set of raw log-line strings
+// exercising every JoinCallRecords/BuildCallsReport behavior in one pass:
+//   - three channels deliberately given the SAME loguru stamp but channel
+//     epochs ~18s and ~29s apart (the batched-ingestion regression: real
+//     CloudWatch @timestamp values collide this way, proven by CONTEXT --
+//     ordering must follow the channel epoch, never any shared secondary
+//     signal);
+//   - a stasis-only channel with no dialed-DID line and no teardown (both
+//     "no teardown" AND "pre-resolution" in one fixture);
+//   - a teardown-only orphan channel (query-truncation case: no stasis
+//     line ever seen for it);
+//   - a none-placeholder channel (resolution attempted, came up empty --
+//     the untagged-concierge bucket, distinct from pre-resolution);
+//   - a tagged DID channel and an untagged DID channel, each with a full
+//     stasis + teardown pair.
+func channelJoinFixture() []string {
+	const batchedStamp = "2026-07-29 05:46:13.000"
+	return []string{
+		// Batched-ingestion trio: epochs 1785303830 / 1785303848 (+18s) /
+		// 1785303877 (+29s more), all sharing one loguru stamp.
+		batchedStamp + " | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=1785303877.8 caller=+13124432920 did=557010_klanker-pbx",
+		batchedStamp + " | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=1785303830.6 caller=+15197101515 did=557010_klanker-pbx",
+		batchedStamp + " | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=1785303848.7 caller=+16479213102 did=557010_klanker-pbx",
+
+		// Stasis-only, pre-resolution, no teardown.
+		"2026-07-12 08:00:00.000 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=1752307200.1 caller=+18022337051 did=557010_klanker-pbx",
+
+		// Teardown-only orphan (query truncation -- no stasis line at all).
+		gameCallEventLine("2026-07-29 06:00:00.000", "1785306000.2", "7254043234", "+14167979698", "concierge_unlock_dtmf", 4, 0, 45.0),
+
+		// None-placeholder: resolution attempted, resolved empty.
+		"2026-07-20 09:00:00.000 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=1752998400.3 caller=+16135313189 did=557010_klanker-pbx",
+		"2026-07-20 09:00:00.100 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1157 - " +
+			"on_stasis_start: channel=1752998400.3 dialed_did=<none> exten='1234' cidname='<none>' sip_to='557010_klanker-pbx'",
+
+		// Tagged DID: identity + dialed-DID + teardown.
+		"2026-07-29 07:00:00.000 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=1785309600.4 caller=+61437008930 did=557010_klanker-pbx",
+		"2026-07-29 07:00:00.100 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1157 - " +
+			"on_stasis_start: channel=1785309600.4 dialed_did=7254043234 exten='1234' cidname='KVD3234' sip_to='557010_klanker-pbx'",
+		gameCallEventLine("2026-07-29 07:00:30.000", "1785309600.4", "7254043234", "+61437008930", "concierge_unlock_dtmf", 4, 0, 30.0),
+
+		// Untagged DID (absent from tagByDID): identity + dialed-DID + teardown.
+		"2026-07-29 08:00:00.000 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=1785313200.5 caller=+12672520810 did=557010_klanker-pbx",
+		"2026-07-29 08:00:00.100 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1157 - " +
+			"on_stasis_start: channel=1785313200.5 dialed_did=9995551234 exten='1234' cidname='<none>' sip_to='557010_klanker-pbx'",
+		gameCallEventLine("2026-07-29 08:00:20.000", "1785313200.5", "9995551234", "+12672520810", "early_hangup", 0, 3, 20.0),
+	}
+}
+
+func fixtureTagByDID() map[string]string {
+	return map[string]string{"7254043234": "KVD3234"}
+}
+
+func TestJoinCallRecords_BatchedIngestionOrdersByChannelEpoch(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+
+	// The three batched channels must appear in EPOCH order (830 < 848 <
+	// 877), never input order (877, 830, 848 as fed above) and never
+	// grouped by their shared loguru stamp.
+	var gotOrder []string
+	wantOrder := []string{"1785303830.6", "1785303848.7", "1785303877.8"}
+	for _, r := range records {
+		for _, want := range wantOrder {
+			if r.ChannelID == want {
+				gotOrder = append(gotOrder, r.ChannelID)
+			}
+		}
+	}
+	if len(gotOrder) != 3 {
+		t.Fatalf("found %d of the 3 batched channels in records, want 3 (got %+v)", len(gotOrder), records)
+	}
+	for i, want := range wantOrder {
+		if gotOrder[i] != want {
+			t.Errorf("batched-channel order[%d] = %q, want %q (got order %v)", i, gotOrder[i], want, gotOrder)
+		}
+	}
+	for _, r := range records {
+		if r.ChannelID == "1785303830.6" && r.TimeSource != "channel-id" {
+			t.Errorf("TimeSource = %q, want channel-id", r.TimeSource)
+		}
+	}
+}
+
+func TestJoinCallRecords_StasisOnlyChannelHasNoTeardownAndIsPreResolution(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+	rec := findRecord(t, records, "1752307200.1")
+	if rec.HasTeardown {
+		t.Error("HasTeardown = true, want false (stasis-only channel)")
+	}
+	if rec.Outcome != "" {
+		t.Errorf("Outcome = %q, want empty", rec.Outcome)
+	}
+	if rec.DurationSeconds != 0 {
+		t.Errorf("DurationSeconds = %v, want 0", rec.DurationSeconds)
+	}
+	if rec.DIDLabel != preResolutionDIDLabel {
+		t.Errorf("DIDLabel = %q, want %q", rec.DIDLabel, preResolutionDIDLabel)
+	}
+	if rec.Caller != "+18022337051" {
+		t.Errorf("Caller = %q, want +18022337051 (raw caller number must appear verbatim)", rec.Caller)
+	}
+}
+
+func TestJoinCallRecords_OrphanTeardownSourcedFromTeardownPayload(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+	rec := findRecord(t, records, "1785306000.2")
+	if !rec.HasTeardown {
+		t.Error("HasTeardown = false, want true")
+	}
+	if rec.Caller != "+14167979698" {
+		t.Errorf("Caller = %q, want +14167979698 (sourced from teardown payload)", rec.Caller)
+	}
+	if rec.DialedDID != "7254043234" {
+		t.Errorf("DialedDID = %q, want 7254043234", rec.DialedDID)
+	}
+	if rec.Outcome != "concierge_unlock_dtmf" {
+		t.Errorf("Outcome = %q, want concierge_unlock_dtmf", rec.Outcome)
+	}
+}
+
+func TestJoinCallRecords_NonePlaceholderIsUntaggedNotPreResolution(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+	rec := findRecord(t, records, "1752998400.3")
+	if rec.DIDLabel != untaggedDIDLabel {
+		t.Errorf("DIDLabel = %q, want %q", rec.DIDLabel, untaggedDIDLabel)
+	}
+	if rec.DIDLabel == preResolutionDIDLabel {
+		t.Error("a none-placeholder resolution must never be mislabelled as pre-resolution")
+	}
+}
+
+func TestJoinCallRecords_TaggedAndUntaggedDIDLabels(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+
+	tagged := findRecord(t, records, "1785309600.4")
+	if tagged.DIDLabel != "7254043234 (KVD3234)" {
+		t.Errorf("tagged DIDLabel = %q, want %q", tagged.DIDLabel, "7254043234 (KVD3234)")
+	}
+
+	untagged := findRecord(t, records, "1785313200.5")
+	if untagged.DIDLabel != "9995551234" {
+		t.Errorf("untagged DIDLabel = %q, want bare digits %q", untagged.DIDLabel, "9995551234")
+	}
+}
+
+func TestJoinCallRecords_TwoStasisLinesAndTeardownCollapseToOneRecord(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+	count := 0
+	for _, r := range records {
+		if r.ChannelID == "1785309600.4" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("channel 1785309600.4 appears %d times, want exactly 1 (identity line + dialed-DID line + teardown must collapse)", count)
+	}
+}
+
+func findRecord(t *testing.T, records []CallRecord, channelID string) CallRecord {
+	t.Helper()
+	for _, r := range records {
+		if r.ChannelID == channelID {
+			return r
+		}
+	}
+	t.Fatalf("no record for channel %q in %+v", channelID, records)
+	return CallRecord{}
+}
+
+// --------------------------------------------------------------------------
+// Required addition (quick task 260806-cm9, plan-checker follow-up): the
+// loguru-timestamp fallback rung (channelEpoch fails, loguruTimestamp
+// succeeds) and the all-rungs-fail unknown-time case. Neither Task 1's
+// isolated loguruTimestamp() tests nor the channel-epoch-primary path above
+// drove a channel through this middle rung of the TimeSource chain.
+
+func TestJoinCallRecords_LoguruTimestampFallbackRung(t *testing.T) {
+	// "bad.1" is not a plausible epoch (channelEpoch rejects it: below
+	// minPlausibleEpoch), so this channel must fall through to the
+	// loguru-timestamp rung. Two lines on the same channel, at two
+	// different loguru stamps -- the EARLIEST must win.
+	messages := []string{
+		"2026-07-29 10:00:00.000 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1157 - " +
+			"on_stasis_start: channel=bad.1 dialed_did=7254043234 exten='1234' cidname='KVD3234' sip_to='557010_klanker-pbx'",
+		"2026-07-29 09:30:00.000 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=bad.1 caller=+15550009999 did=557010_klanker-pbx",
+	}
+	records := JoinCallRecords(messages, fixtureTagByDID())
+	rec := findRecord(t, records, "bad.1")
+	if rec.TimeSource != "log-timestamp" {
+		t.Fatalf("TimeSource = %q, want log-timestamp", rec.TimeSource)
+	}
+	want := time.Date(2026, 7, 29, 9, 30, 0, 0, time.UTC)
+	if !rec.StartedAt.Equal(want) {
+		t.Errorf("StartedAt = %v, want the EARLIEST of the two loguru stamps (%v)", rec.StartedAt, want)
+	}
+}
+
+func TestJoinCallRecords_AllRungsFailSortsFirst(t *testing.T) {
+	// A teardown-only line with a channel id that channelEpoch rejects and
+	// no loguru-prefixed line ever seen for it (the bare game_call_event
+	// fixtures elsewhere in this package carry no leading timestamp) must
+	// fall all the way through to "unknown".
+	messages := []string{
+		`game_call_event {"call_id":"bad-channel","dialed_did":"7254043234","caller_id":"+15550001111","otp_only":false,"outcome":"early_hangup","digits_entered":0,"words_heard":0,"seconds_to_outcome":null,"duration_seconds":2.0}`,
+		"2026-07-29 07:00:00.000 | INFO     | klanker_voice.telephony.controller:on_stasis_start:1128 - " +
+			"on_stasis_start: channel=1785309600.4 caller=+61437008930 did=557010_klanker-pbx",
+	}
+	records := JoinCallRecords(messages, fixtureTagByDID())
+	rec := findRecord(t, records, "bad-channel")
+	if rec.TimeSource != "unknown" {
+		t.Fatalf("TimeSource = %q, want unknown", rec.TimeSource)
+	}
+	if !rec.StartedAt.IsZero() {
+		t.Errorf("StartedAt = %v, want the zero time", rec.StartedAt)
+	}
+	if records[0].ChannelID != "bad-channel" {
+		t.Errorf("records[0].ChannelID = %q, want bad-channel (an unknown-time record sorts first)", records[0].ChannelID)
+	}
+}
+
+// --------------------------------------------------------------------------
+// BuildCallsReport.
+
+func TestBuildCallsReport_AllFourViewsAndTotals(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+	windowEnd := time.Now()
+	report := BuildCallsReport(records, "", "", windowEnd, 24*time.Hour)
+
+	if report.Totals.Calls != len(records) {
+		t.Errorf("Totals.Calls = %d, want %d", report.Totals.Calls, len(records))
+	}
+	// The 3 batched-ingestion channels + the stasis-only channel + the
+	// none-placeholder channel never produce a teardown line in this
+	// fixture; the orphan and the two DID-labelled channels do.
+	if report.Totals.WithoutTeardown != 5 {
+		t.Errorf("Totals.WithoutTeardown = %d, want 5", report.Totals.WithoutTeardown)
+	}
+	if len(report.Callers) == 0 {
+		t.Fatal("report.Callers is empty, want at least one caller rollup")
+	}
+	if len(report.Numbers) == 0 {
+		t.Fatal("report.Numbers is empty, want at least one number rollup")
+	}
+	// A caller number must appear verbatim in the callers view.
+	found := false
+	for _, c := range report.Callers {
+		if c.Caller == "+61437008930" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("report.Callers does not contain the raw caller number +61437008930")
+	}
+}
+
+func TestBuildCallsReport_DIDFilterNarrowsConsistently(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+	report := BuildCallsReport(records, "7254043234", "", time.Now(), 24*time.Hour)
+
+	for _, c := range report.Calls {
+		if c.DialedDID != "7254043234" {
+			t.Errorf("filtered Calls contains DialedDID=%q, want only 7254043234", c.DialedDID)
+		}
+	}
+	if report.Totals.Calls != len(report.Calls) {
+		t.Errorf("Totals.Calls = %d, want %d (must match the filtered Calls length)", report.Totals.Calls, len(report.Calls))
+	}
+	for _, n := range report.Numbers {
+		if n.DIDLabel != "7254043234 (KVD3234)" {
+			t.Errorf("filtered Numbers contains an unexpected DID label %q", n.DIDLabel)
+		}
+	}
+}
+
+func TestBuildCallsReport_CallerFilterNarrowsConsistently(t *testing.T) {
+	records := JoinCallRecords(channelJoinFixture(), fixtureTagByDID())
+	report := BuildCallsReport(records, "", "+61437008930", time.Now(), 24*time.Hour)
+
+	if len(report.Calls) != 1 {
+		t.Fatalf("len(Calls) = %d, want 1", len(report.Calls))
+	}
+	if report.Calls[0].Caller != "+61437008930" {
+		t.Errorf("Calls[0].Caller = %q, want +61437008930", report.Calls[0].Caller)
+	}
+	if len(report.Callers) != 1 || report.Callers[0].Caller != "+61437008930" {
+		t.Errorf("report.Callers = %+v, want exactly one rollup for +61437008930", report.Callers)
+	}
+}
+
+func TestBuildCallsReport_NewWithinSplitsInsideAndOutsideTail(t *testing.T) {
+	windowEnd := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	records := []CallRecord{
+		{ChannelID: "c-old", Caller: "+1old", DialedDID: "1", DIDLabel: "1", StartedAt: windowEnd.Add(-10 * time.Hour), TimeSource: "channel-id"},
+		{ChannelID: "c-new", Caller: "+1new", DialedDID: "1", DIDLabel: "1", StartedAt: windowEnd.Add(-30 * time.Minute), TimeSource: "channel-id"},
+	}
+	report := BuildCallsReport(records, "", "", windowEnd, time.Hour)
+
+	if len(report.NewCallers) != 1 || report.NewCallers[0].Caller != "+1new" {
+		t.Errorf("report.NewCallers = %+v, want exactly one entry for +1new", report.NewCallers)
+	}
+	for _, c := range report.Callers {
+		if c.Caller == "+1old" && c.IsNew {
+			t.Error("caller +1old marked IsNew, want false (outside the 1h tail)")
+		}
+		if c.Caller == "+1new" && !c.IsNew {
+			t.Error("caller +1new marked !IsNew, want true (inside the 1h tail)")
+		}
+	}
+}
+
+func TestBuildCallsReport_EmptyRecordsYieldsNonNilSlices(t *testing.T) {
+	report := BuildCallsReport(nil, "", "", time.Now(), time.Hour)
+	if report.Calls == nil || report.Callers == nil || report.Numbers == nil || report.NewCallers == nil {
+		t.Errorf("BuildCallsReport(nil) produced a nil slice: %+v", report)
 	}
 }
