@@ -36,10 +36,17 @@ type fakeLogsInsightsClient struct {
 
 	startQueryCalls int
 	getResultsCalls int
+
+	// lastQueryString captures the most recent StartQuery call's
+	// QueryString, purely additive -- lets tests pin the exact query text
+	// RunInsightsQuery/RunCallsInsightsQuery send without changing any
+	// existing assertion.
+	lastQueryString string
 }
 
 func (f *fakeLogsInsightsClient) StartQuery(ctx context.Context, params *cloudwatchlogs.StartQueryInput, optFns ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.StartQueryOutput, error) {
 	f.startQueryCalls++
+	f.lastQueryString = aws.ToString(params.QueryString)
 	if f.startQueryErr != nil {
 		return nil, f.startQueryErr
 	}
