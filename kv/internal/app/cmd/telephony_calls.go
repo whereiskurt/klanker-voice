@@ -14,12 +14,17 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 // --------------------------------------------------------------------------
@@ -683,4 +688,230 @@ func buildNumberRollup(label string, group []CallRecord) NumberRollup {
 	rollup.FirstSeen = first
 	rollup.LastSeen = last
 	return rollup
+}
+
+// --------------------------------------------------------------------------
+// Rendering.
+
+// callsViewAll renders every view in one pass (the default when --view=all).
+const callsViewAll = "all"
+
+// callsValidViews is the allow-list newTelephonyCallsCmd's RunE validates
+// --view against BEFORE making any AWS call.
+var callsValidViews = []string{"callers", "calls", "numbers", "new", callsViewAll}
+
+// formatCallTime formats t for table/heading display: "2006-01-02
+// 15:04:05Z" in UTC, or "-" for the zero (unknown) time.
+func formatCallTime(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.UTC().Format("2006-01-02 15:04:05") + "Z"
+}
+
+// printTelephonyCalls renders report. When asJSON, the WHOLE report is
+// encoded with a two-space indent regardless of view — every view's
+// underlying data ships in one document, deliberately, so a script never
+// has to re-run the command once per view. Otherwise only the selected
+// view renders (or all four, in order callers/calls/numbers/new, when
+// view=="all"), each as a tabwriter table matching printTelephonyStats'
+// settings under a short section heading.
+func printTelephonyCalls(c *cobra.Command, report TelephonyCallsReport, view string, asJSON bool) error {
+	out := c.OutOrStdout()
+	if asJSON {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	}
+
+	if report.Totals.Calls == 0 {
+		fmt.Fprintf(
+			out,
+			"No calls found (log group %s, window %s%s%s)\n",
+			report.LogGroup, report.Since, didFilterSuffix(report.DIDFilter), callerFilterSuffix(report.CallerFilter),
+		)
+		return nil
+	}
+
+	renderCallers := view == "callers" || view == callsViewAll
+	renderCalls := view == "calls" || view == callsViewAll
+	renderNumbers := view == "numbers" || view == callsViewAll
+	renderNew := view == "new" || view == callsViewAll
+
+	first := true
+	sectionBreak := func() {
+		if !first {
+			fmt.Fprintln(out)
+		}
+		first = false
+	}
+
+	if renderCallers {
+		sectionBreak()
+		fmt.Fprintln(out, "Callers:")
+		printCallerRollupTable(out, report.Callers)
+	}
+	if renderCalls {
+		sectionBreak()
+		fmt.Fprintln(out, "Calls:")
+		printCallLogTable(out, report.Calls)
+	}
+	if renderNumbers {
+		sectionBreak()
+		fmt.Fprintln(out, "Numbers:")
+		printNumberRollupTable(out, report.Numbers)
+	}
+	if renderNew {
+		sectionBreak()
+		fmt.Fprintf(
+			out,
+			"New callers (first seen within %s of the %s queried window -- a wider --since gives a stronger baseline):\n",
+			report.NewWithin, report.Since,
+		)
+		printCallerRollupTable(out, report.NewCallers)
+	}
+	return nil
+}
+
+func printCallerRollupTable(out io.Writer, rollups []CallerRollup) {
+	w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(w, "CALLER\tCALLS\tFIRST SEEN\tLAST SEEN\tDIDS")
+	for _, r := range rollups {
+		fmt.Fprintf(
+			w, "%s\t%d\t%s\t%s\t%s\n",
+			r.Caller, r.Calls, formatCallTime(r.FirstSeen), formatCallTime(r.LastSeen), formatDIDCounts(r.PerDID),
+		)
+	}
+	w.Flush()
+}
+
+func printCallLogTable(out io.Writer, calls []CallRecord) {
+	w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(w, "WHEN\tSRC\tCALLER\tDID\tOUTCOME\tDIGITS\tWORDS\tDURATION")
+	for _, r := range calls {
+		outcome := r.Outcome
+		duration := fmt.Sprintf("%.1f", r.DurationSeconds)
+		if !r.HasTeardown {
+			outcome = "(no teardown event)"
+			duration = "-"
+		}
+		fmt.Fprintf(
+			w, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n",
+			formatCallTime(r.StartedAt), r.TimeSource, r.Caller, r.DIDLabel, outcome, r.DigitsEntered, r.WordsHeard, duration,
+		)
+	}
+	w.Flush()
+}
+
+func printNumberRollupTable(out io.Writer, numbers []NumberRollup) {
+	w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(w, "DID\tCALLS\tCALLERS\tFIRST SEEN\tLAST SEEN")
+	for _, n := range numbers {
+		fmt.Fprintf(
+			w, "%s\t%d\t%d\t%s\t%s\n",
+			n.DIDLabel, n.Calls, n.DistinctCallers, formatCallTime(n.FirstSeen), formatCallTime(n.LastSeen),
+		)
+	}
+	w.Flush()
+}
+
+// formatDIDCounts renders a CallerRollup's PerDID breakdown as space-joined
+// "label=count" pairs (already sorted by BuildCallsReport).
+func formatDIDCounts(perDID []DIDCount) string {
+	if len(perDID) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(perDID))
+	for _, d := range perDID {
+		parts = append(parts, fmt.Sprintf("%s=%d", d.DIDLabel, d.Calls))
+	}
+	return strings.Join(parts, " ")
+}
+
+func callerFilterSuffix(callerFilter string) string {
+	if callerFilter == "" {
+		return ""
+	}
+	return fmt.Sprintf(", caller=%s", callerFilter)
+}
+
+// --------------------------------------------------------------------------
+// Command registration.
+
+// newTelephonyCallsCmd builds the "kv telephony calls" subcommand,
+// registered onto telephonyCmd by NewTelephonyCmd (telephony.go). Quick
+// task 260806-cm9.
+func newTelephonyCallsCmd(cfg *Config) *cobra.Command {
+	var (
+		since      time.Duration
+		newWithin  time.Duration
+		did        string
+		caller     string
+		view       string
+		asJSON     bool
+		logGroup   string
+		configPath string
+	)
+	calls := &cobra.Command{
+		Use:   "calls",
+		Short: "Operator call report -- who called which number and when (raw caller numbers)",
+		Long: "kv telephony calls is the identity-bearing sibling of `kv telephony\n" +
+			"stats`: `stats` is the caller-anonymous rollup that reports distinct-\n" +
+			"caller COUNTS from game_call_event teardown telemetry and never a raw\n" +
+			"number; `calls` always shows raw caller numbers -- there is no flag\n" +
+			"to hide them. It joins telephony-edge's on_stasis_start log lines\n" +
+			"(full history, back to first deploy) with game_call_event teardown\n" +
+			"lines (only since ~2026-07-28, and not on every call) by ARI channel\n" +
+			"id, so history reaches further back than teardown telemetry alone\n" +
+			"would allow, and a call that never reached teardown still appears.\n\n" +
+			"Four views, selected with --view:\n" +
+			"  callers  per-caller rollup: count, first/last seen, DID breakdown (default)\n" +
+			"  calls    chronological per-call log: when, caller, DID, outcome, digits/words, duration\n" +
+			"  numbers  per-number rollup: call count, distinct callers, active range\n" +
+			"  new      callers whose first-seen falls inside --new-within of the queried window\n" +
+			"  all      renders all four in one pass\n\n" +
+			"--json always emits the full result set (every view's data), regardless of --view.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			if !isValidCallsView(view) {
+				return fmt.Errorf("invalid --view %q: must be one of %s", view, strings.Join(callsValidViews, ", "))
+			}
+			client, err := cfg.CloudWatchLogsClient(c.Context())
+			if err != nil {
+				return err
+			}
+			end := time.Now()
+			start := end.Add(-since)
+			messages, err := RunCallsInsightsQuery(c.Context(), client, logGroup, start, end, defaultStatsPollInterval)
+			if err != nil {
+				return err
+			}
+			tagByDID := parseCIDPrefixDIDs(configPath)
+			records := JoinCallRecords(messages, tagByDID)
+			report := BuildCallsReport(records, did, caller, end, newWithin)
+			report.LogGroup = logGroup
+			report.Since = since.String()
+			report.NewWithin = newWithin.String()
+			report.View = view
+			return printTelephonyCalls(c, report, view, asJSON)
+		},
+	}
+	calls.Flags().DurationVar(&since, "since", defaultCallsSince, "how far back to query (e.g. 24h, 90m)")
+	calls.Flags().DurationVar(&newWithin, "new-within", defaultCallsNewWithin, "how recent a caller's first-seen must be to count as \"new\" (--view new)")
+	calls.Flags().StringVar(&did, "did", "", "filter to a single dialed DID")
+	calls.Flags().StringVar(&caller, "caller", "", "filter to a single raw caller number")
+	calls.Flags().StringVar(&view, "view", "callers", "which view to render: callers, calls, numbers, new, all")
+	calls.Flags().BoolVar(&asJSON, "json", false, "output as JSON (always emits every view's data)")
+	calls.Flags().StringVar(&logGroup, "log-group", defaultTelephonyLogGroup, "CloudWatch Logs group to query")
+	calls.Flags().StringVar(&configPath, "config", defaultTelephonyConfigPath, "path to the telephony pipeline TOML config (for the [telephony.cid_prefix_dids] DID labels)")
+	return calls
+}
+
+func isValidCallsView(view string) bool {
+	for _, v := range callsValidViews {
+		if v == view {
+			return true
+		}
+	}
+	return false
 }

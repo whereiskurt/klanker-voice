@@ -460,7 +460,8 @@ func newTelephonyStatsCmd(cfg *Config) *cobra.Command {
 			"the telephony-edge log group, parses every game_call_event line, and\n" +
 			"renders per-DID call counts, an outcome breakdown, median + max\n" +
 			"seconds-to-outcome, median duration, and a distinct-caller COUNT\n" +
-			"(never a raw caller number) plus a totals row.",
+			"(never a raw caller number) plus a totals row. For raw caller\n" +
+			"numbers -- who called which number and when -- see `kv telephony calls`.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error {
 			client, err := cfg.CloudWatchLogsClient(c.Context())

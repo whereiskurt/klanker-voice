@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	"github.com/spf13/cobra"
 )
 
 // --------------------------------------------------------------------------
@@ -616,5 +619,216 @@ func TestBuildCallsReport_EmptyRecordsYieldsNonNilSlices(t *testing.T) {
 	report := BuildCallsReport(nil, "", "", time.Now(), time.Hour)
 	if report.Calls == nil || report.Callers == nil || report.Numbers == nil || report.NewCallers == nil {
 		t.Errorf("BuildCallsReport(nil) produced a nil slice: %+v", report)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Task 3: command registration, --view validation, rendering, --json.
+
+func TestTelephonyCallsCmdRegisteredWithExpectedFlags(t *testing.T) {
+	cfg := &Config{}
+	telephonyCmd := NewTelephonyCmd(cfg)
+	var calls *cobra.Command
+	for _, sub := range telephonyCmd.Commands() {
+		if sub.Name() == "calls" {
+			calls = sub
+		}
+	}
+	if calls == nil {
+		t.Fatal("kv telephony is missing the calls sub-command")
+	}
+	for _, flag := range []string{"view", "since", "new-within", "did", "caller", "json", "log-group", "config"} {
+		if calls.Flags().Lookup(flag) == nil {
+			t.Errorf("kv telephony calls is missing expected flag --%s", flag)
+		}
+	}
+}
+
+func TestTelephonyCallsCmd_InvalidViewErrorsBeforeAWSCall(t *testing.T) {
+	cfg := &Config{}
+	telephonyCmd := NewTelephonyCmd(cfg)
+	telephonyCmd.SetArgs([]string{"calls", "--view", "bogus"})
+	telephonyCmd.SetOut(&bytes.Buffer{})
+	telephonyCmd.SetErr(&bytes.Buffer{})
+	err := telephonyCmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want a non-nil error for an invalid --view")
+	}
+	for _, want := range callsValidViews {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not list valid view %q", err.Error(), want)
+		}
+	}
+}
+
+func fixedCallsReportForRendering() TelephonyCallsReport {
+	t1 := time.Date(2026, 7, 29, 5, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 7, 29, 6, 0, 0, 0, time.UTC)
+	rec := CallRecord{
+		ChannelID: "1785303830.6", Caller: "+15197101515", DialedDID: "7254043234",
+		DIDLabel: "7254043234 (KVD3234)", Outcome: "concierge_unlock_dtmf", TimeSource: "channel-id",
+		StartedAt: t1, DigitsEntered: 4, WordsHeard: 0, DurationSeconds: 30.0, HasTeardown: true,
+	}
+	noTeardown := CallRecord{
+		ChannelID: "1785303899.1", Caller: "+15197101515", DialedDID: "",
+		DIDLabel: preResolutionDIDLabel, TimeSource: "channel-id", StartedAt: t2, HasTeardown: false,
+	}
+	caller := CallerRollup{
+		Caller: "+15197101515", Calls: 2, FirstSeen: t1, LastSeen: t2,
+		PerDID: []DIDCount{{DIDLabel: "7254043234 (KVD3234)", Calls: 1}, {DIDLabel: preResolutionDIDLabel, Calls: 1}},
+		IsNew:  true,
+	}
+	number := NumberRollup{
+		DIDLabel: "7254043234 (KVD3234)", DialedDID: "7254043234", Calls: 1, DistinctCallers: 1,
+		FirstSeen: t1, LastSeen: t1,
+	}
+	return TelephonyCallsReport{
+		LogGroup: "/ecs/telephony-edge-telephony-edge-use1-kmv", Since: "24h0m0s", NewWithin: "1h0m0s", View: "all",
+		Calls:      []CallRecord{rec, noTeardown},
+		Callers:    []CallerRollup{caller},
+		Numbers:    []NumberRollup{number},
+		NewCallers: []CallerRollup{caller},
+		Totals:     CallsTotals{Calls: 2, DistinctCallers: 1, DistinctDIDs: 2, WithoutTeardown: 1},
+	}
+}
+
+func TestPrintTelephonyCalls_CallersView(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := printTelephonyCalls(cmd, fixedCallsReportForRendering(), "callers", false); err != nil {
+		t.Fatalf("printTelephonyCalls error: %v", err)
+	}
+	text := buf.String()
+	if !strings.Contains(text, "CALLER\tCALLS\tFIRST SEEN\tLAST SEEN\tDIDS") && !strings.Contains(text, "CALLER") {
+		t.Errorf("callers view missing expected heading, got:\n%s", text)
+	}
+	if !strings.Contains(text, "+15197101515") {
+		t.Errorf("callers view does not contain the raw caller number, got:\n%s", text)
+	}
+	if strings.Contains(text, "Calls:\n") || strings.Contains(text, "Numbers:\n") {
+		t.Errorf("callers-only view rendered other sections, got:\n%s", text)
+	}
+}
+
+func TestPrintTelephonyCalls_CallsView(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := printTelephonyCalls(cmd, fixedCallsReportForRendering(), "calls", false); err != nil {
+		t.Fatalf("printTelephonyCalls error: %v", err)
+	}
+	text := buf.String()
+	if !strings.Contains(text, "WHEN") || !strings.Contains(text, "SRC") || !strings.Contains(text, "OUTCOME") {
+		t.Errorf("calls view missing expected headings, got:\n%s", text)
+	}
+	if !strings.Contains(text, "+15197101515") {
+		t.Errorf("calls view does not contain the raw caller number, got:\n%s", text)
+	}
+	if !strings.Contains(text, "(no teardown event)") {
+		t.Errorf("calls view does not render the no-teardown outcome, got:\n%s", text)
+	}
+}
+
+func TestPrintTelephonyCalls_NumbersView(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := printTelephonyCalls(cmd, fixedCallsReportForRendering(), "numbers", false); err != nil {
+		t.Fatalf("printTelephonyCalls error: %v", err)
+	}
+	text := buf.String()
+	if !strings.Contains(text, "DID") || !strings.Contains(text, "CALLERS") {
+		t.Errorf("numbers view missing expected headings, got:\n%s", text)
+	}
+	if !strings.Contains(text, "7254043234 (KVD3234)") {
+		t.Errorf("numbers view missing the tagged DID label, got:\n%s", text)
+	}
+}
+
+func TestPrintTelephonyCalls_NewView(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := printTelephonyCalls(cmd, fixedCallsReportForRendering(), "new", false); err != nil {
+		t.Fatalf("printTelephonyCalls error: %v", err)
+	}
+	text := buf.String()
+	if !strings.Contains(text, "New callers") {
+		t.Errorf("new view missing the caveat heading, got:\n%s", text)
+	}
+	if !strings.Contains(text, "24h0m0s") || !strings.Contains(text, "1h0m0s") {
+		t.Errorf("new view caveat does not name the queried window/new-within, got:\n%s", text)
+	}
+}
+
+func TestPrintTelephonyCalls_AllViewRendersAllFourSections(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	if err := printTelephonyCalls(cmd, fixedCallsReportForRendering(), "all", false); err != nil {
+		t.Fatalf("printTelephonyCalls error: %v", err)
+	}
+	text := buf.String()
+	for _, heading := range []string{"Callers:", "Calls:", "Numbers:", "New callers"} {
+		if !strings.Contains(text, heading) {
+			t.Errorf("all view missing section %q, got:\n%s", heading, text)
+		}
+	}
+}
+
+func TestPrintTelephonyCalls_EmptyReportRendersNoCallsFound(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	empty := TelephonyCallsReport{
+		LogGroup: "/ecs/telephony-edge-telephony-edge-use1-kmv", Since: "24h0m0s",
+		Calls: []CallRecord{}, Callers: []CallerRollup{}, Numbers: []NumberRollup{}, NewCallers: []CallerRollup{},
+	}
+	if err := printTelephonyCalls(cmd, empty, "callers", false); err != nil {
+		t.Fatalf("printTelephonyCalls error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "No calls found") {
+		t.Errorf("empty report did not render the no-calls-found line, got:\n%s", buf.String())
+	}
+}
+
+func TestCallsJSON_AlwaysCarriesAllFourViewsRegardlessOfView(t *testing.T) {
+	for _, view := range []string{"callers", "calls", "numbers", "new", "all"} {
+		t.Run(view, func(t *testing.T) {
+			var buf bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&buf)
+			if err := printTelephonyCalls(cmd, fixedCallsReportForRendering(), view, true); err != nil {
+				t.Fatalf("printTelephonyCalls(--json) error: %v", err)
+			}
+			var decoded TelephonyCallsReport
+			if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+				t.Fatalf("json.Unmarshal(--json output): %v", err)
+			}
+			if len(decoded.Calls) == 0 || len(decoded.Callers) == 0 || len(decoded.Numbers) == 0 || len(decoded.NewCallers) == 0 {
+				t.Errorf("--json with view=%q did not carry all four views: %+v", view, decoded)
+			}
+		})
+	}
+}
+
+func TestStatsLong_MentionsCallsSibling(t *testing.T) {
+	cfg := &Config{}
+	telephonyCmd := NewTelephonyCmd(cfg)
+	var stats *cobra.Command
+	for _, sub := range telephonyCmd.Commands() {
+		if sub.Name() == "stats" {
+			stats = sub
+		}
+	}
+	if stats == nil {
+		t.Fatal("kv telephony is missing the stats sub-command")
+	}
+	if !strings.Contains(stats.Long, "distinct-caller COUNT") {
+		t.Errorf("stats Long help lost its caller-anonymous contract description:\n%s", stats.Long)
+	}
+	if !strings.Contains(stats.Long, "kv telephony calls") {
+		t.Errorf("stats Long help does not point at the calls sibling:\n%s", stats.Long)
 	}
 }
