@@ -122,10 +122,16 @@ type logsInsightsAPI interface {
 // until the query reaches a terminal status. On Complete, returns every
 // matched row's @message value. Failed/Cancelled/Timeout is an error, NEVER
 // a silent empty result — an operator must be told the query itself broke,
-// not shown a misleadingly-empty report. Between polls, selects on
-// ctx.Done() and time.After(pollInterval) so tests can pass a zero/near-zero
-// interval and no real time elapses; statsPollBudget bounds the loop so a
-// permanently-Running fake can never hang the suite.
+// not shown a misleadingly-empty report.
+//
+// Quick task 260806-cm9: the poll lifecycle below has been extracted into
+// runInsightsQueryString so `kv telephony calls` can reuse it with a
+// different filter (the on_stasis_start family). This function is now a
+// two-line wrapper that builds the IDENTICAL query string it always has and
+// delegates — its exported signature, doc-comment intent, and returned
+// values are unchanged. The exact string is pinned by
+// TestRunInsightsQuery_ExactQueryString (telephony_calls_test.go) so any
+// future drift here fails a test, not just a review.
 func RunInsightsQuery(
 	ctx context.Context,
 	api logsInsightsAPI,
@@ -137,6 +143,24 @@ func RunInsightsQuery(
 		"fields @timestamp, @message | filter @message like /%s / | sort @timestamp desc | limit %d",
 		callEventMarker, statsQueryLimit,
 	)
+	return runInsightsQueryString(ctx, api, logGroup, start, end, pollInterval, queryString)
+}
+
+// runInsightsQueryString is RunInsightsQuery's Insights lifecycle (start +
+// poll + terminal-status handling), extracted so it can be shared with
+// RunCallsInsightsQuery (telephony_calls.go) — the only thing that varies
+// between the two callers is the query string itself. Between polls, selects
+// on ctx.Done() and time.After(pollInterval) so tests can pass a
+// zero/near-zero interval and no real time elapses; statsPollBudget bounds
+// the loop so a permanently-Running fake can never hang the suite.
+func runInsightsQueryString(
+	ctx context.Context,
+	api logsInsightsAPI,
+	logGroup string,
+	start, end time.Time,
+	pollInterval time.Duration,
+	queryString string,
+) ([]string, error) {
 	startOut, err := api.StartQuery(ctx, &cloudwatchlogs.StartQueryInput{
 		LogGroupName: aws.String(logGroup),
 		StartTime:    aws.Int64(start.Unix()),
@@ -436,7 +460,8 @@ func newTelephonyStatsCmd(cfg *Config) *cobra.Command {
 			"the telephony-edge log group, parses every game_call_event line, and\n" +
 			"renders per-DID call counts, an outcome breakdown, median + max\n" +
 			"seconds-to-outcome, median duration, and a distinct-caller COUNT\n" +
-			"(never a raw caller number) plus a totals row.",
+			"(never a raw caller number) plus a totals row. For raw caller\n" +
+			"numbers -- who called which number and when -- see `kv telephony calls`.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error {
 			client, err := cfg.CloudWatchLogsClient(c.Context())

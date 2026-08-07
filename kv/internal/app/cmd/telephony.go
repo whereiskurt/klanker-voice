@@ -497,6 +497,10 @@ func NewTelephonyCmd(cfg *Config) *cobra.Command {
 	// game_call_event log lines telephony-edge emits at teardown.
 	telephonyCmd.AddCommand(newTelephonyStatsCmd(cfg))
 
+	// Quick task 260806-cm9: the identity-bearing sibling of `stats` -- who
+	// called which number and when, raw caller numbers always shown.
+	telephonyCmd.AddCommand(newTelephonyCallsCmd(cfg))
+
 	return telephonyCmd
 }
 
