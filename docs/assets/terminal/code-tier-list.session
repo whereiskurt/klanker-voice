@@ -1,0 +1,23 @@
+# title: kv code list + kv tier list — every passcode and what it grants
+# Captured live 2026-08-18. Code VALUES are redacted (they are the literal
+# credential a stranger would type); tiers, groups and counts are real.
+$ kv code list
+CODE        TIER          GROUP       EXPIRES  MAX        REDEEMED
+<code-01>   kphdemo-tier              -        unlimited  0
+<code-02>   kph-tier      telephony   -        unlimited  0
+<code-03>   demo-tier     conference  -        unlimited  1
+<code-04>   kphdemo-tier              -        unlimited  2
+<code-05>   kphdemo-tier              -        unlimited  0
+<code-06>   kphdemo-tier              -        unlimited  0
+<code-07>   kphdemo-tier  conference  -        unlimited  4
+<code-08>   kphdemo-tier              -        unlimited  0
+<code-09>   kphdemo-tier              -        unlimited  0
+# ---
+$ kv tier list
+TIER                GROUP  SESSION-MAX  PERIOD-MAX  MAX-CONCURRENT
+demo-tier                  120          600         2
+kph-tier            kph    86400        1000000     5
+kphdemo-tier               1800         3600        2
+no-access                  0            0           0
+pstn-baseline-tier  pstn   600          1800        1
+pstn-public-tier    pstn   180          900         4

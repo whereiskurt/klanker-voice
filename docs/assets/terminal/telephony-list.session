@@ -1,0 +1,34 @@
+# title: kv telephony list — the whole inbound surface in one report
+# Captured live 2026-08-18 against klanker-application / us-east-1.
+# Redacted: the caller-ID mint number (operator PII). Nothing else is altered.
+$ kv telephony list
+Inbound DIDs (numbers the public calls):
+DID         DESCRIPTION       ROUTING                     POP
+3474803715  NWYRCYZN10, NY    account:557010_klanker-pbx  45
+7254043234  LAS VEGAS, NV     account:557010_klanker-pbx  45
+7254043283  LAS VEGAS, NV     account:557010_klanker-pbx  45
+7254048283  LAS VEGAS, NV     account:557010_klanker-pbx  45
+8559164636  TOLL FREE US/CAN  account:557010_klanker-pbx  45
+
+Caller-ID mint mappings (auto-identity by caller ID):
+PHONE          CODE        TIER      ENABLED
++1**********   <redacted>  kph-tier  true
+
+Gate secrets:
+  /kmv/secrets/use1/telephony/access_pin: hidden — use --show-secrets
+  /kmv/secrets/use1/telephony/passphrase_words: hidden — use --show-secrets
+
+Gate config:
+  gate_mode: either
+  require_gate: true
+  gate_window_seconds: 12
+  unlock_tier_id: pstn-public-tier
+
+Phone games (quick task 260727-pdh):
+DIDS        CODE ENV VAR                CODE STATUS  WORDS ENV VAR                WORDS STATUS  SMS REPLY DIDS
+7254043234  CTF_ANNOUNCEMENT_CODE_3234  not set      (none)                       -             7254043234
+7254043283  CTF_ANNOUNCEMENT_CODE_3283  not set      (none)                       -             7254043283
+7254048283  CTF_ANNOUNCEMENT_CODE_UCTF  not set      CTF_ANNOUNCEMENT_WORDS_UCTF  not set       7254048283
+8559164636  CTF_ANNOUNCEMENT_CODE_1800  not set      CTF_ANNOUNCEMENT_WORDS_1800  not set
+8559164636  CTF_ANNOUNCEMENT_CODE_RICK  not set      (none)                       -
+  (status reflects THIS shell's environment -- deployed values live in SSM via telephony-edge's task definition)

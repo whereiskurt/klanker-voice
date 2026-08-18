@@ -1,0 +1,29 @@
+# title: kv — the whole command surface
+$ kv --help
+kv — klanker-voice operator CLI for access codes and tiers
+
+Usage:
+  kv [command]
+
+Available Commands:
+  code        Manage access codes (create, list, expire)
+  completion  Generate the autocompletion script for the specified shell
+  help        Help about any command
+  killswitch  View or flip the site-wide voice kill-switch (D-08/D-09)
+  knowledge   Regenerate KPH's curated packs + retrieval indexes (D-07)
+  smoke       Prove offer -> ICE connected -> RTP-flow against the voice service (KV-05)
+  studio      Start the local kv studio operator console (127.0.0.1 only)
+  telephony   Operator overview of the inbound-telephony surface (DIDs, gate secrets, gate config)
+  tier        Manage tiers (session/period/concurrency limits)
+  voipms      Automate the API-drivable VoIP.ms provisioning steps (D-03)
+
+Flags:
+      --endpoint-url string   Override DynamoDB endpoint (for dynamodb-local dev/testing)
+  -h, --help                  help for kv
+      --log-level string      Log verbosity level (debug, info, warn, error) (default "info")
+      --profile string        AWS shared-config profile (default "klanker-application")
+      --region string         AWS region (defaults to us-east-1; AWS_REGION env overrides)
+      --table string          DynamoDB table name (default "kmv-auth-electro")
+      --usage-table string    Voice usage DynamoDB table name (default "kmv-voice-usage")
+
+Use "kv [command] --help" for more information about a command.

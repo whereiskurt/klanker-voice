@@ -1,0 +1,10 @@
+# title: kv usage today + kv killswitch status — the money and the brake
+# Captured live 2026-08-18. Both read kmv-voice-usage (--usage-table), NOT the
+# access-code table every other command reads.
+$ kv usage today
+DAY         TOTAL-SECONDS  SESSION-COUNT  EST-COST
+2026-08-18  0              0              $0.00
+# ---
+$ kv killswitch status
+ENGAGED  REASON  CEILING-SECONDS  CEILING-DOLLARS
+false            0                0.00
