@@ -74,7 +74,7 @@ the API password, and this SIP password.
 kv voipms balance
 kv voipms search-dids --state NV                     # rate centers
 kv voipms search-dids --state NV --ratecenter RENO   # numbers + pricing
-kv voipms order-did 7755021688                       # spends money
+kv voipms order-did <NEW-DID>                        # spends money
 ```
 
 Defaults are the live-proven ones: routed to `account:557010_klanker-pbx`, POP
@@ -83,7 +83,7 @@ Defaults are the live-proven ones: routed to `account:557010_klanker-pbx`, POP
 For a number you already own:
 
 ```bash
-kv voipms route-did 7755021688 --subaccount klanker-pbx
+kv voipms route-did <NEW-DID> --subaccount klanker-pbx
 ```
 
 > **The POP must match the registration POP.** VoIP.ms delivers inbound calls
@@ -201,7 +201,7 @@ launching.** Take the reference away first, always.
 ### Retiring one number
 
 ```bash
-kv telephony calls --since 720h --did 7755021688     # confirm it's cold
+kv telephony calls --since 720h --did <NEW-DID>      # confirm it's cold
 ```
 
 1. Remove its `[[telephony.announcement]]` block(s) and its
@@ -210,9 +210,9 @@ kv telephony calls --since 720h --did 7755021688     # confirm it's cold
    it had an OTP seed, auth).
 3. Deploy both services.
 4. Confirm the line is inert — call it.
-5. `kv voipms clear-cid-prefix 7755021688` (optional; drops it to plain concierge).
+5. `kv voipms clear-cid-prefix <NEW-DID>` (optional; drops it to plain concierge).
 6. Delete its SSM parameters (optional).
-7. `kv voipms cancel-did 7755021688 --yes` — **irreversible**, and only if you
+7. `kv voipms cancel-did <NEW-DID> --yes` — **irreversible**, and only if you
    truly want the number gone.
 
 Stopping at step 5 leaves a working concierge line. Stopping at step 4 leaves a

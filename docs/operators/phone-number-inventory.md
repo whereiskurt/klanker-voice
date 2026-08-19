@@ -168,8 +168,8 @@ Summarised here; the full procedure with the carrier-side prerequisites is in
 kv voipms balance                                    # can you afford it?
 kv voipms search-dids --state NV                     # pick a rate center
 kv voipms search-dids --state NV --ratecenter RENO   # pick a number
-kv voipms order-did 7755021688                       # spends money
-kv voipms set-cid-prefix 7755021688 KVDRENO          # only if it needs a tag
+kv voipms order-did <NEW-DID>                        # spends money
+kv voipms set-cid-prefix <NEW-DID> KVDRENO           # only if it needs a tag
 kv telephony list                                    # confirm it appears
 ```
 
@@ -182,10 +182,10 @@ wiring first takes the telephony edge down.
 ## Removing a number
 
 ```bash
-kv telephony calls --since 720h --did 7755021688     # is anyone still using it?
+kv telephony calls --since 720h --did <NEW-DID>      # is anyone still using it?
 # remove its cid_prefix_dids entry, its announcement block, and its
 # service.hcl secrets rows; deploy; confirm the line is inert
-kv voipms cancel-did 7755021688 --yes                # IRREVERSIBLE
+kv voipms cancel-did <NEW-DID> --yes                 # IRREVERSIBLE
 ```
 
 Cancel last. The number is gone permanently the moment that command succeeds —

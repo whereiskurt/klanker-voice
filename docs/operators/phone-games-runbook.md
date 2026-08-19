@@ -110,8 +110,8 @@ a value. That is what lets the config live in a public repo.
 ```bash
 kv voipms balance
 kv voipms search-dids --state NV --ratecenter RENO
-kv voipms order-did 7755021688                       # spends money
-kv voipms set-cid-prefix 7755021688 KVDRENO          # cnam forced 0, readback verified
+kv voipms order-did <NEW-DID>                        # spends money
+kv voipms set-cid-prefix <NEW-DID> KVDRENO           # cnam forced 0, readback verified
 kv telephony list                                    # confirm it appears
 ```
 
@@ -160,17 +160,17 @@ In `apps/voice/configs/telephony.toml`:
 
 ```toml
 [telephony.cid_prefix_dids]
-"KVDRENO" = "7755021688"
+"KVDRENO" = "<NEW-DID>"
 
 [[telephony.announcement]]
-dids           = ["7755021688"]
+dids           = ["<NEW-DID>"]
 otp_url        = "https://auth.klankermaker.ai/use1/ctf/otp?g=reno"
 otp_env_var    = "CTF_OTP_AUTH_TOKEN"
 code_env_var   = "CTF_ANNOUNCEMENT_CODE_RENO"     # NAME only, never a value
 words_env_var  = "CTF_ANNOUNCEMENT_WORDS_RENO"    # optional
 line_template  = "Hey! Let me get that one time password for you. Ready? . ... {code}. That's {code_fast}."
 sms_dids       = []
-sms_reply_dids = ["7755021688"]
+sms_reply_dids = ["<NEW-DID>"]
 sms_relay_url  = "https://auth.klankermaker.ai/use1/ctf/sms"
 sms_claim_url_template = "https://q.defcon.run/creno?v={code}"
 ```
@@ -178,7 +178,7 @@ sms_claim_url_template = "https://q.defcon.run/creno?v={code}"
 And, if this line should suppress the concierge PIN and passphrase:
 
 ```toml
-otp_only_dids = [..., "7755021688"]
+otp_only_dids = [..., "<NEW-DID>"]
 ```
 
 `line_template` **must keep a `{code}` substitution** — the config loader rejects
@@ -214,7 +214,7 @@ Both services, then call the number:
 
 ```bash
 kv telephony list                        # the game appears in the games table
-kv telephony stats --since 1h --did 7755021688
+kv telephony stats --since 1h --did <NEW-DID>
 ```
 
 **Verification is a phone call.** Nothing short of dialling proves the chain —
