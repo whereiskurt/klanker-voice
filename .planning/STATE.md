@@ -277,6 +277,7 @@ Recent decisions affecting current work:
 - Phase 8 added: Documentation & Architecture — polished system diagram + README/architecture/runbook (starter Excalidraw diagram exported 2026-07-06)
 - Phase 05.2 inserted after Phase 5: Slick Start — single-tap silent SSO + instant pre-rendered greeting (conference-readiness UX polish on Phase-5 client) (URGENT)
 - Phase 15 added: Private transcription ledger — S3 batch + Athena + admin conversation view (promotes todo 2026-07-06-private-transcription-ledger; both-sides turn logging, threaded-chat report; reverses Phase 05.1's no-transcripts stance)
+- Phase 16 added: Operator Lifecycle — `kv backup`/`restore`, `pause`/`resume`, `destroy --with-backup` (implements the approved spec `docs/superpowers/specs/2026-08-12-pause-backup-teardown-design.md`; three waves in spec build order, ~$190 → ~$60/mo paused). All work lives on the isolated branch `feat/pause-backup-teardown`, which already carries the spec commits — the spec ships with the feature, not ahead of it.
 
 ## Deferred Items
 

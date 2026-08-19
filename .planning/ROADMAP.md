@@ -353,6 +353,33 @@ Plans:
 
 **Waves:** 1 → {15-01, 15-02, 15-04, 15-06}; 2 → {15-03, 15-05}
 
+### Phase 16: Operator Lifecycle — kv backup/restore, pause/resume, teardown
+
+**Goal**: The operator can stand the whole stack down and bring it back — `kv backup`/`restore` produces a verified, self-contained artifact of everything that exists only in AWS (DynamoDB rows, the S3 transcript ledger, the NAT EIP, the VoIP.ms DID inventory); `kv pause`/`resume` round-trips every ECS service to zero tasks in ~5 minutes each way (~$190 → ~$60/mo) via a git-tracked flag in `site.hcl` plus a CI apply; and `kv destroy --with-backup` tears the AWS footprint down without silently eating data
+**Depends on**: Phase 15 (the S3 transcript ledger is one of the two things backup must capture); the `kv` CLI, terragrunt live stack, and `terragrunt-apply.yml` workflow already exist
+**Authoritative spec**: `docs/superpowers/specs/2026-08-12-pause-backup-teardown-design.md` (brainstormed + operator-approved 2026-08-12; infra claims verified against the live modules)
+**Requirements**: TBD (derived from the spec's §4 / §5 / §6 command groups)
+**Success Criteria** (what must be TRUE):
+
+  1. `kv backup` writes one timestamped zip containing all three DynamoDB tables (scan → JSONL), the full S3 ledger object tree, and the external inventory (VoIP.ms DIDs, NAT EIP, non-secret SSM params) plus a `manifest.json` with per-file SHA-256 and per-table row counts — and verification (re-reading the artifact) is on by default, so "backup succeeded" means it was read back
+  2. `kv restore <zip>` repopulates a freshly-applied stack: targets resolved from **live terraform outputs** (never from the manifest, since bucket names carry a new `random_id`), ephemeral rows (concurrency leases, OIDC session state, expired TTLs) filtered by default, idempotent/resumable batched writes, and a `--dry-run` that reports counts without writing
+  3. `kv pause` flips **both** `desired_count = 0` **and** `autoscaling.min_capacity = 0` via a single git-tracked `paused` flag in `site.hcl`, commits + dispatches the CI apply, and verifies all three services actually reach zero — deterministically closing the Application Auto Scaling ordering hazard (spec §5.2) rather than trusting timing
+  4. `kv resume` restores service and does not report success until the voice and auth ALB target groups report healthy; a mid-pause CI deploy leaves the stack paused (config is the guard); the kill-switch is never touched by either command
+  5. `kv destroy --with-backup` (default) refuses to proceed on a failed backup verification, empties the ledger bucket explicitly (it has no `force_destroy`), destroys in dependency order, and reports what is now unrecoverable — DID release stays manual and outside the tool
+  6. Orchestration is testable without touching the cloud: AWS/`gh`/`git` behind narrow interfaces, table tests for the `site.hcl` rewrite (idempotence, comment preservation, already-paused, malformed), a backup/restore round-trip against local fakes, and preflight-refusal tests; `backups/` is gitignored
+
+**Plans:** 0 plans
+
+**Build order (spec §3)** — each wave lands independently useful, and execution may stop after any wave:
+
+- **Wave 1 — `kv backup` / `kv restore`**: the foundation, prerequisite for Wave 3, and the only piece with no infra apply or CI dispatch. Designed for the *destroy* case from day one, not the pause case.
+- **Wave 2 — `kv pause` / `kv resume`**: the immediate need; carries the two real hazards (autoscaling ordering, in-flight session drain).
+- **Wave 3 — `kv destroy --with-backup`**: deferred until Wave 1 has round-tripped once against real data.
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 16 to break down)
+
 ---
 
 ## Milestone v1.1: Telephony (VoIP.ms / Payphone)
