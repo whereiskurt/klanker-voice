@@ -41,77 +41,77 @@ plan's `must_haves` so nothing is silently dropped in translation.
 
 ### Build order and framing
 
-- **D-01**: Build in spec order — backup/restore, then pause/resume, then destroy. Each
+- **D-01:** Build in spec order — backup/restore, then pause/resume, then destroy. Each
   wave lands independently useful and execution may stop after any wave.
-- **D-02**: Backup is designed for the **destroy** case from day one, not the pause case.
+- **D-02:** Backup is designed for the **destroy** case from day one, not the pause case.
   A backup built only to survive a scale-to-zero would capture a subset and quietly fail
   on the day it actually matters.
 
 ### `kv backup` / `kv restore` (OPS-01, OPS-02, OPS-03)
 
-- **D-03**: Interface is `kv backup [--out ./backups] [--no-verify]` and
+- **D-03:** Interface is `kv backup [--out ./backups] [--no-verify]` and
   `kv restore <zip> [--tables] [--ledger] [--dry-run] [--skip-ephemeral]`.
-- **D-04**: One self-contained timestamped zip (`kmv-backup-<ISO8601>.zip`) with the
+- **D-04:** One self-contained timestamped zip (`kmv-backup-<ISO8601>.zip`) with the
   spec §4.2 layout: `manifest.json`, `dynamodb/{kmv-auth-electro,kmv-auth-authjs,kmv-voice-usage}.jsonl`,
   `ledger/` (key-preserving object tree), `external/{voipms-dids.json,nat-eip.txt,ssm-params.json}`.
-- **D-05**: `manifest.json` records git SHA at backup time, AWS account id, region, `kv`
+- **D-05:** `manifest.json` records git SHA at backup time, AWS account id, region, `kv`
   version, resolved table and bucket names, per-table row counts, ledger object count and
   byte total, and a SHA-256 per file.
-- **D-06**: DynamoDB is captured with a plain `Scan` → JSONL, **not**
+- **D-06:** DynamoDB is captured with a plain `Scan` → JSONL, **not**
   `ExportTableToPointInTime` — native export needs PITR and writes its output to an S3
   bucket *inside the account being destroyed*, which is backwards here. JSONL is portable,
   greppable, diffable, and restorable with no cloud dependency.
-- **D-07**: The ledger is **always** included — no partial backups are possible. `kv backup`
+- **D-07:** The ledger is **always** included — no partial backups are possible. `kv backup`
   prints size and elapsed time so a slow backup is never a mystery, and warns above a size
   threshold. (Operator directive 2026-08-19: assume the ledger is reasonably small; no
   incremental or streaming design in scope.)
-- **D-08**: The zip is written **unencrypted**, with a loud closing warning naming what it
+- **D-08:** The zip is written **unencrypted**, with a loud closing warning naming what it
   contains (transcripts, user email addresses) and stating it may be the only remaining
   copy. Explicitly do **not** encrypt with the SOPS/KMS key — that key lives in the account
   being destroyed, which would make the backup unopenable at exactly the moment it is
   needed. Any future encryption must use a key held outside the account (age or GPG).
-- **D-09**: Verification is **on by default** (`--no-verify` opts out): after writing,
+- **D-09:** Verification is **on by default** (`--no-verify` opts out): after writing,
   re-open the zip and check every row count and SHA-256 against the manifest. "Backup
   succeeded" must mean the artifact was read back.
-- **D-10**: Restore resolves table and bucket names from **current terraform outputs at
+- **D-10:** Restore resolves table and bucket names from **current terraform outputs at
   restore time**, never from the manifest — post-destroy buckets carry a new `random_id`
   suffix. The manifest's copies exist to audit *where the backup came from*; restore must
   never read them as destinations.
-- **D-11**: Restore filters ephemeral rows by default (`--skip-ephemeral`, on by default):
+- **D-11:** Restore filters ephemeral rows by default (`--skip-ephemeral`, on by default):
   concurrency leases, OIDC session state, and expired-TTL items. Restoring a stale
   concurrency lease would wedge the quota gate — a bug this project has already debugged
   once.
-- **D-12**: Restore is idempotent and resumable — batched `PutItem` with retry and backoff,
+- **D-12:** Restore is idempotent and resumable — batched `PutItem` with retry and backoff,
   safe to re-run over a partially-completed restore. `--dry-run` reports per-table write
   counts and ledger object counts without writing.
-- **D-13**: Restore assumes target tables and buckets already exist; it does not create
+- **D-13:** Restore assumes target tables and buckets already exist; it does not create
   infrastructure. Documented ordering is config (git) → `terragrunt apply` → `kv restore`.
-- **D-14**: `backups/` is added to `.gitignore` — the artifact holds personal data and must
+- **D-14:** `backups/` is added to `.gitignore` — the artifact holds personal data and must
   never be committed. No secret values are read or written by any of these commands;
   secrets stay in SOPS and SSM.
 
 ### `kv pause` / `kv resume` (OPS-04, OPS-05)
 
-- **D-15**: The pause mechanism is a single git-tracked boolean `paused` in
+- **D-15:** The pause mechanism is a single git-tracked boolean `paused` in
   `infra/terraform/live/site/site.hcl`, all-or-nothing across voice, auth, and
   telephony-edge. Per-service granularity was offered and declined. A raw AWS API call is
   not acceptable: `ecs-service` has no `lifecycle { ignore_changes = [desired_count] }`, so
   terraform owns the count and would revert it on the next CI deploy.
-- **D-16**: Pause must override **both** `desired_count = 0` **and**
+- **D-16:** Pause must override **both** `desired_count = 0` **and**
   `autoscaling.min_capacity = 0`. Either alone fails — Application Auto Scaling enforces
   `min_capacity = 1` and bounces the service back. The module accepts 0
   (`min_capacity = optional(number, 1)` carries no positive-value validation).
-- **D-17**: `ecs_tasks` stays enabled while paused — task definitions cost nothing and
+- **D-17:** `ecs_tasks` stays enabled while paused — task definitions cost nothing and
   staying registered means resume re-registers nothing.
-- **D-18**: `kv pause` preflight refuses rather than committing onto a surprise: clean
+- **D-18:** `kv pause` preflight refuses rather than committing onto a surprise: clean
   working tree, on `main`, synced with origin, valid `gh` auth. It is idempotent — already
   paused prints status and exits 0 — and it shows the diff and confirms before committing
   (`--yes` skips the prompt).
-- **D-19**: The command commits to `main` (`ops(infra): pause ECS services (desired_count=0)`),
+- **D-19:** The command commits to `main` (`ops(infra): pause ECS services (desired_count=0)`),
   pushes, then dispatches `gh workflow run terragrunt-apply.yml --ref main -f modules=ecs-service`,
   resolves the run id, and streams to completion. The `terraform-apply` environment's
   required-reviewer rule still gates the apply.
-- **D-20**: Verification closes the §5.2 apply-ordering hazard deterministically. Because
+- **D-20:** Verification closes the §5.2 apply-ordering hazard deterministically. Because
   `aws_appautoscaling_target` declares `depends_on = [aws_ecs_service.service]`, a pause
   apply sets `desired_count → 0` first and lowers `min_capacity → 0` second; in that window
   Application Auto Scaling can scale back out to MinCapacity, leaving a service pinned at 1
@@ -120,19 +120,19 @@ plan's `must_haves` so nothing is silently dropped in translation.
   reached zero, issues `update-service --desired-count 0` itself. Terraform already records
   0, so the correction introduces no drift. "Usually it won't fire" is not an acceptable
   property for an operator tool.
-- **D-21**: Voice tasks hold ECS task-scale-in protection while a session is live, so a
+- **D-21:** Voice tasks hold ECS task-scale-in protection while a session is live, so a
   pause issued during a call waits. `kv` must print
   `waiting for N in-flight session(s) to drain` rather than appear hung.
-- **D-22**: `kv resume` mirrors pause and additionally waits for the voice and auth ALB
+- **D-22:** `kv resume` mirrors pause and additionally waits for the voice and auth ALB
   target groups to report healthy. A clean apply that never reaches healthy is exactly the
   failure worth catching, so resume does not report success until targets are in service.
-- **D-23**: No CI workflow changes — the config is the guard. Because the pause lives in
+- **D-23:** No CI workflow changes — the config is the guard. Because the pause lives in
   `site.hcl`, a mid-pause deploy re-applies `desired_count = 0` and the stack stays paused.
   A build still runs and pushes an image to ECR; it simply deploys to a sleeping service.
-- **D-24**: `kv pause` does **not** flip the kill-switch. They are orthogonal — the
+- **D-24:** `kv pause` does **not** flip the kill-switch. They are orthogonal — the
   kill-switch gates new voice sessions at the application layer, pause removes the compute —
   and coupling them would produce a surprise on resume.
-- **D-25**: Pause reports the resulting cost posture and the manual follow-ups, explicitly
+- **D-25:** Pause reports the resulting cost posture and the manual follow-ups, explicitly
   naming ElevenLabs Pro ($99/mo) as the largest remaining line item during a long pause.
   Paused behaviour is documented, not fixed: `voice.klankermaker.ai` still loads from
   CloudFront/S3 (only the mic tap 503s), `auth.klankermaker.ai` is ALB-only and 503s, and
@@ -140,36 +140,36 @@ plan's `must_haves` so nothing is silently dropped in translation.
 
 ### `kv destroy --with-backup` (OPS-06)
 
-- **D-26**: Interface is `kv destroy [--with-backup] [--no-backup] [--dry-run]`.
+- **D-26:** Interface is `kv destroy [--with-backup] [--no-backup] [--dry-run]`.
   `--with-backup` is the default; `--no-backup` requires typing the site label to confirm.
-- **D-27**: Sequence is: full backup (ledger included) → verify the zip's row counts and
+- **D-27:** Sequence is: full backup (ledger included) → verify the zip's row counts and
   checksums and **abort on mismatch** → drain to zero reusing the `kv pause` path → empty
   the ledger bucket **explicitly** (it has no `force_destroy`, unlike cf-assets and the ALB
   log bucket, so this is a required deliberate step rather than a surprise mid-destroy
   failure) → `terragrunt destroy` in dependency order (ecs-service → ecs-task → ecs-cluster
   → ledger → network → certs/site) → report.
-- **D-28**: The final report must state the backup path, its size, and that it may be the
+- **D-28:** The final report must state the backup path, its size, and that it may be the
   only copy; that the NAT EIP is gone and VoIP.ms API allowlisting will need the new one on
   rebuild; that bucket names will differ on recreate; and that the DIDs are still
   provisioned and still billing unless released manually.
-- **D-29**: DID release stays manual and outside the tool. It is irreversible and
+- **D-29:** DID release stays manual and outside the tool. It is irreversible and
   vendor-side, and must never be one flag away from a typo — `725-404-8283` ("U-CTF") and
   the toll-free `855-916-INFO` cannot be recovered once released. `kv destroy` reports the
   inventory and stops there.
 
 ### Cross-cutting
 
-- **D-30**: New commands follow existing `kv` structure — one file per command group under
+- **D-30:** New commands follow existing `kv` structure — one file per command group under
   `kv/internal/app/cmd/`, registered in `root.go` alongside `NewKillswitchCmd` etc. AWS
   clients, `gh`, and `git` go behind narrow interfaces so orchestration is testable without
   touching the cloud, matching how `knowledge.go` and `studio/sop_git.go` already isolate
   their shell-outs.
-- **D-31**: Testing must cover: table tests for the `site.hcl` rewrite (idempotence,
+- **D-31:** Testing must cover: table tests for the `site.hcl` rewrite (idempotence,
   comment preservation, already-paused, malformed input); a backup/restore round-trip
   against local DynamoDB and a MinIO/fake S3, asserting ephemeral-row filtering and
   checksum verification; `--dry-run` coverage on both destructive paths; and
   preflight-refusal tests (dirty tree, wrong branch, stale origin).
-- **D-32**: No command may destroy something irreversible without an explicit, deliberate
+- **D-32:** No command may destroy something irreversible without an explicit, deliberate
   action.
 
 ### Claude's Discretion
