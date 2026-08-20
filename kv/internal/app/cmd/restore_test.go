@@ -1,11 +1,18 @@
 package cmd
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // numAV builds a DynamoDB number AttributeValue from an int64 — restore_test
@@ -261,4 +268,270 @@ func TestReadTableItems(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("len(items) = %d, want 2", len(items))
 	}
+}
+
+// --------------------------------------------------------------------------
+// fakeDynamoBatchWriteAPI — hand-rolled, in-memory dynamoBatchWriteAPI fake.
+// store is stateful across calls (keyed by "pk|sk") so an idempotence
+// assertion (re-running a restore leaves one copy, not two) is meaningful.
+// behaviors, if set, lets a specific call index override the default
+// succeed-everything response (used to simulate UnprocessedItems and
+// throttling-then-success).
+
+func itemKey(item map[string]types.AttributeValue) string {
+	return stringAttr(item, "pk") + "|" + stringAttr(item, "sk")
+}
+
+type fakeDynamoBatchWriteAPI struct {
+	t         *testing.T // non-nil -> any call fails the test (dry-run "must not be called" fakes)
+	store     map[string]map[string]types.AttributeValue
+	callSizes []int
+	behaviors []func(reqs []types.WriteRequest) (*dynamodb.BatchWriteItemOutput, error)
+}
+
+func (f *fakeDynamoBatchWriteAPI) BatchWriteItem(_ context.Context, in *dynamodb.BatchWriteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error) {
+	if f.t != nil {
+		f.t.Fatal("BatchWriteItem called, want zero calls (dry-run must not write)")
+	}
+	var reqs []types.WriteRequest
+	for _, r := range in.RequestItems {
+		reqs = r
+	}
+	idx := len(f.callSizes)
+	f.callSizes = append(f.callSizes, len(reqs))
+
+	if idx < len(f.behaviors) && f.behaviors[idx] != nil {
+		return f.behaviors[idx](reqs)
+	}
+	if f.store == nil {
+		f.store = map[string]map[string]types.AttributeValue{}
+	}
+	for _, r := range reqs {
+		if r.PutRequest != nil {
+			f.store[itemKey(r.PutRequest.Item)] = r.PutRequest.Item
+		}
+	}
+	return &dynamodb.BatchWriteItemOutput{UnprocessedItems: map[string][]types.WriteRequest{}}, nil
+}
+
+func makeItems(n int) []map[string]types.AttributeValue {
+	items := make([]map[string]types.AttributeValue, n)
+	for i := range items {
+		items[i] = map[string]types.AttributeValue{
+			"pk": strAV(fmt.Sprintf("item#%d", i)),
+			"sk": strAV("row#"),
+		}
+	}
+	return items
+}
+
+func TestRestoreTable(t *testing.T) {
+	t.Run("SixtyItemsProduceThreeBatchesOf25_25_10", func(t *testing.T) {
+		api := &fakeDynamoBatchWriteAPI{}
+		items := makeItems(60)
+		written, _, err := RestoreTable(context.Background(), api, "kmv-test", items, RestoreOptions{}, func() time.Time { return restoreTestNow }, "no-such-table")
+		if err != nil {
+			t.Fatalf("RestoreTable() error = %v, want nil", err)
+		}
+		if written != 60 {
+			t.Errorf("written = %d, want 60", written)
+		}
+		wantSizes := []int{25, 25, 10}
+		if len(api.callSizes) != len(wantSizes) {
+			t.Fatalf("call count = %d, want %d (sizes %v)", len(api.callSizes), len(wantSizes), api.callSizes)
+		}
+		for i, want := range wantSizes {
+			if api.callSizes[i] != want {
+				t.Errorf("call[%d] size = %d, want %d", i, api.callSizes[i], want)
+			}
+		}
+	})
+
+	t.Run("UnprocessedItemsAreRetriedNotDuplicated", func(t *testing.T) {
+		items := makeItems(3)
+		api := &fakeDynamoBatchWriteAPI{store: map[string]map[string]types.AttributeValue{}}
+		api.behaviors = []func([]types.WriteRequest) (*dynamodb.BatchWriteItemOutput, error){
+			// First attempt: store the first two requests (as a real
+			// partial-batch write would), report the last as unprocessed.
+			func(reqs []types.WriteRequest) (*dynamodb.BatchWriteItemOutput, error) {
+				for _, r := range reqs[:len(reqs)-1] {
+					if r.PutRequest != nil {
+						api.store[itemKey(r.PutRequest.Item)] = r.PutRequest.Item
+					}
+				}
+				return &dynamodb.BatchWriteItemOutput{
+					UnprocessedItems: map[string][]types.WriteRequest{"kmv-test": reqs[len(reqs)-1:]},
+				}, nil
+			},
+			// Retry: nil -> default succeed-everything handler, invoked
+			// with only the one previously-unprocessed item.
+			nil,
+		}
+		written, _, err := RestoreTable(context.Background(), api, "kmv-test", items, RestoreOptions{}, func() time.Time { return restoreTestNow }, "no-such-table")
+		if err != nil {
+			t.Fatalf("RestoreTable() error = %v, want nil", err)
+		}
+		if written != 3 {
+			t.Errorf("written = %d, want 3", written)
+		}
+		if len(api.store) != 3 {
+			t.Errorf("len(store) = %d, want 3 (no duplicates)", len(api.store))
+		}
+		if len(api.callSizes) != 2 {
+			t.Fatalf("call count = %d, want 2 (initial + one retry)", len(api.callSizes))
+		}
+	})
+
+	t.Run("ThrottlingRetriesTwiceThenSucceeds", func(t *testing.T) {
+		items := makeItems(2)
+		var calls int
+		api := &fakeDynamoBatchWriteAPI{
+			behaviors: []func([]types.WriteRequest) (*dynamodb.BatchWriteItemOutput, error){
+				func(reqs []types.WriteRequest) (*dynamodb.BatchWriteItemOutput, error) {
+					calls++
+					return nil, &types.ThrottlingException{Message: aws.String("slow down")}
+				},
+				func(reqs []types.WriteRequest) (*dynamodb.BatchWriteItemOutput, error) {
+					calls++
+					return nil, &types.ThrottlingException{Message: aws.String("slow down")}
+				},
+				nil, // third attempt: default success-all behavior
+			},
+		}
+		written, _, err := RestoreTable(context.Background(), api, "kmv-test", items, RestoreOptions{}, func() time.Time { return restoreTestNow }, "no-such-table")
+		if err != nil {
+			t.Fatalf("RestoreTable() error = %v, want nil", err)
+		}
+		if written != 2 {
+			t.Errorf("written = %d, want 2", written)
+		}
+		if calls != 2 {
+			t.Errorf("throttling behavior invocations = %d, want 2", calls)
+		}
+		if len(api.callSizes) != 3 {
+			t.Errorf("total attempts = %d, want 3 (2 throttled + 1 success)", len(api.callSizes))
+		}
+		if len(api.callSizes) > restoreMaxAttempts {
+			t.Errorf("total attempts = %d, exceeds restoreMaxAttempts %d", len(api.callSizes), restoreMaxAttempts)
+		}
+	})
+
+	t.Run("RerunningConverges_OneCopyNotTwo", func(t *testing.T) {
+		api := &fakeDynamoBatchWriteAPI{}
+		items := makeItems(5)
+		now := func() time.Time { return restoreTestNow }
+		if _, _, err := RestoreTable(context.Background(), api, "kmv-test", items, RestoreOptions{}, now, "no-such-table"); err != nil {
+			t.Fatalf("first RestoreTable() error = %v, want nil", err)
+		}
+		if _, _, err := RestoreTable(context.Background(), api, "kmv-test", items, RestoreOptions{}, now, "no-such-table"); err != nil {
+			t.Fatalf("second RestoreTable() error = %v, want nil", err)
+		}
+		if len(api.store) != 5 {
+			t.Errorf("len(store) after two runs = %d, want 5 (one copy of each item)", len(api.store))
+		}
+	})
+
+	t.Run("DryRunNeverCallsBatchWriteItem", func(t *testing.T) {
+		api := &fakeDynamoBatchWriteAPI{t: t}
+		items := makeItems(10)
+		written, skipped, err := RestoreTable(context.Background(), api, "kmv-test", items, RestoreOptions{DryRun: true}, func() time.Time { return restoreTestNow }, "no-such-table")
+		if err != nil {
+			t.Fatalf("RestoreTable() error = %v, want nil", err)
+		}
+		if written != 10 {
+			t.Errorf("written = %d, want 10 (dry-run still counts)", written)
+		}
+		if skipped == nil {
+			t.Error("skipped map is nil, want non-nil (even if empty)")
+		}
+	})
+}
+
+func TestRestoreLedger(t *testing.T) {
+	archivePath := buildFixtureArchive(t)
+	zr, _, err := OpenBackupArchive(archivePath)
+	if err != nil {
+		t.Fatalf("OpenBackupArchive() error = %v, want nil", err)
+	}
+	defer zr.Close()
+
+	t.Run("RestoresEveryLedgerObject", func(t *testing.T) {
+		api := &fakePutObjectAPI{}
+		objects, bytesTotal, err := RestoreLedger(context.Background(), api, zr, restoreLedgerPrefix, "kmv-ledger-restored", RestoreOptions{})
+		if err != nil {
+			t.Fatalf("RestoreLedger() error = %v, want nil", err)
+		}
+		if objects != 2 {
+			t.Errorf("objects = %d, want 2", objects)
+		}
+		if bytesTotal == 0 {
+			t.Error("bytesTotal = 0, want > 0")
+		}
+		if len(api.puts) != 2 {
+			t.Fatalf("PutObject call count = %d, want 2", len(api.puts))
+		}
+	})
+
+	t.Run("DryRunNeverCallsPutObject", func(t *testing.T) {
+		api := &fakePutObjectAPI{t: t}
+		objects, _, err := RestoreLedger(context.Background(), api, zr, restoreLedgerPrefix, "kmv-ledger-restored", RestoreOptions{DryRun: true})
+		if err != nil {
+			t.Fatalf("RestoreLedger() error = %v, want nil", err)
+		}
+		if objects != 2 {
+			t.Errorf("objects = %d, want 2 (dry-run still counts)", objects)
+		}
+	})
+}
+
+// fakePutObjectAPI — hand-rolled, in-memory s3PutAPI fake.
+type fakePutObjectAPI struct {
+	t    *testing.T
+	puts map[string][]byte
+}
+
+func (f *fakePutObjectAPI) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	if f.t != nil {
+		f.t.Fatal("PutObject called, want zero calls (dry-run must not write)")
+	}
+	if f.puts == nil {
+		f.puts = map[string][]byte{}
+	}
+	body, err := io.ReadAll(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	f.puts[aws.ToString(in.Key)] = body
+	return &s3.PutObjectOutput{}, nil
+}
+
+func TestRunRestore(t *testing.T) {
+	t.Run("MissingTableDestinationRefusesBeforeAnyWrite", func(t *testing.T) {
+		archivePath := buildFixtureArchive(t)
+		dynamoFake := &fakeDynamoBatchWriteAPI{t: t}
+		s3Fake := &fakePutObjectAPI{t: t}
+		deps := RestoreDeps{
+			Dynamo: dynamoFake,
+			S3:     s3Fake,
+			Targets: LiveTargets{
+				TableNames: map[string]string{
+					"auth-electro": "kmv-auth-electro",
+					"auth-authjs":  "kmv-auth-authjs",
+					// voice-usage deliberately absent
+				},
+				LedgerBucket: "kmv-ledger-restored",
+			},
+			Now: func() time.Time { return restoreTestNow },
+		}
+		_, err := RunRestore(context.Background(), deps, archivePath, RestoreOptions{})
+		if err == nil {
+			t.Fatal("RunRestore() error = nil, want non-nil (missing voice-usage destination)")
+		}
+		if !strings.Contains(err.Error(), "voice-usage") {
+			t.Errorf("error %q does not mention voice-usage", err.Error())
+		}
+		if !strings.Contains(err.Error(), "terragrunt apply") {
+			t.Errorf("error %q does not mention terragrunt apply", err.Error())
+		}
+	})
 }

@@ -11,15 +11,21 @@ package cmd
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"math/rand"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithy "github.com/aws/smithy-go"
 )
 
 // --------------------------------------------------------------------------
@@ -370,4 +376,281 @@ type RestoreReport struct {
 	LedgerObjects      int64
 	LedgerBytes        int64
 	DryRun             bool
+}
+
+// --------------------------------------------------------------------------
+// Batched, retried, idempotent writes (D-12: a full-item PutRequest is
+// inherently idempotent — re-submitting the exact same item never
+// duplicates or errors, which is what makes a re-run over a
+// partially-completed restore converge instead of diverging).
+
+const (
+	// restoreBatchSize is DynamoDB's BatchWriteItem hard limit — 25 requests
+	// per call.
+	restoreBatchSize = 25
+	// restoreMaxAttempts bounds how many times a batch (or its
+	// UnprocessedItems remainder) is retried before RestoreTable gives up
+	// and returns an error.
+	restoreMaxAttempts = 6
+	// restoreMaxBackoff caps the exponential backoff delay between retries.
+	restoreMaxBackoff = 30 * time.Second
+	// restoreBackoffBase is the first retry's base delay, before jitter.
+	restoreBackoffBase = 250 * time.Millisecond
+)
+
+// isRetryableError classifies a BatchWriteItem/PutObject error as
+// retryable: DynamoDB throttling (ProvisionedThroughputExceededException,
+// ThrottlingException, RequestLimitExceeded) or any 5xx server-fault smithy
+// API error. Classification is by errors.As against the SDK's own typed
+// errors, never by string-matching an error message.
+func isRetryableError(err error) bool {
+	var provisionedThroughput *types.ProvisionedThroughputExceededException
+	if errors.As(err, &provisionedThroughput) {
+		return true
+	}
+	var throttling *types.ThrottlingException
+	if errors.As(err, &throttling) {
+		return true
+	}
+	var requestLimit *types.RequestLimitExceeded
+	if errors.As(err, &requestLimit) {
+		return true
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) && apiErr.ErrorFault() == smithy.FaultServer {
+		return true
+	}
+	return false
+}
+
+// restoreBackoffDuration returns the delay before retry attempt N
+// (0-indexed), exponential with full jitter, capped at restoreMaxBackoff.
+func restoreBackoffDuration(attempt int) time.Duration {
+	d := restoreBackoffBase << uint(attempt)
+	if d <= 0 || d > restoreMaxBackoff {
+		d = restoreMaxBackoff
+	}
+	return time.Duration(rand.Int63n(int64(d)))
+}
+
+// restoreSleep waits for restoreBackoffDuration(attempt) or ctx
+// cancellation, whichever comes first.
+func restoreSleep(ctx context.Context, attempt int) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(restoreBackoffDuration(attempt)):
+		return nil
+	}
+}
+
+// restoreBatchWithRetry issues one BatchWriteItem for batch against table,
+// re-submitting only UnprocessedItems and retrying retryable failures with
+// backoff, up to restoreMaxAttempts. Returns the number of items actually
+// written (succeeded, not merely attempted).
+func restoreBatchWithRetry(ctx context.Context, api dynamoBatchWriteAPI, table string, batch []map[string]types.AttributeValue) (int64, error) {
+	pending := make([]types.WriteRequest, 0, len(batch))
+	for _, item := range batch {
+		item := item
+		pending = append(pending, types.WriteRequest{PutRequest: &types.PutRequest{Item: item}})
+	}
+
+	var written int64
+	for attempt := 0; attempt < restoreMaxAttempts && len(pending) > 0; attempt++ {
+		resp, err := api.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]types.WriteRequest{table: pending},
+		})
+		if err != nil {
+			if isRetryableError(err) && attempt < restoreMaxAttempts-1 {
+				if sleepErr := restoreSleep(ctx, attempt); sleepErr != nil {
+					return written, sleepErr
+				}
+				continue
+			}
+			return written, fmt.Errorf("batch write table %s: %w", table, err)
+		}
+
+		unprocessed := resp.UnprocessedItems[table]
+		written += int64(len(pending) - len(unprocessed))
+		pending = unprocessed
+		if len(pending) > 0 && attempt < restoreMaxAttempts-1 {
+			if sleepErr := restoreSleep(ctx, attempt); sleepErr != nil {
+				return written, sleepErr
+			}
+		}
+	}
+	if len(pending) > 0 {
+		return written, fmt.Errorf("batch write table %s: %d item(s) still unprocessed after %d attempts", table, len(pending), restoreMaxAttempts)
+	}
+	return written, nil
+}
+
+// RestoreTable filters items through IsEphemeralItem (when
+// opts.SkipEphemeral) and writes the survivors to table in batches of
+// restoreBatchSize, retrying with backoff (D-12). Per-reason skip counts are
+// accumulated regardless of opts.SkipEphemeral, so the report stays honest
+// about what a classifier hit even when an operator chose to keep those
+// rows. When opts.DryRun is true, no BatchWriteItem call is issued at all —
+// the returned written count is the number of items that WOULD have been
+// written.
+func RestoreTable(ctx context.Context, api dynamoBatchWriteAPI, table string, items []map[string]types.AttributeValue, opts RestoreOptions, now func() time.Time, logical string) (written int64, skipped map[EphemeralReason]int64, err error) {
+	if now == nil {
+		now = time.Now
+	}
+	skipped = map[EphemeralReason]int64{}
+
+	toWrite := make([]map[string]types.AttributeValue, 0, len(items))
+	for _, item := range items {
+		ephemeral, reason := IsEphemeralItem(logical, item, now())
+		if ephemeral {
+			skipped[reason]++
+			if opts.SkipEphemeral {
+				continue
+			}
+		}
+		toWrite = append(toWrite, item)
+	}
+
+	if opts.DryRun {
+		return int64(len(toWrite)), skipped, nil
+	}
+
+	for i := 0; i < len(toWrite); i += restoreBatchSize {
+		end := i + restoreBatchSize
+		if end > len(toWrite) {
+			end = len(toWrite)
+		}
+		n, err := restoreBatchWithRetry(ctx, api, table, toWrite[i:end])
+		written += n
+		if err != nil {
+			return written, skipped, err
+		}
+	}
+	return written, skipped, nil
+}
+
+// RestoreLedger streams every "ledger/"-prefixed zip entry to PutObject,
+// reconstructing the original S3 key by stripping prefix. Same dry-run rule
+// as RestoreTable: with opts.DryRun, objects/bytes are still counted but no
+// PutObject call is issued.
+func RestoreLedger(ctx context.Context, api s3PutAPI, zr *zip.ReadCloser, prefix, bucket string, opts RestoreOptions) (objects int64, bytesTotal int64, err error) {
+	for _, f := range zr.File {
+		if !strings.HasPrefix(f.Name, prefix) {
+			continue
+		}
+		key := strings.TrimPrefix(f.Name, prefix)
+		if key == "" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return objects, bytesTotal, fmt.Errorf("restore ledger: open entry %s: %w", f.Name, err)
+		}
+		data, err := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if err != nil {
+			return objects, bytesTotal, fmt.Errorf("restore ledger: read entry %s: %w", f.Name, err)
+		}
+		if closeErr != nil {
+			return objects, bytesTotal, fmt.Errorf("restore ledger: close entry %s: %w", f.Name, closeErr)
+		}
+		objects++
+		bytesTotal += int64(len(data))
+		if opts.DryRun {
+			continue
+		}
+		if _, err := api.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(data),
+		}); err != nil {
+			return objects, bytesTotal, fmt.Errorf("restore ledger: put object %s: %w", key, err)
+		}
+	}
+	return objects, bytesTotal, nil
+}
+
+// restoreLedgerPrefix is the zip-internal prefix (D-04's layout) every
+// ledger object lives under.
+const restoreLedgerPrefix = "ledger/"
+
+// RunRestore is the full restore orchestration: open+verify the archive
+// (OpenBackupArchive), resolve every destination from deps.Targets (D-10,
+// never from the manifest), validate every needed destination exists BEFORE
+// issuing a single write (D-13 — a missing destination refuses loudly
+// rather than partially writing), then restore tables and/or the ledger per
+// opts. Tables and Ledger both default to true when neither is set, so a
+// bare `kv restore <zip>` restores everything.
+func RunRestore(ctx context.Context, deps RestoreDeps, archivePath string, opts RestoreOptions) (RestoreReport, error) {
+	if !opts.Tables && !opts.Ledger {
+		opts.Tables = true
+		opts.Ledger = true
+	}
+	now := deps.Now
+	if now == nil {
+		now = time.Now
+	}
+
+	zr, manifest, err := OpenBackupArchive(archivePath)
+	if err != nil {
+		return RestoreReport{}, err
+	}
+	defer zr.Close()
+
+	report := RestoreReport{
+		ArchivePath:        archivePath,
+		ManifestGitSHA:     manifest.GitSHA,
+		ManifestAccountID:  manifest.AWSAccountID,
+		ManifestTableNames: map[string]string{},
+		ManifestBucket:     manifest.Ledger.BucketName,
+		ResolvedTableNames: deps.Targets.TableNames,
+		ResolvedBucket:     deps.Targets.LedgerBucket,
+		TableWrites:        map[string]int64{},
+		TableSkipped:       map[string]map[EphemeralReason]int64{},
+		DryRun:             opts.DryRun,
+	}
+	for _, tbl := range manifest.Tables {
+		report.ManifestTableNames[tbl.Logical] = tbl.TableName
+	}
+
+	// Validate every needed destination BEFORE any write (D-13): a missing
+	// table or bucket must never be discovered partway through a restore
+	// that already wrote some rows.
+	if opts.Tables {
+		for _, tbl := range manifest.Tables {
+			if _, ok := deps.Targets.TableNames[tbl.Logical]; !ok {
+				return report, fmt.Errorf("restore: no live destination for table %q — run `terragrunt apply` to create it (config (git) -> terragrunt apply -> kv restore is the required ordering; kv restore creates no infrastructure, D-13)", tbl.Logical)
+			}
+		}
+	}
+	if opts.Ledger && deps.Targets.LedgerBucket == "" {
+		return report, fmt.Errorf("restore: no live destination for the ledger bucket — run `terragrunt apply` to create it (config (git) -> terragrunt apply -> kv restore is the required ordering; kv restore creates no infrastructure, D-13)")
+	}
+
+	if opts.Tables {
+		for _, tbl := range manifest.Tables {
+			dest := deps.Targets.TableNames[tbl.Logical]
+			items, err := ReadTableItems(zr, tbl.Path)
+			if err != nil {
+				return report, err
+			}
+			written, skipped, err := RestoreTable(ctx, deps.Dynamo, dest, items, opts, now, tbl.Logical)
+			report.TableWrites[tbl.Logical] = written
+			report.TableSkipped[tbl.Logical] = skipped
+			if err != nil {
+				return report, err
+			}
+		}
+	}
+
+	if opts.Ledger {
+		objects, bytesTotal, err := RestoreLedger(ctx, deps.S3, zr, restoreLedgerPrefix, deps.Targets.LedgerBucket, opts)
+		report.LedgerObjects = objects
+		report.LedgerBytes = bytesTotal
+		if err != nil {
+			return report, err
+		}
+	}
+
+	return report, nil
 }
