@@ -71,7 +71,7 @@
 
 ### Operator Lifecycle (pause / backup / teardown)
 
-- [ ] **OPS-01**: `kv backup` writes one timestamped self-contained artifact holding everything that exists only in AWS — all three DynamoDB tables (Scan → JSONL), the full S3 transcript ledger, and the external inventory (VoIP.ms DIDs, NAT EIP, non-secret SSM params) — plus a `manifest.json` carrying git SHA, account/region, resolved table and bucket names, per-table row counts, ledger object/byte totals, and a SHA-256 per file
+- [x] **OPS-01**: `kv backup` writes one timestamped self-contained artifact holding everything that exists only in AWS — all three DynamoDB tables (Scan → JSONL), the full S3 transcript ledger, and the external inventory (VoIP.ms DIDs, NAT EIP, non-secret SSM params) — plus a `manifest.json` carrying git SHA, account/region, resolved table and bucket names, per-table row counts, ledger object/byte totals, and a SHA-256 per file
 - [x] **OPS-02**: Backup verification is on by default — the artifact is re-opened and every row count and checksum re-checked against the manifest before the command reports success; the zip is deliberately unencrypted (no key inside the account being destroyed) with a loud warning naming the personal data it holds, and `backups/` is gitignored
 - [x] **OPS-03**: `kv restore <zip>` repopulates a freshly-applied stack — targets resolved from live terraform outputs (never the manifest, whose bucket names carry a stale `random_id`), ephemeral rows (concurrency leases, OIDC session state, expired TTLs) filtered by default, batched writes idempotent and resumable, and `--dry-run` reporting counts without writing
 - [ ] **OPS-04**: `kv pause` / `kv resume` round-trip the stack via a single git-tracked `paused` flag in `site.hcl` that flips both `desired_count = 0` and `autoscaling.min_capacity = 0` (either alone fails), committing and dispatching the CI apply, draining in-flight sessions visibly, and verifying all three services actually reach zero — deterministically correcting the Application Auto Scaling ordering hazard rather than trusting timing
@@ -146,7 +146,7 @@ Coverage: 44/44 v1 requirements mapped (PIPE-10 promoted from v2-deferred in Pha
 | LEDG-03 | Phase 15 | Complete |
 | LEDG-04 | Phase 15 | Complete |
 | LEDG-05 | Phase 15 | Complete |
-| OPS-01 | Phase 16 | Pending |
+| OPS-01 | Phase 16 | Complete |
 | OPS-02 | Phase 16 | Complete |
 | OPS-03 | Phase 16 | Complete |
 | OPS-04 | Phase 16 | Pending |
