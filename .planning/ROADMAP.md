@@ -368,7 +368,7 @@ Plans:
   5. `kv destroy --with-backup` (default) refuses to proceed on a failed backup verification, empties the ledger bucket explicitly (it has no `force_destroy`), destroys in dependency order, and reports what is now unrecoverable — DID release stays manual and outside the tool
   6. Orchestration is testable without touching the cloud: AWS/`gh`/`git` behind narrow interfaces, table tests for the `site.hcl` rewrite (idempotence, comment preservation, already-paused, malformed), a backup/restore round-trip against local fakes, and preflight-refusal tests; `backups/` is gitignored
 
-**Plans:** 4/11 plans executed
+**Plans:** 5/11 plans executed
 
 **Build order (spec §3)** — each stage lands independently useful, and execution may stop after any stage:
 
@@ -389,7 +389,7 @@ Plans:
 
 **Stage B — pause / resume** (OPS-04, OPS-05)
 
-- [ ] 16-05-PLAN.md — `site.hcl` `paused` flag driving **both** `desired_count = 0` and `min_capacity = 0`, plus the byte-surgical Go rewriter and its table tests (wave 5)
+- [x] 16-05-PLAN.md — `site.hcl` `paused` flag driving **both** `desired_count = 0` and `min_capacity = 0`, plus the byte-surgical Go rewriter and its table tests (wave 5)
 - [ ] 16-06-PLAN.md — git seam with the four preflight refusals, and `gh` workflow dispatch + run-id resolution + streaming (wave 6)
 - [ ] 16-07-PLAN.md — ECS drain to zero with the deterministic Application-Auto-Scaling correction, in-flight session reporting, and the resume ALB health gate (wave 7)
 - [ ] 16-08-PLAN.md — `kv pause` / `kv resume` / `kv pause status` commands, cost-posture completion report, ops runbook (wave 8)
