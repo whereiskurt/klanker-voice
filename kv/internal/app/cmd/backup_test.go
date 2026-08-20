@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -549,5 +550,246 @@ func TestWriteBackupArchive_DIDListerErrorStillSucceeds(t *testing.T) {
 	}
 	if inv.Error == "" {
 		t.Error("expected a non-empty error field in external/voipms-dids.json")
+	}
+}
+
+// --------------------------------------------------------------------------
+// VerifyBackupArchive.
+
+// buildFixtureArchive writes a real archive via WriteBackupArchive/
+// testBackupDeps into a fresh t.TempDir() and returns its path. Every entry
+// uses zip.Store (writeZipEntry's choice), so the corruption tests below can
+// locate and flip raw bytes without fighting DEFLATE.
+func buildFixtureArchive(t *testing.T) string {
+	t.Helper()
+	res, err := WriteBackupArchive(context.Background(), testBackupDeps(t), BackupOptions{OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("WriteBackupArchive() error = %v, want nil", err)
+	}
+	return res.Path
+}
+
+// corruptByte flips one byte (XOR 0xFF, guaranteed different) at the first
+// occurrence of needle in the file at path.
+func corruptByte(t *testing.T, path string, needle []byte) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	idx := bytes.Index(data, needle)
+	if idx < 0 {
+		t.Fatalf("needle %q not found in %s", needle, path)
+	}
+	data[idx] ^= 0xFF
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// rewriteManifestInArchive decodes manifest.json from the zip at path, lets
+// mutate edit it in place, then rewrites the entire archive (all other
+// entries copied verbatim, manifest.json replaced) — used to drive the
+// missing-row / missing-file / extra-file verification failure cases
+// without corrupting any entry's actual bytes.
+func rewriteManifestInArchive(t *testing.T, path string, mutate func(m *BackupManifest), addExtraEntry string) {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("zip.OpenReader(%s): %v", path, err)
+	}
+	type entryData struct {
+		name string
+		body []byte
+	}
+	var others []entryData
+	var manifest *BackupManifest
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open entry %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read entry %s: %v", f.Name, err)
+		}
+		if f.Name == BackupManifestPath {
+			m, err := ParseBackupManifest(b)
+			if err != nil {
+				t.Fatalf("parse manifest: %v", err)
+			}
+			manifest = m
+		} else {
+			others = append(others, entryData{name: f.Name, body: b})
+		}
+	}
+	zr.Close()
+	if manifest == nil {
+		t.Fatal("fixture archive has no manifest.json")
+	}
+	if mutate != nil {
+		mutate(manifest)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("recreate %s: %v", path, err)
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	for _, e := range others {
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: e.name, Method: zip.Store})
+		if err != nil {
+			t.Fatalf("create entry %s: %v", e.name, err)
+		}
+		if _, err := w.Write(e.body); err != nil {
+			t.Fatalf("write entry %s: %v", e.name, err)
+		}
+	}
+	if addExtraEntry != "" {
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: addExtraEntry, Method: zip.Store})
+		if err != nil {
+			t.Fatalf("create extra entry %s: %v", addExtraEntry, err)
+		}
+		if _, err := w.Write([]byte("not listed in the manifest")); err != nil {
+			t.Fatalf("write extra entry %s: %v", addExtraEntry, err)
+		}
+	}
+	mb, err := manifest.Marshal()
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	mw, err := zw.CreateHeader(&zip.FileHeader{Name: BackupManifestPath, Method: zip.Store})
+	if err != nil {
+		t.Fatalf("create manifest entry: %v", err)
+	}
+	if _, err := mw.Write(mb); err != nil {
+		t.Fatalf("write manifest entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close rewritten archive: %v", err)
+	}
+}
+
+func TestVerifyBackupArchive_WellFormed(t *testing.T) {
+	path := buildFixtureArchive(t)
+	manifest, err := VerifyBackupArchive(path)
+	if err != nil {
+		t.Fatalf("VerifyBackupArchive() error = %v, want nil", err)
+	}
+	if len(manifest.Tables) != 3 {
+		t.Errorf("len(manifest.Tables) = %d, want 3", len(manifest.Tables))
+	}
+}
+
+func TestVerifyBackupArchive_CorruptedByteDetected(t *testing.T) {
+	path := buildFixtureArchive(t)
+	// testBackupDeps' fake serves its only non-empty Scan page to whichever
+	// table logical name sorts first (auth-authjs) — that entry's JSONL
+	// content literally contains "row1".
+	corruptByte(t, path, []byte("row1"))
+	_, err := VerifyBackupArchive(path)
+	if err == nil {
+		t.Fatal("VerifyBackupArchive() error = nil, want non-nil for a corrupted entry")
+	}
+	if !strings.Contains(err.Error(), "dynamodb/auth-authjs.jsonl") {
+		t.Errorf("error = %q, want it to name the corrupted entry dynamodb/auth-authjs.jsonl", err.Error())
+	}
+}
+
+func TestVerifyBackupArchive_RowCountMismatch(t *testing.T) {
+	path := buildFixtureArchive(t)
+	rewriteManifestInArchive(t, path, func(m *BackupManifest) {
+		for i := range m.Tables {
+			if m.Tables[i].Logical == "auth-authjs" {
+				m.Tables[i].RowCount++ // manifest now claims N+1 against N actual JSONL lines
+			}
+		}
+	}, "")
+	_, err := VerifyBackupArchive(path)
+	if err == nil {
+		t.Fatal("VerifyBackupArchive() error = nil, want non-nil for a row count mismatch")
+	}
+	if !strings.Contains(err.Error(), "kmv-auth-authjs") {
+		t.Errorf("error = %q, want it to name the table kmv-auth-authjs", err.Error())
+	}
+}
+
+func TestVerifyBackupArchive_MissingFile(t *testing.T) {
+	path := buildFixtureArchive(t)
+	rewriteManifestInArchive(t, path, func(m *BackupManifest) {
+		m.Files = append(m.Files, BackupFileRef{Path: "external/does-not-exist.txt", Bytes: 10, SHA256: "deadbeef"})
+	}, "")
+	_, err := VerifyBackupArchive(path)
+	if err == nil {
+		t.Fatal("VerifyBackupArchive() error = nil, want non-nil for a manifest entry missing from the zip")
+	}
+	if !strings.Contains(err.Error(), "external/does-not-exist.txt") {
+		t.Errorf("error = %q, want it to name the missing path external/does-not-exist.txt", err.Error())
+	}
+}
+
+func TestVerifyBackupArchive_UnexpectedExtraEntry(t *testing.T) {
+	path := buildFixtureArchive(t)
+	rewriteManifestInArchive(t, path, nil, "external/surprise.txt")
+	_, err := VerifyBackupArchive(path)
+	if err == nil {
+		t.Fatal("VerifyBackupArchive() error = nil, want non-nil for an extra unlisted entry")
+	}
+	if !strings.Contains(err.Error(), "external/surprise.txt") {
+		t.Errorf("error = %q, want it to name the extra entry external/surprise.txt", err.Error())
+	}
+}
+
+// --------------------------------------------------------------------------
+// `kv backup`'s orchestration (runBackup) and closing warning.
+
+func TestBackupCmd_NoVerifySkipsVerification(t *testing.T) {
+	deps := testBackupDeps(t)
+	var buf bytes.Buffer
+	failingVerify := verifyFunc(func(path string) (BackupManifest, error) {
+		t.Fatal("verify was invoked even though Verify:false (--no-verify) was requested")
+		return BackupManifest{}, nil
+	})
+	res, err := runBackup(context.Background(), deps, BackupOptions{OutDir: t.TempDir(), Verify: false}, failingVerify, &buf)
+	if err != nil {
+		t.Fatalf("runBackup() error = %v, want nil", err)
+	}
+	if res.Path == "" {
+		t.Error("runBackup() returned an empty Path")
+	}
+	out := buf.String()
+	for _, want := range []string{"transcripts", "email", "unencrypted", "only remaining copy"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("closing output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestBackupCmd_VerifyRunsWhenRequested(t *testing.T) {
+	deps := testBackupDeps(t)
+	var buf bytes.Buffer
+	called := false
+	verify := verifyFunc(func(path string) (BackupManifest, error) {
+		called = true
+		return VerifyBackupArchive(path)
+	})
+	if _, err := runBackup(context.Background(), deps, BackupOptions{OutDir: t.TempDir(), Verify: true}, verify, &buf); err != nil {
+		t.Fatalf("runBackup() error = %v, want nil", err)
+	}
+	if !called {
+		t.Error("verify was never invoked even though Verify:true was requested")
+	}
+}
+
+func TestPrintBackupWarning_ContainsRequiredWording(t *testing.T) {
+	var buf bytes.Buffer
+	PrintBackupWarning(&buf, BackupResult{})
+	out := buf.String()
+	for _, want := range []string{"transcripts", "email", "unencrypted", "only remaining copy"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("PrintBackupWarning output missing %q:\n%s", want, out)
+		}
 	}
 }

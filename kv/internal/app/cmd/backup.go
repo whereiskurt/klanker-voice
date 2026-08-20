@@ -17,8 +17,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,6 +29,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/spf13/cobra"
 )
 
 // --------------------------------------------------------------------------
@@ -514,7 +518,12 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 // writer that simultaneously feeds the zip entry, a running SHA-256 hash,
 // and a byte counter, and returns the resulting BackupFileRef.
 func writeZipEntry(zw *zip.Writer, name string, write func(io.Writer) error) (BackupFileRef, error) {
-	entry, err := zw.Create(name)
+	// zip.Store (uncompressed): the backup already holds mostly-incompressible
+	// content (JSON, audio-adjacent transcript payloads) and leaving entries
+	// uncompressed keeps VerifyBackupArchive's re-read a plain byte-for-byte
+	// stream rather than a decompression pass — one less thing that can fail
+	// independently of the actual data.
+	entry, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
 	if err != nil {
 		return BackupFileRef{}, fmt.Errorf("create zip entry %s: %w", name, err)
 	}
@@ -675,7 +684,7 @@ func WriteBackupArchive(ctx context.Context, deps BackupDeps, opts BackupOptions
 		f.Close()
 		return BackupResult{}, err
 	}
-	mEntry, err := zw.Create(BackupManifestPath)
+	mEntry, err := zw.CreateHeader(&zip.FileHeader{Name: BackupManifestPath, Method: zip.Store})
 	if err != nil {
 		f.Close()
 		return BackupResult{}, fmt.Errorf("create zip entry %s: %w", BackupManifestPath, err)
@@ -728,4 +737,309 @@ func humanBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// --------------------------------------------------------------------------
+// Verification (D-09): "Backup succeeded" must mean the artifact was
+// re-opened and every digest, byte count, and row count re-checked against
+// manifest.json. This is also 16-10's abort gate for `kv destroy
+// --with-backup`, so it must never return a nil error on a partial read: a
+// manifest entry with no matching zip entry, an unexpected extra zip entry
+// not listed in the manifest, a digest mismatch, a byte-count mismatch, or a
+// table row-count mismatch are all hard failures.
+
+// countJSONLLinesReader counts newline-terminated lines in r without
+// buffering the whole entry into memory — a large table's JSONL entry is
+// streamed, not slurped.
+func countJSONLLinesReader(r io.Reader) (int64, error) {
+	var count int64
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := r.Read(buf)
+		for i := 0; i < n; i++ {
+			if buf[i] == '\n' {
+				count++
+			}
+		}
+		if err == io.EOF {
+			return count, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+}
+
+// VerifyBackupArchive re-opens the zip at path, parses manifest.json, and
+// checks every BackupFileRef's SHA-256 and byte count against a fresh read
+// of the corresponding zip entry, and every BackupTableRef's RowCount
+// against the entry's newline count. A manifest reference with no matching
+// zip entry, or a zip entry not listed in the manifest, is also an error —
+// a silently-added or silently-missing file cannot ride along undetected.
+func VerifyBackupArchive(path string) (BackupManifest, error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return BackupManifest{}, fmt.Errorf("open backup archive %s: %w", path, err)
+	}
+	defer zr.Close()
+
+	entries := make(map[string]*zip.File, len(zr.File))
+	for _, f := range zr.File {
+		entries[f.Name] = f
+	}
+
+	manifestFile, ok := entries[BackupManifestPath]
+	if !ok {
+		return BackupManifest{}, fmt.Errorf("backup archive %s: missing %s", path, BackupManifestPath)
+	}
+	rc, err := manifestFile.Open()
+	if err != nil {
+		return BackupManifest{}, fmt.Errorf("backup archive %s: open %s: %w", path, BackupManifestPath, err)
+	}
+	manifestBytes, err := io.ReadAll(rc)
+	closeErr := rc.Close()
+	if err != nil {
+		return BackupManifest{}, fmt.Errorf("backup archive %s: read %s: %w", path, BackupManifestPath, err)
+	}
+	if closeErr != nil {
+		return BackupManifest{}, fmt.Errorf("backup archive %s: close %s: %w", path, BackupManifestPath, closeErr)
+	}
+	manifest, err := ParseBackupManifest(manifestBytes)
+	if err != nil {
+		return BackupManifest{}, fmt.Errorf("backup archive %s: %w", path, err)
+	}
+
+	seen := map[string]bool{BackupManifestPath: true}
+	for _, ref := range manifest.Files {
+		seen[ref.Path] = true
+		f, ok := entries[ref.Path]
+		if !ok {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: manifest references missing entry %s", path, ref.Path)
+		}
+		erc, err := f.Open()
+		if err != nil {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: open entry %s: %w", path, ref.Path, err)
+		}
+		digest, n, hashErr := SHA256Hex(erc)
+		closeErr := erc.Close()
+		if hashErr != nil {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: hash entry %s: %w", path, ref.Path, hashErr)
+		}
+		if closeErr != nil {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: close entry %s: %w", path, ref.Path, closeErr)
+		}
+		if digest != ref.SHA256 {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: entry %s sha256 mismatch: manifest=%s actual=%s", path, ref.Path, ref.SHA256, digest)
+		}
+		if n != ref.Bytes {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: entry %s byte count mismatch: manifest=%d actual=%d", path, ref.Path, ref.Bytes, n)
+		}
+	}
+
+	for _, tbl := range manifest.Tables {
+		f, ok := entries[tbl.Path]
+		if !ok {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: manifest references missing table entry %s", path, tbl.Path)
+		}
+		trc, err := f.Open()
+		if err != nil {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: open table entry %s: %w", path, tbl.Path, err)
+		}
+		lines, err := countJSONLLinesReader(trc)
+		closeErr := trc.Close()
+		if err != nil {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: count rows in %s: %w", path, tbl.Path, err)
+		}
+		if closeErr != nil {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: close table entry %s: %w", path, tbl.Path, closeErr)
+		}
+		if lines != tbl.RowCount {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: table %s row count mismatch: manifest=%d actual=%d", path, tbl.TableName, tbl.RowCount, lines)
+		}
+	}
+
+	for name := range entries {
+		if !seen[name] {
+			return BackupManifest{}, fmt.Errorf("backup archive %s: unexpected extra entry %s not listed in manifest", path, name)
+		}
+	}
+
+	return *manifest, nil
+}
+
+// --------------------------------------------------------------------------
+// The `kv backup` command.
+
+// verifyFunc matches VerifyBackupArchive's signature. NewBackupCmd injects
+// VerifyBackupArchive in production; tests inject a fake that fails the
+// test if invoked, proving --no-verify truly skips the re-read (D-09's
+// opt-out, not the default).
+type verifyFunc func(path string) (BackupManifest, error)
+
+// PrintBackupWarning writes the closing block every `kv backup` (and,
+// verbatim, 16-10's `kv destroy --with-backup`) run prints: what personal
+// data the artifact holds, that it is unencrypted by design, and that it
+// may be the operator's only remaining copy (D-08).
+func PrintBackupWarning(w io.Writer, res BackupResult) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "This backup contains personal data: full conversation transcripts and")
+	fmt.Fprintln(w, "user email addresses. The archive is unencrypted by design — encrypting")
+	fmt.Fprintln(w, "it with the secrets-encryption key held inside this AWS account would")
+	fmt.Fprintln(w, "make it unopenable at exactly the moment it matters (after the account")
+	fmt.Fprintln(w, "is gone). Store it somewhere safe: this file may be the only remaining copy.")
+}
+
+// printBackupResult writes the size/elapsed/per-table/ledger summary plus
+// PrintBackupWarning's closing block to w.
+func printBackupResult(w io.Writer, res BackupResult, verified bool) {
+	fmt.Fprintf(w, "backup written: %s\n", res.Path)
+	fmt.Fprintf(w, "size: %s\n", humanBytes(res.Bytes))
+	fmt.Fprintf(w, "elapsed: %s\n", res.Elapsed.Round(time.Millisecond))
+	for _, tbl := range res.Manifest.Tables {
+		fmt.Fprintf(w, "  table %-16s %8d rows\n", tbl.Logical, tbl.RowCount)
+	}
+	fmt.Fprintf(w, "ledger: %d objects, %s\n", res.Manifest.Ledger.ObjectCount, humanBytes(res.Manifest.Ledger.ByteTotal))
+	if verified {
+		fmt.Fprintln(w, "verified: every SHA-256 and row count re-checked against manifest.json")
+	} else {
+		fmt.Fprintln(w, "verified: SKIPPED (--no-verify)")
+	}
+	for _, warn := range res.Warnings {
+		fmt.Fprintf(w, "warning: %s\n", warn)
+	}
+	PrintBackupWarning(w, res)
+}
+
+// runBackup writes the archive and, when opts.Verify is set, re-reads it via
+// verify (VerifyBackupArchive in production; a test double in tests) before
+// printing the result to out. Kept separate from NewBackupCmd's RunE so it
+// is testable with BackupDeps fakes and no real AWS/cobra wiring.
+func runBackup(ctx context.Context, deps BackupDeps, opts BackupOptions, verify verifyFunc, out io.Writer) (BackupResult, error) {
+	res, err := WriteBackupArchive(ctx, deps, opts)
+	if err != nil {
+		return BackupResult{}, err
+	}
+	if opts.Verify {
+		if verify == nil {
+			verify = VerifyBackupArchive
+		}
+		if _, err := verify(res.Path); err != nil {
+			return res, fmt.Errorf("backup verification failed: %w", err)
+		}
+	}
+	printBackupResult(out, res, opts.Verify)
+	return res, nil
+}
+
+// gitRevParseHEAD resolves the current commit SHA (D-05's manifest field)
+// via `git rev-parse HEAD`, run with Dir set to repoRootDir.
+func gitRevParseHEAD(repoRootDir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = repoRootDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve git SHA (git rev-parse HEAD): %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// backupDIDLister builds a DIDLister from cfg's VoIP.ms credentials,
+// mirroring studio.go's buildVoipmsInjections degradation: on any
+// credential-resolution failure it returns nil rather than an error, so a
+// missing VoIP.ms credential never blocks the DynamoDB/ledger backup that
+// actually matters.
+func backupDIDLister(ctx context.Context, cfg *Config) DIDLister {
+	creds, err := cfg.resolveVoipmsCreds(ctx)
+	if err != nil {
+		return nil
+	}
+	vc := newVoipmsClient(creds)
+	return func(ctx context.Context) ([]InboundDIDRecord, error) {
+		return ListInboundDIDs(ctx, vc)
+	}
+}
+
+// NewBackupCmd builds the "kv backup" command (D-01/D-03): writes one
+// self-contained, timestamped zip of everything that exists only in AWS,
+// verified by default (--no-verify opts out, D-09).
+func NewBackupCmd(cfg *Config) *cobra.Command {
+	var (
+		outDir   string
+		noVerify bool
+	)
+
+	backupCmd := &cobra.Command{
+		Use:   "backup",
+		Short: "Write a verified, self-contained backup of everything that exists only in AWS (D-02)",
+		Long: "kv backup writes one timestamped, self-contained zip\n" +
+			"(kmv-backup-<ISO8601>.zip) holding all three DynamoDB tables (JSONL),\n" +
+			"the full S3 transcript ledger, and a small external inventory\n" +
+			"(VoIP.ms DIDs, the NAT EIP, non-secret SSM parameters). Verification\n" +
+			"is on by default: the finished zip is re-opened and every SHA-256 and\n" +
+			"row count is re-checked against manifest.json before success is\n" +
+			"reported (--no-verify skips this). Nothing in the artifact depends on\n" +
+			"the AWS account continuing to exist (D-02) — it is designed for the\n" +
+			"day this account is destroyed, not merely paused. The artifact is\n" +
+			"deliberately unencrypted; see the closing warning this command prints.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, args []string) error {
+			ctx := c.Context()
+
+			root, err := repoRoot()
+			if err != nil {
+				return err
+			}
+			targets, err := ResolveLiveTargets(ctx, NewTerragruntOutputReader(root))
+			if err != nil {
+				return fmt.Errorf("resolve live targets: %w", err)
+			}
+
+			dynamoClient, err := cfg.DynamoClient(ctx)
+			if err != nil {
+				return err
+			}
+			s3Client, err := cfg.S3Client(ctx)
+			if err != nil {
+				return err
+			}
+			ssmClient, err := cfg.SSMClient(ctx)
+			if err != nil {
+				return err
+			}
+
+			awsCfg, err := cfg.loadAWS(ctx)
+			if err != nil {
+				return err
+			}
+			identity, err := sts.NewFromConfig(awsCfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+			if err != nil {
+				return fmt.Errorf("resolve aws account id (sts get-caller-identity): %w", err)
+			}
+
+			gitSHA, err := gitRevParseHEAD(root)
+			if err != nil {
+				return err
+			}
+
+			deps := BackupDeps{
+				Dynamo:       dynamoClient,
+				S3:           s3Client,
+				SSM:          ssmClient,
+				DIDs:         backupDIDLister(ctx, cfg),
+				Targets:      targets,
+				AWSAccountID: aws.ToString(identity.Account),
+				Region:       resolveAWSRegion(cfg.Region),
+				GitSHA:       gitSHA,
+				Now:          time.Now,
+			}
+
+			_, err = runBackup(ctx, deps, BackupOptions{OutDir: outDir, Verify: !noVerify}, VerifyBackupArchive, c.OutOrStdout())
+			return err
+		},
+	}
+
+	backupCmd.Flags().StringVar(&outDir, "out", "./backups", "output directory for the backup zip")
+	backupCmd.Flags().BoolVar(&noVerify, "no-verify", false, "skip re-reading and verifying the written archive (verification is on by default, D-09)")
+
+	return backupCmd
 }
