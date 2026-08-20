@@ -75,7 +75,7 @@
 - [x] **OPS-02**: Backup verification is on by default — the artifact is re-opened and every row count and checksum re-checked against the manifest before the command reports success; the zip is deliberately unencrypted (no key inside the account being destroyed) with a loud warning naming the personal data it holds, and `backups/` is gitignored
 - [x] **OPS-03**: `kv restore <zip>` repopulates a freshly-applied stack — targets resolved from live terraform outputs (never the manifest, whose bucket names carry a stale `random_id`), ephemeral rows (concurrency leases, OIDC session state, expired TTLs) filtered by default, batched writes idempotent and resumable, and `--dry-run` reporting counts without writing
 - [x] **OPS-04**: `kv pause` / `kv resume` round-trip the stack via a single git-tracked `paused` flag in `site.hcl` that flips both `desired_count = 0` and `autoscaling.min_capacity = 0` (either alone fails), committing and dispatching the CI apply, draining in-flight sessions visibly, and verifying all three services actually reach zero — deterministically correcting the Application Auto Scaling ordering hazard rather than trusting timing
-- [ ] **OPS-05**: `kv resume` does not report success until the voice and auth ALB target groups report healthy; a mid-pause CI deploy leaves the stack paused (the config is the guard); the kill-switch is orthogonal and untouched by either command
+- [x] **OPS-05**: `kv resume` does not report success until the voice and auth ALB target groups report healthy; a mid-pause CI deploy leaves the stack paused (the config is the guard); the kill-switch is orthogonal and untouched by either command
 - [ ] **OPS-06**: `kv destroy --with-backup` (the default) refuses to proceed on failed backup verification, empties the ledger bucket explicitly (it has no `force_destroy`), destroys in dependency order, and reports what is now unrecoverable — new bucket names on recreate, a new NAT EIP to re-allowlist at VoIP.ms, and DIDs still billing until released manually
 
 ## v2 Requirements (Deferred)
@@ -150,5 +150,5 @@ Coverage: 44/44 v1 requirements mapped (PIPE-10 promoted from v2-deferred in Pha
 | OPS-02 | Phase 16 | Complete |
 | OPS-03 | Phase 16 | Complete |
 | OPS-04 | Phase 16 | Complete |
-| OPS-05 | Phase 16 | Pending |
+| OPS-05 | Phase 16 | Complete |
 | OPS-06 | Phase 16 | Pending |
