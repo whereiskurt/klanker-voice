@@ -123,6 +123,8 @@ docs/                architecture, dataflows, guides, techniques, operator runbo
 - **New here?** → [Getting Started](Getting-Started)
 - **How does it work?** → [Architecture](Architecture), then the data-flow pages
 - **The slick tricks** → [Techniques](Techniques)
+- **Running it** → [Operator Manual](Operator-Manual) — the `kv` CLI, the phone
+  numbers, the access codes, the infrastructure, and what to do when it breaks
 - **Design history** → [design specs in-repo](https://github.com/whereiskurt/klanker-voice/tree/main/docs/superpowers/specs); the authoritative spec is [`2026-07-04-klanker-voice-design.md`](https://github.com/whereiskurt/klanker-voice/blob/main/docs/superpowers/specs/2026-07-04-klanker-voice-design.md)
 
 ---

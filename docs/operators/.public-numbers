@@ -1,0 +1,27 @@
+# Phone numbers the operator manual is allowed to print verbatim.
+#
+# scripts/verify-operator-docs.sh treats every 10-digit number in docs/operators/
+# and docs/assets/terminal/*.session as an unredacted caller number — PII that
+# escaped redaction — unless it is listed here or is a 555 documentation number.
+# That default-deny is the point: adding a number here should be a deliberate,
+# reviewable act, not something a capture can do silently.
+#
+# Nothing in this file is a secret. Every entry is either a number we publish
+# on purpose or provider stock anyone can query.
+
+# --- Our own DIDs. Public by design; people are meant to dial them. ---
+# The tagged game lines are also in apps/voice/configs/telephony.toml and are
+# picked up from there automatically; this one is not, because it carries no
+# caller-ID prefix tag.
+3474803715   # New York, NY — the untagged plain concierge line
+
+# --- VoIP.ms available stock, as printed by `kv voipms search-dids`. ---
+# Not ours. These appear in docs/assets/terminal/voipms-shopping.session
+# because that capture is real command output, and anyone with a VoIP.ms
+# account can list the same rows. They are transient — once sold they stop
+# appearing in stock, which makes the capture dated rather than wrong.
+7755021688
+7755021689
+7755021690
+7755021691
+7755028972

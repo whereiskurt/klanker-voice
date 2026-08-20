@@ -1,0 +1,11 @@
+# title: kv telephony stats — how far callers get, per number
+# Captured live 2026-08-18 over a 30-day window. Nothing is redacted: `stats`
+# reports distinct-caller COUNTS and never a raw caller number.
+$ kv telephony stats --since 720h
+DID           CALLS  CALLERS  MED-TO-OUTCOME  MAX-TO-OUTCOME  MED-DURATION  OUTCOMES
+(unresolved)  7      2        9.5             20.1            25.1          concierge_unlock_dtmf=4 early_hangup=1 gate_timeout=2
+7254043234    74     8        9.8             20.2            19.6          announcement_code=16 early_hangup=10 gate_timeout=48
+7254043283    47     6        8.1             16.7            21.6          announcement_code=20 early_hangup=1 error=1 gate_timeout=25
+7254048283    27     7        8.1             20.1            20.3          announcement_code=11 early_hangup=4 gate_timeout=12
+8559164636    45     12       8.1             20.2            24.2          announcement_code=16 announcement_words=3 early_hangup=9 gate_timeout=17
+TOTAL         200    15       8.1             20.2            20.2          announcement_code=63 announcement_words=3 concierge_unlock_dtmf=4 early_hangup=25 error=1 gate_timeout=104
