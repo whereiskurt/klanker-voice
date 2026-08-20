@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -532,6 +533,237 @@ func TestRunRestore(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "terragrunt apply") {
 			t.Errorf("error %q does not mention terragrunt apply", err.Error())
+		}
+	})
+}
+
+// --------------------------------------------------------------------------
+// perTableDynamoScanAPI — a dynamoScanAPI fake that returns different fixed
+// items per requested table name (unlike fakeDynamoScanAPI's single shared
+// queue), so a round-trip test can seed a distinct durable+ephemeral row mix
+// per logical table.
+
+type perTableDynamoScanAPI struct {
+	itemsByTable map[string][]map[string]types.AttributeValue
+}
+
+func (f *perTableDynamoScanAPI) Scan(_ context.Context, in *dynamodb.ScanInput, _ ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error) {
+	return &dynamodb.ScanOutput{Items: f.itemsByTable[aws.ToString(in.TableName)]}, nil
+}
+
+// buildRoundTripFixture writes a backup archive seeded with a deliberate mix
+// of durable and ephemeral rows across all three tables, plus one ledger
+// object, and returns the archive path alongside every fixture item so
+// assertions can key into a restore fake's store by itemKey.
+func buildRoundTripFixture(t *testing.T) (archivePath string, heartbeat, daily, oidcSession, accessCode, authjsSession, authjsUser map[string]types.AttributeValue) {
+	t.Helper()
+	now := restoreTestNow
+
+	heartbeat = map[string]types.AttributeValue{"pk": strAV("session#user-1"), "sk": strAV("heartbeat#sess-1")}
+	daily = map[string]types.AttributeValue{"pk": strAV("user#user-1"), "sk": strAV("day#2026-08-20")}
+
+	oidcSession = map[string]types.AttributeValue{"pk": strAV(oidcModelPKSession), "sk": strAV("$oidcmodel_1#id_abc123")}
+	accessCode = map[string]types.AttributeValue{"pk": strAV("code#greenhouse1234"), "sk": strAV("code#")}
+
+	authjsSession = map[string]types.AttributeValue{"pk": strAV("USER#user-1"), "sk": strAV("SESSION#tok-1")}
+	authjsUser = map[string]types.AttributeValue{"pk": strAV("USER#user-1"), "sk": strAV("USER#user-1")}
+
+	dyn := &perTableDynamoScanAPI{itemsByTable: map[string][]map[string]types.AttributeValue{
+		"kmv-voice-usage":  {heartbeat, daily},
+		"kmv-auth-electro": {oidcSession, accessCode},
+		"kmv-auth-authjs":  {authjsSession, authjsUser},
+	}}
+
+	ledgerBody := []byte("hello ledger")
+	s3api := &fakeS3ListGetAPI{
+		objects: map[string][]byte{"transcripts/a.json": ledgerBody},
+		pages:   [][]fakeS3Object{{{key: "transcripts/a.json", body: ledgerBody}}},
+	}
+
+	backupDeps := BackupDeps{
+		Dynamo: dyn,
+		S3:     s3api,
+		SSM:    &fakeSSMInventoryAPI{},
+		DIDs:   DIDLister(func(context.Context) ([]InboundDIDRecord, error) { return nil, nil }),
+		Targets: LiveTargets{
+			TableNames: map[string]string{
+				"voice-usage":  "kmv-voice-usage",
+				"auth-electro": "kmv-auth-electro",
+				"auth-authjs":  "kmv-auth-authjs",
+			},
+			LedgerBucket: "kmv-ledger-source",
+		},
+		AWSAccountID: "123456789012",
+		Region:       "us-east-1",
+		GitSHA:       "deadbeef",
+		Now:          func() time.Time { return now },
+	}
+
+	res, err := WriteBackupArchive(context.Background(), backupDeps, BackupOptions{OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("WriteBackupArchive() error = %v, want nil", err)
+	}
+	return res.Path, heartbeat, daily, oidcSession, accessCode, authjsSession, authjsUser
+}
+
+func restoreTargetsWithSuffix(suffix string) LiveTargets {
+	return LiveTargets{
+		TableNames: map[string]string{
+			"voice-usage":  "kmv-voice-usage" + suffix,
+			"auth-electro": "kmv-auth-electro" + suffix,
+			"auth-authjs":  "kmv-auth-authjs" + suffix,
+		},
+		LedgerBucket: "kmv-ledger" + suffix,
+	}
+}
+
+func TestBackupRestoreRoundTrip(t *testing.T) {
+	t.Run("DefaultSkipEphemeral_DurableSurvivesEphemeralDropped", func(t *testing.T) {
+		archivePath, heartbeat, daily, oidcSession, accessCode, authjsSession, authjsUser := buildRoundTripFixture(t)
+
+		restoreDynamo := &fakeDynamoBatchWriteAPI{}
+		restoreS3 := &fakePutObjectAPI{}
+		restoreDeps := RestoreDeps{
+			Dynamo:  restoreDynamo,
+			S3:      restoreS3,
+			Targets: restoreTargetsWithSuffix("-restored"),
+			Now:     func() time.Time { return restoreTestNow },
+		}
+
+		report, err := RunRestore(context.Background(), restoreDeps, archivePath, RestoreOptions{SkipEphemeral: true})
+		if err != nil {
+			t.Fatalf("RunRestore() error = %v, want nil", err)
+		}
+
+		mustBePresent := map[string]map[string]types.AttributeValue{"daily": daily, "accessCode": accessCode, "authjsUser": authjsUser}
+		for name, item := range mustBePresent {
+			if _, ok := restoreDynamo.store[itemKey(item)]; !ok {
+				t.Errorf("%s missing after restore, want present (durable row)", name)
+			}
+		}
+		mustBeAbsent := map[string]map[string]types.AttributeValue{"heartbeat": heartbeat, "oidcSession": oidcSession, "authjsSession": authjsSession}
+		for name, item := range mustBeAbsent {
+			if _, ok := restoreDynamo.store[itemKey(item)]; ok {
+				t.Errorf("%s present after restore, want dropped (ephemeral row, D-11)", name)
+			}
+		}
+		if len(restoreS3.puts) != 1 {
+			t.Errorf("ledger PutObject calls = %d, want 1", len(restoreS3.puts))
+		}
+		if report.LedgerObjects != 1 {
+			t.Errorf("report.LedgerObjects = %d, want 1", report.LedgerObjects)
+		}
+	})
+
+	t.Run("SkipEphemeralDisabled_EphemeralRowsRestoredToo", func(t *testing.T) {
+		archivePath, heartbeat, _, oidcSession, _, authjsSession, _ := buildRoundTripFixture(t)
+
+		restoreDynamo := &fakeDynamoBatchWriteAPI{}
+		restoreDeps := RestoreDeps{
+			Dynamo:  restoreDynamo,
+			S3:      &fakePutObjectAPI{},
+			Targets: restoreTargetsWithSuffix("-restored"),
+			Now:     func() time.Time { return restoreTestNow },
+		}
+
+		if _, err := RunRestore(context.Background(), restoreDeps, archivePath, RestoreOptions{SkipEphemeral: false}); err != nil {
+			t.Fatalf("RunRestore() error = %v, want nil", err)
+		}
+
+		for name, item := range map[string]map[string]types.AttributeValue{
+			"heartbeat":     heartbeat,
+			"oidcSession":   oidcSession,
+			"authjsSession": authjsSession,
+		} {
+			if _, ok := restoreDynamo.store[itemKey(item)]; !ok {
+				t.Errorf("%s missing after restore with SkipEphemeral=false, want present", name)
+			}
+		}
+	})
+
+	t.Run("VerificationExercisedBeforeRestore_CorruptedArchiveRefuses", func(t *testing.T) {
+		archivePath, _, _, _, _, _, _ := buildRoundTripFixture(t)
+
+		// A fresh archive must verify clean — checksum verification is
+		// exercised here, not merely assumed.
+		if _, err := VerifyBackupArchive(archivePath); err != nil {
+			t.Fatalf("VerifyBackupArchive(fresh archive) error = %v, want nil", err)
+		}
+
+		corruptByte(t, archivePath, []byte("USER#user-1"))
+
+		restoreDeps := RestoreDeps{
+			Dynamo:  &fakeDynamoBatchWriteAPI{t: t},
+			S3:      &fakePutObjectAPI{t: t},
+			Targets: restoreTargetsWithSuffix("-restored"),
+			Now:     func() time.Time { return restoreTestNow },
+		}
+		if _, err := RunRestore(context.Background(), restoreDeps, archivePath, RestoreOptions{}); err == nil {
+			t.Fatal("RunRestore(corrupted archive) error = nil, want non-nil — verification must run before any write")
+		}
+	})
+}
+
+func TestNewRestoreCmd(t *testing.T) {
+	cmd := NewRestoreCmd(&Config{})
+	if cmd.Use != "restore <zip>" {
+		t.Errorf("Use = %q, want %q", cmd.Use, "restore <zip>")
+	}
+	for _, name := range []string{"tables", "ledger", "dry-run", "skip-ephemeral"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("flag --%s not registered", name)
+		}
+	}
+	if f := cmd.Flags().Lookup("skip-ephemeral"); f == nil || f.DefValue != "true" {
+		t.Errorf("--skip-ephemeral default = %v, want %q", f, "true")
+	}
+}
+
+func TestPrintRestoreReport(t *testing.T) {
+	t.Run("DryRunNamesTablesWriteSkipAndLedgerCounts", func(t *testing.T) {
+		report := RestoreReport{
+			ArchivePath:        "backups/kmv-backup-20260820T000000Z.zip",
+			ManifestTableNames: map[string]string{"voice-usage": "kmv-voice-usage"},
+			ManifestBucket:     "kmv-ledger-abc123",
+			ResolvedTableNames: map[string]string{"voice-usage": "kmv-voice-usage"},
+			ResolvedBucket:     "kmv-ledger-abc123",
+			TableWrites:        map[string]int64{"voice-usage": 5},
+			TableSkipped:       map[string]map[EphemeralReason]int64{"voice-usage": {EphemeralReasonConcurrencyLease: 2}},
+			LedgerObjects:      7,
+			LedgerBytes:        1024,
+			DryRun:             true,
+		}
+		var buf bytes.Buffer
+		PrintRestoreReport(&buf, report)
+		out := buf.String()
+		for _, want := range []string{"DRY RUN", "voice-usage", "written=5", "concurrency lease", "2", "7 object"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output does not contain %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("ManifestAndResolvedBucketNamesDistinctlyLabelledWhenDifferent", func(t *testing.T) {
+		report := RestoreReport{
+			ArchivePath:        "backups/kmv-backup-20260820T000000Z.zip",
+			ManifestTableNames: map[string]string{},
+			ManifestBucket:     "kmv-ledger-old-random-id",
+			ResolvedTableNames: map[string]string{},
+			ResolvedBucket:     "kmv-ledger-new-random-id",
+			TableWrites:        map[string]int64{},
+			TableSkipped:       map[string]map[EphemeralReason]int64{},
+		}
+		var buf bytes.Buffer
+		PrintRestoreReport(&buf, report)
+		out := buf.String()
+		if !strings.Contains(out, "kmv-ledger-old-random-id") {
+			t.Error("output missing the manifest (provenance) bucket name")
+		}
+		if !strings.Contains(out, "kmv-ledger-new-random-id") {
+			t.Error("output missing the resolved (destination) bucket name")
+		}
+		if !strings.Contains(out, "PROVENANCE") || !strings.Contains(out, "DESTINATIONS") {
+			t.Error("output does not distinctly label provenance vs destination blocks")
 		}
 	})
 }

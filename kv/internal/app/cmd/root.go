@@ -211,6 +211,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(NewTelephonyCmd(cfg))
 	root.AddCommand(NewStudioCmd(cfg))
 	root.AddCommand(NewBackupCmd(cfg))
+	root.AddCommand(NewRestoreCmd(cfg))
 
 	return root
 }

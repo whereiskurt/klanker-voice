@@ -17,8 +17,10 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -26,6 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	smithy "github.com/aws/smithy-go"
+	"github.com/spf13/cobra"
 )
 
 // --------------------------------------------------------------------------
@@ -653,4 +656,164 @@ func RunRestore(ctx context.Context, deps RestoreDeps, archivePath string, opts 
 	}
 
 	return report, nil
+}
+
+// --------------------------------------------------------------------------
+// The `kv restore` command (D-03) and its report printer.
+
+func sortedStringKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedInt64Keys(m map[string]int64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedReasonKeys(m map[EphemeralReason]int64) []EphemeralReason {
+	keys := make([]EphemeralReason, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	return keys
+}
+
+// PrintRestoreReport writes a human-readable summary of r to w, in the style
+// of the existing kv status printers (text/tabwriter). It prints, in order:
+// a leading DRY RUN banner when r.DryRun; the archive path; a provenance
+// block (manifest.json's recorded git SHA, account id, table names, and
+// bucket — labelled PROVENANCE, never a write destination); a destinations
+// block (the live-resolved table names and bucket that were actually
+// written — labelled DESTINATIONS, D-10); per-table written/skipped counts
+// with skip reasons broken out; and the ledger object count and byte total.
+func PrintRestoreReport(w io.Writer, r RestoreReport) {
+	if r.DryRun {
+		fmt.Fprintln(w, "=== DRY RUN — no writes were issued ===")
+	}
+	fmt.Fprintf(w, "archive: %s\n", r.ArchivePath)
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "PROVENANCE (from manifest.json — audit only, NEVER a write destination, D-10):")
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintf(tw, "  git sha:\t%s\n", r.ManifestGitSHA)
+	fmt.Fprintf(tw, "  aws account id:\t%s\n", r.ManifestAccountID)
+	for _, logical := range sortedStringKeys(r.ManifestTableNames) {
+		fmt.Fprintf(tw, "  table %s:\t%s\n", logical, r.ManifestTableNames[logical])
+	}
+	fmt.Fprintf(tw, "  ledger bucket:\t%s\n", r.ManifestBucket)
+	tw.Flush()
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "DESTINATIONS (live-resolved from terraform outputs — where this restore actually wrote, D-10):")
+	tw = tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	for _, logical := range sortedStringKeys(r.ResolvedTableNames) {
+		fmt.Fprintf(tw, "  table %s:\t%s\n", logical, r.ResolvedTableNames[logical])
+	}
+	fmt.Fprintf(tw, "  ledger bucket:\t%s\n", r.ResolvedBucket)
+	tw.Flush()
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "TABLES:")
+	tw = tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	for _, logical := range sortedInt64Keys(r.TableWrites) {
+		fmt.Fprintf(tw, "  %s\twritten=%d\n", logical, r.TableWrites[logical])
+		for _, reason := range sortedReasonKeys(r.TableSkipped[logical]) {
+			fmt.Fprintf(tw, "    skipped (%s)\t%d\n", reason, r.TableSkipped[logical][reason])
+		}
+	}
+	tw.Flush()
+
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "LEDGER: %d object(s), %s\n", r.LedgerObjects, humanBytes(r.LedgerBytes))
+}
+
+// NewRestoreCmd builds the "kv restore <zip>" command (D-01/D-03): the other
+// half of the backup/restore artifact contract. Destinations are resolved
+// live from terraform outputs every time (D-10) — this command never trusts
+// a name recorded in the archive's own manifest.json.
+func NewRestoreCmd(cfg *Config) *cobra.Command {
+	var (
+		tables        bool
+		ledger        bool
+		dryRun        bool
+		skipEphemeral bool
+	)
+
+	restoreCmd := &cobra.Command{
+		Use:   "restore <zip>",
+		Short: "Restore a kv backup archive into the live stack (D-03)",
+		Long: "kv restore reads a backup zip written by `kv backup`, verifies it\n" +
+			"(refusing to read an unverified archive), resolves every write\n" +
+			"destination live from current terraform outputs (never from the\n" +
+			"archive's own manifest.json — bucket names carry a new random_id\n" +
+			"suffix after a recreate, D-10), and writes the DynamoDB tables and/or\n" +
+			"the S3 ledger back in batched, retried, idempotent writes (D-12).\n" +
+			"Ephemeral rows — concurrency leases, OIDC session/interaction state,\n" +
+			"login intents, next-auth sessions and verification tokens, and any\n" +
+			"item whose TTL attribute has already expired — are filtered by\n" +
+			"default (--skip-ephemeral, D-11): restoring a stale concurrency\n" +
+			"lease would wedge the quota gate. This command assumes the target\n" +
+			"tables and bucket already exist; it creates no infrastructure\n" +
+			"(D-13) — the required ordering is: config (git), then\n" +
+			"`terragrunt apply`, then `kv restore`.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			ctx := c.Context()
+			archivePath := args[0]
+
+			root, err := repoRoot()
+			if err != nil {
+				return err
+			}
+			targets, err := ResolveLiveTargets(ctx, NewTerragruntOutputReader(root))
+			if err != nil {
+				return fmt.Errorf("resolve live targets: %w", err)
+			}
+
+			dynamoClient, err := cfg.DynamoClient(ctx)
+			if err != nil {
+				return err
+			}
+			s3Client, err := cfg.S3Client(ctx)
+			if err != nil {
+				return err
+			}
+
+			deps := RestoreDeps{
+				Dynamo:  dynamoClient,
+				S3:      s3Client,
+				Targets: targets,
+				Now:     time.Now,
+			}
+			opts := RestoreOptions{
+				Tables:        tables,
+				Ledger:        ledger,
+				DryRun:        dryRun,
+				SkipEphemeral: skipEphemeral,
+			}
+			report, err := RunRestore(ctx, deps, archivePath, opts)
+			if err != nil {
+				return err
+			}
+			PrintRestoreReport(c.OutOrStdout(), report)
+			return nil
+		},
+	}
+
+	restoreCmd.Flags().BoolVar(&tables, "tables", false, "restore the DynamoDB tables (default: both tables and ledger, when neither --tables nor --ledger is given)")
+	restoreCmd.Flags().BoolVar(&ledger, "ledger", false, "restore the S3 ledger (default: both tables and ledger, when neither --tables nor --ledger is given)")
+	restoreCmd.Flags().BoolVar(&dryRun, "dry-run", false, "report per-table write/skip counts and the ledger object count without issuing a single write (D-12)")
+	restoreCmd.Flags().BoolVar(&skipEphemeral, "skip-ephemeral", true, "filter ephemeral rows — concurrency leases, session state, expired TTL items — on by default (D-11)")
+
+	return restoreCmd
 }
