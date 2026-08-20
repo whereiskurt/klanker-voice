@@ -1,19 +1,28 @@
 package cmd
 
 import (
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
 // --------------------------------------------------------------------------
@@ -263,4 +272,282 @@ func countJSONLLines(t *testing.T, b []byte) int {
 		n++
 	}
 	return n
+}
+
+// --------------------------------------------------------------------------
+// fakeSSMInventoryAPI — hand-rolled ssmInventoryAPI fake.
+
+type fakeSSMParam struct {
+	name         string
+	typ          ssmtypes.ParameterType
+	value        string
+	lastModified time.Time
+	version      int64
+}
+
+type fakeSSMInventoryAPI struct {
+	params   []fakeSSMParam
+	getCalls []*ssm.GetParameterInput
+}
+
+func (f *fakeSSMInventoryAPI) DescribeParameters(_ context.Context, _ *ssm.DescribeParametersInput, _ ...func(*ssm.Options)) (*ssm.DescribeParametersOutput, error) {
+	metas := make([]ssmtypes.ParameterMetadata, len(f.params))
+	for i, p := range f.params {
+		name := p.name
+		lm := p.lastModified
+		metas[i] = ssmtypes.ParameterMetadata{Name: &name, Type: p.typ, LastModifiedDate: &lm, Version: p.version}
+	}
+	return &ssm.DescribeParametersOutput{Parameters: metas}, nil
+}
+
+func (f *fakeSSMInventoryAPI) GetParameter(_ context.Context, in *ssm.GetParameterInput, _ ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+	f.getCalls = append(f.getCalls, in)
+	for _, p := range f.params {
+		if p.name == aws.ToString(in.Name) {
+			val := p.value
+			return &ssm.GetParameterOutput{Parameter: &ssmtypes.Parameter{Name: in.Name, Value: &val, Type: p.typ}}, nil
+		}
+	}
+	return &ssm.GetParameterOutput{}, nil
+}
+
+func TestExportSSMInventory_SecureStringValueOmitted(t *testing.T) {
+	now := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	api := &fakeSSMInventoryAPI{params: []fakeSSMParam{
+		{name: "/kmv/secrets/use1/telephony/access_pin", typ: ssmtypes.ParameterTypeSecureString, value: "should-never-appear", lastModified: now, version: 3},
+		{name: "/kmv/config/use1/some-string", typ: ssmtypes.ParameterTypeString, value: "plain-value", lastModified: now, version: 1},
+		{name: "/kmv/config/use1/some-list", typ: ssmtypes.ParameterTypeStringList, value: "a,b,c", lastModified: now, version: 2},
+	}}
+	b, err := ExportSSMInventory(context.Background(), api, "/kmv/")
+	if err != nil {
+		t.Fatalf("ExportSSMInventory() error = %v, want nil", err)
+	}
+	var inv ssmInventory
+	if err := json.Unmarshal(b, &inv); err != nil {
+		t.Fatalf("unmarshal inventory: %v", err)
+	}
+	if len(inv.Parameters) != 3 {
+		t.Fatalf("len(Parameters) = %d, want 3", len(inv.Parameters))
+	}
+	byName := map[string]ssmParamRecord{}
+	for _, p := range inv.Parameters {
+		byName[p.Name] = p
+	}
+	sec := byName["/kmv/secrets/use1/telephony/access_pin"]
+	if !sec.ValueOmitted {
+		t.Error("SecureString record ValueOmitted = false, want true")
+	}
+	if sec.Value != "" {
+		t.Errorf("SecureString record Value = %q, want empty", sec.Value)
+	}
+	str := byName["/kmv/config/use1/some-string"]
+	if str.ValueOmitted {
+		t.Error("String record ValueOmitted = true, want false")
+	}
+	if str.Value != "plain-value" {
+		t.Errorf("String record Value = %q, want plain-value", str.Value)
+	}
+	list := byName["/kmv/config/use1/some-list"]
+	if list.Value != "a,b,c" {
+		t.Errorf("StringList record Value = %q, want a,b,c", list.Value)
+	}
+	if strings.Contains(string(b), "should-never-appear") {
+		t.Error("SecureString value leaked into the exported inventory JSON")
+	}
+}
+
+func TestExportSSMInventory_NeverDecrypts(t *testing.T) {
+	now := time.Now()
+	api := &fakeSSMInventoryAPI{params: []fakeSSMParam{
+		{name: "/kmv/secrets/use1/x", typ: ssmtypes.ParameterTypeSecureString, value: "secret", lastModified: now, version: 1},
+		{name: "/kmv/config/use1/y", typ: ssmtypes.ParameterTypeString, value: "public", lastModified: now, version: 1},
+	}}
+	if _, err := ExportSSMInventory(context.Background(), api, "/kmv/"); err != nil {
+		t.Fatalf("ExportSSMInventory() error = %v, want nil", err)
+	}
+	if len(api.getCalls) == 0 {
+		t.Fatal("GetParameter never called for the String parameter")
+	}
+	for _, call := range api.getCalls {
+		if call.WithDecryption != nil && *call.WithDecryption {
+			t.Fatalf("GetParameter(%s) called with WithDecryption=true — SecureString values must never be decrypted (D-14)", aws.ToString(call.Name))
+		}
+	}
+}
+
+func TestExportDIDInventory_ListerErrorDegradesGracefully(t *testing.T) {
+	lister := DIDLister(func(ctx context.Context) ([]InboundDIDRecord, error) {
+		return nil, errors.New("voip.ms unreachable")
+	})
+	b, err := ExportDIDInventory(context.Background(), lister)
+	if err != nil {
+		t.Fatalf("ExportDIDInventory() error = %v, want nil (degrade, don't fail)", err)
+	}
+	var inv didInventory
+	if err := json.Unmarshal(b, &inv); err != nil {
+		t.Fatalf("unmarshal did inventory: %v", err)
+	}
+	if inv.Error == "" {
+		t.Error("Error field is empty, want a non-empty degradation reason")
+	}
+	if len(inv.DIDs) != 0 {
+		t.Errorf("DIDs = %v, want empty", inv.DIDs)
+	}
+}
+
+func TestExportDIDInventory_NilListerDegradesGracefully(t *testing.T) {
+	b, err := ExportDIDInventory(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ExportDIDInventory() error = %v, want nil", err)
+	}
+	var inv didInventory
+	if err := json.Unmarshal(b, &inv); err != nil {
+		t.Fatalf("unmarshal did inventory: %v", err)
+	}
+	if inv.Error == "" {
+		t.Error("Error field is empty, want a non-empty degradation reason for a nil lister")
+	}
+}
+
+// --------------------------------------------------------------------------
+// WriteBackupArchive — the assembled zip.
+
+func testBackupDeps(t *testing.T) BackupDeps {
+	t.Helper()
+	dyn := &fakeDynamoScanAPI{errAtCall: -1, pages: []*dynamodb.ScanOutput{
+		{Items: []map[string]types.AttributeValue{{"pk": strAV("row1")}, {"pk": strAV("row2")}}},
+	}}
+	s3objects := map[string][]byte{
+		"transcripts/a.json": []byte("aaaa"),
+		"transcripts/b.json": []byte("bb"),
+	}
+	s3api := &fakeS3ListGetAPI{
+		objects: s3objects,
+		pages: [][]fakeS3Object{
+			{{key: "transcripts/a.json", body: s3objects["transcripts/a.json"]}, {key: "transcripts/b.json", body: s3objects["transcripts/b.json"]}},
+		},
+	}
+	ssmAPI := &fakeSSMInventoryAPI{params: []fakeSSMParam{
+		{name: "/kmv/config/use1/x", typ: ssmtypes.ParameterTypeString, value: "v", lastModified: time.Now(), version: 1},
+	}}
+	dids := DIDLister(func(ctx context.Context) ([]InboundDIDRecord, error) {
+		return []InboundDIDRecord{{DID: "7254043234", Description: "test"}}, nil
+	})
+	return BackupDeps{
+		Dynamo: dyn,
+		S3:     s3api,
+		SSM:    ssmAPI,
+		DIDs:   dids,
+		Targets: LiveTargets{
+			TableNames: map[string]string{
+				"auth-electro": "kmv-auth-electro",
+				"auth-authjs":  "kmv-auth-authjs",
+				"voice-usage":  "kmv-voice-usage",
+			},
+			LedgerBucket: "kmv-ledger-abc123",
+			NATEIP:       "203.0.113.7",
+		},
+		AWSAccountID: "123456789012",
+		Region:       "us-east-1",
+		GitSHA:       "deadbeef",
+		Now:          func() time.Time { return time.Date(2026, 8, 20, 1, 2, 3, 0, time.UTC) },
+	}
+}
+
+func openZipEntries(t *testing.T, path string) map[string][]byte {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("zip.OpenReader(%s): %v", path, err)
+	}
+	defer zr.Close()
+	out := make(map[string][]byte, len(zr.File))
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open entry %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read entry %s: %v", f.Name, err)
+		}
+		out[f.Name] = b
+	}
+	return out
+}
+
+func TestWriteBackupArchive_EntrySet(t *testing.T) {
+	deps := testBackupDeps(t)
+	res, err := WriteBackupArchive(context.Background(), deps, BackupOptions{OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("WriteBackupArchive() error = %v, want nil", err)
+	}
+	entries := openZipEntries(t, res.Path)
+	want := []string{
+		"manifest.json",
+		"dynamodb/auth-electro.jsonl",
+		"dynamodb/auth-authjs.jsonl",
+		"dynamodb/voice-usage.jsonl",
+		"ledger/transcripts/a.json",
+		"ledger/transcripts/b.json",
+		"external/voipms-dids.json",
+		"external/nat-eip.txt",
+		"external/ssm-params.json",
+	}
+	var got []string
+	for name := range entries {
+		got = append(got, name)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("zip entry set:\n got  = %v\n want = %v", got, want)
+	}
+}
+
+func TestWriteBackupArchive_ManifestDigestsMatch(t *testing.T) {
+	deps := testBackupDeps(t)
+	res, err := WriteBackupArchive(context.Background(), deps, BackupOptions{OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("WriteBackupArchive() error = %v, want nil", err)
+	}
+	entries := openZipEntries(t, res.Path)
+	if len(res.Manifest.Files) == 0 {
+		t.Fatal("manifest.Files is empty, want one ref per non-manifest entry")
+	}
+	for _, ref := range res.Manifest.Files {
+		body, ok := entries[ref.Path]
+		if !ok {
+			t.Errorf("manifest references %s, not present in zip", ref.Path)
+			continue
+		}
+		sum := sha256.Sum256(body)
+		gotDigest := hex.EncodeToString(sum[:])
+		if gotDigest != ref.SHA256 {
+			t.Errorf("entry %s: manifest sha256 %s != recomputed %s", ref.Path, ref.SHA256, gotDigest)
+		}
+		if int64(len(body)) != ref.Bytes {
+			t.Errorf("entry %s: manifest bytes %d != actual %d", ref.Path, ref.Bytes, len(body))
+		}
+	}
+}
+
+func TestWriteBackupArchive_DIDListerErrorStillSucceeds(t *testing.T) {
+	deps := testBackupDeps(t)
+	deps.DIDs = DIDLister(func(ctx context.Context) ([]InboundDIDRecord, error) {
+		return nil, errors.New("voip.ms down")
+	})
+	res, err := WriteBackupArchive(context.Background(), deps, BackupOptions{OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("WriteBackupArchive() error = %v, want nil (DID inventory is advisory)", err)
+	}
+	entries := openZipEntries(t, res.Path)
+	var inv didInventory
+	if err := json.Unmarshal(entries["external/voipms-dids.json"], &inv); err != nil {
+		t.Fatalf("unmarshal external/voipms-dids.json: %v", err)
+	}
+	if inv.Error == "" {
+		t.Error("expected a non-empty error field in external/voipms-dids.json")
+	}
 }
