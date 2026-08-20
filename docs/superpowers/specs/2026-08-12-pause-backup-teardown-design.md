@@ -399,6 +399,11 @@ During a long pause, the ElevenLabs subscription becomes the largest remaining l
 - Ledger size is unmeasured (no valid AWS credentials at spec time). `kv backup` reports
   it; check ahead of time with
   `aws s3 ls --summarize --recursive s3://kmv-ledger-use1-*`.
+  **Resolved 2026-08-19 (operator directive):** proceed on the assumption that the ledger
+  is reasonably small. §4.3's always-include-the-ledger decision stands as written, with
+  no size threshold, incremental mode, or streaming design in scope. `kv backup` still
+  reports size and elapsed time and warns above a threshold, so the day the assumption
+  stops holding is visible rather than silent.
 - Whether to add a paused-state maintenance page for `auth.klankermaker.ai` (503 today).
   Deferred — separate concern from this mechanism.
 - Whether a VoIP.ms failover recording should cover paused DIDs. Vendor-console change,
