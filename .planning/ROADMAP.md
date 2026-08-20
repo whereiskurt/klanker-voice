@@ -358,7 +358,7 @@ Plans:
 **Goal**: The operator can stand the whole stack down and bring it back — `kv backup`/`restore` produces a verified, self-contained artifact of everything that exists only in AWS (DynamoDB rows, the S3 transcript ledger, the NAT EIP, the VoIP.ms DID inventory); `kv pause`/`resume` round-trips every ECS service to zero tasks in ~5 minutes each way (~$190 → ~$60/mo) via a git-tracked flag in `site.hcl` plus a CI apply; and `kv destroy --with-backup` tears the AWS footprint down without silently eating data
 **Depends on**: Phase 15 (the S3 transcript ledger is one of the two things backup must capture); the `kv` CLI, terragrunt live stack, and `terragrunt-apply.yml` workflow already exist
 **Authoritative spec**: `docs/superpowers/specs/2026-08-12-pause-backup-teardown-design.md` (brainstormed + operator-approved 2026-08-12; infra claims verified against the live modules)
-**Requirements**: TBD (derived from the spec's §4 / §5 / §6 command groups)
+**Requirements**: OPS-01, OPS-02, OPS-03, OPS-04, OPS-05, OPS-06
 **Success Criteria** (what must be TRUE):
 
   1. `kv backup` writes one timestamped zip containing all three DynamoDB tables (scan → JSONL), the full S3 ledger object tree, and the external inventory (VoIP.ms DIDs, NAT EIP, non-secret SSM params) plus a `manifest.json` with per-file SHA-256 and per-table row counts — and verification (re-reading the artifact) is on by default, so "backup succeeded" means it was read back
