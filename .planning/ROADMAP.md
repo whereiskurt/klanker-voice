@@ -368,7 +368,7 @@ Plans:
   5. `kv destroy --with-backup` (default) refuses to proceed on a failed backup verification, empties the ledger bucket explicitly (it has no `force_destroy`), destroys in dependency order, and reports what is now unrecoverable — DID release stays manual and outside the tool
   6. Orchestration is testable without touching the cloud: AWS/`gh`/`git` behind narrow interfaces, table tests for the `site.hcl` rewrite (idempotence, comment preservation, already-paused, malformed), a backup/restore round-trip against local fakes, and preflight-refusal tests; `backups/` is gitignored
 
-**Plans:** 11 plans
+**Plans:** 1/11 plans executed
 
 **Build order (spec §3)** — each stage lands independently useful, and execution may stop after any stage:
 
@@ -382,7 +382,7 @@ Plans:
 
 **Stage A — backup / restore** (OPS-01, OPS-02, OPS-03)
 
-- [ ] 16-01-PLAN.md — Foundation: AWS SDK s3/ecs/elbv2 modules, Config client accessors, backup manifest schema + SHA-256, live terraform-output target resolution, `backups/` gitignored (wave 1)
+- [x] 16-01-PLAN.md — Foundation: AWS SDK s3/ecs/elbv2 modules, Config client accessors, backup manifest schema + SHA-256, live terraform-output target resolution, `backups/` gitignored (wave 1)
 - [ ] 16-02-PLAN.md — `kv backup`: Scan→JSONL for three tables, full ledger object tree, external inventory, manifest, default-on verification re-read, unencrypted-artifact warning (wave 2)
 - [ ] 16-03-PLAN.md — `kv restore`: live-resolved destinations, ephemeral-row filtering, idempotent batched writes, `--dry-run`, round-trip test, ops runbook (wave 3)
 - [ ] 16-04-PLAN.md — **OPERATOR CHECKPOINT**: live backup + verify + `restore --dry-run`; measures the ledger; releases the Stage-A gate (wave 4, non-autonomous)
