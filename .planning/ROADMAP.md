@@ -368,17 +368,37 @@ Plans:
   5. `kv destroy --with-backup` (default) refuses to proceed on a failed backup verification, empties the ledger bucket explicitly (it has no `force_destroy`), destroys in dependency order, and reports what is now unrecoverable — DID release stays manual and outside the tool
   6. Orchestration is testable without touching the cloud: AWS/`gh`/`git` behind narrow interfaces, table tests for the `site.hcl` rewrite (idempotence, comment preservation, already-paused, malformed), a backup/restore round-trip against local fakes, and preflight-refusal tests; `backups/` is gitignored
 
-**Plans:** 0 plans
+**Plans:** 11 plans
 
-**Build order (spec §3)** — each wave lands independently useful, and execution may stop after any wave:
+**Build order (spec §3)** — each stage lands independently useful, and execution may stop after any stage:
 
-- **Wave 1 — `kv backup` / `kv restore`**: the foundation, prerequisite for Wave 3, and the only piece with no infra apply or CI dispatch. Designed for the *destroy* case from day one, not the pause case.
-- **Wave 2 — `kv pause` / `kv resume`**: the immediate need; carries the two real hazards (autoscaling ordering, in-flight session drain).
-- **Wave 3 — `kv destroy --with-backup`**: deferred until Wave 1 has round-tripped once against real data.
+- **Stage A — `kv backup` / `kv restore`**: the foundation, prerequisite for Stage C, and the only piece with no infra apply or CI dispatch. Designed for the *destroy* case from day one, not the pause case.
+- **Stage B — `kv pause` / `kv resume`**: the immediate need; carries the two real hazards (autoscaling ordering, in-flight session drain).
+- **Stage C — `kv destroy --with-backup`**: deferred until Stage A has round-tripped once against real data (gated by 16-04).
+
+Execution waves are sequential (1→11) rather than three parallel waves: every Go file in this phase lands in the single `kv/internal/app/cmd` package, so parallel plans in one wave would race on the same package and on `root.go`. The three spec stages are carried in each plan's `stage:` frontmatter field.
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 16 to break down)
+**Stage A — backup / restore** (OPS-01, OPS-02, OPS-03)
+
+- [ ] 16-01-PLAN.md — Foundation: AWS SDK s3/ecs/elbv2 modules, Config client accessors, backup manifest schema + SHA-256, live terraform-output target resolution, `backups/` gitignored (wave 1)
+- [ ] 16-02-PLAN.md — `kv backup`: Scan→JSONL for three tables, full ledger object tree, external inventory, manifest, default-on verification re-read, unencrypted-artifact warning (wave 2)
+- [ ] 16-03-PLAN.md — `kv restore`: live-resolved destinations, ephemeral-row filtering, idempotent batched writes, `--dry-run`, round-trip test, ops runbook (wave 3)
+- [ ] 16-04-PLAN.md — **OPERATOR CHECKPOINT**: live backup + verify + `restore --dry-run`; measures the ledger; releases the Stage-A gate (wave 4, non-autonomous)
+
+**Stage B — pause / resume** (OPS-04, OPS-05)
+
+- [ ] 16-05-PLAN.md — `site.hcl` `paused` flag driving **both** `desired_count = 0` and `min_capacity = 0`, plus the byte-surgical Go rewriter and its table tests (wave 5)
+- [ ] 16-06-PLAN.md — git seam with the four preflight refusals, and `gh` workflow dispatch + run-id resolution + streaming (wave 6)
+- [ ] 16-07-PLAN.md — ECS drain to zero with the deterministic Application-Auto-Scaling correction, in-flight session reporting, and the resume ALB health gate (wave 7)
+- [ ] 16-08-PLAN.md — `kv pause` / `kv resume` / `kv pause status` commands, cost-posture completion report, ops runbook (wave 8)
+- [ ] 16-09-PLAN.md — **OPERATOR CHECKPOINT**: `terragrunt plan` confirming both overrides, then a live pause→resume round trip (wave 9, non-autonomous)
+
+**Stage C — destroy** (OPS-06)
+
+- [ ] 16-10-PLAN.md — `kv destroy`: backup→verify→abort-on-mismatch→drain→explicit ledger empty→dependency-ordered destroy→report; typed-site-label gate on `--no-backup` (wave 10)
+- [ ] 16-11-PLAN.md — **OPERATOR CHECKPOINT**: `kv destroy --dry-run` report review and the `--no-backup` refusal matrix; the real destroy is never run (wave 11, non-autonomous)
 
 ---
 
