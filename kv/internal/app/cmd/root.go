@@ -212,6 +212,8 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(NewStudioCmd(cfg))
 	root.AddCommand(NewBackupCmd(cfg))
 	root.AddCommand(NewRestoreCmd(cfg))
+	root.AddCommand(NewPauseCmd(cfg))
+	root.AddCommand(NewResumeCmd(cfg))
 
 	return root
 }
