@@ -11,6 +11,20 @@ This runbook covers the artifact layout, the required rebuild ordering, why
 destinations are resolved live instead of trusted from the archive, which
 rows are filtered on restore and why, and the dry-run workflow.
 
+## Prerequisite: source `infra/.envrc` before running either command
+
+`kv backup` and `kv restore` resolve live destinations via `terragrunt
+output`, and terragrunt's S3 backend config for this stack (the state
+bucket/table) comes from environment variables set in `infra/.envrc`
+(`TG_BUCKET_USE1` / `TG_TABLE_USE1`), not from anything `kv` itself reads.
+Without them sourced into your shell, `terragrunt output` fails with an
+opaque `bucket = "" ... cannot be empty` backend error that does not
+obviously point at the missing env. Source it first:
+
+```
+set -a && . infra/.envrc && set +a
+```
+
 ## The artifact
 
 `kv backup` writes `kmv-backup-<ISO8601>.zip` to `./backups` (override with
