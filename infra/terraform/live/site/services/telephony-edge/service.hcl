@@ -387,8 +387,16 @@ locals {
     # Single-task deployment for Phase 12 — no autoscaling (concurrency=1
     # is enforced at the application layer, SessionLifecycle/quota gate,
     # not by running more tasks).
+    # min_capacity is inert here (aws_appautoscaling_target is only created
+    # when enabled = true, module main.tf:316) and matches the module's own
+    # default of 1. It is declared explicitly so this object carries the same
+    # attribute set as the paused-branch merge in site.hcl:177 — a Terraform
+    # conditional requires both result expressions to have consistent types,
+    # and omitting it made the whole site config unevaluable (see auth's
+    # service.hcl, which already declares it alongside enabled = false).
     autoscaling = {
-      enabled = false
+      enabled      = false
+      min_capacity = 1
     }
   }
 }
