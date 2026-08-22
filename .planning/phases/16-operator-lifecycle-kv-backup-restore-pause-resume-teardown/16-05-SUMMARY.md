@@ -120,3 +120,45 @@ Task 2 (`tdd="true"`) followed RED/GREEN:
 - GREEN: `feat(16-05)` commit d9205f2 — `lifecycle_pauseflag.go` added, all 10 subtests pass
   (7+ required by D-31), `grep -c hclwrite` = 0.
 - REFACTOR: not needed — no follow-up commit.
+
+## Correction (added 2026-08-22, during 16-09's live operator gate)
+
+**The `## Self-Check: PASSED` above is preserved as originally written, but it did not catch a
+real defect.** This plan shipped `site.hcl` in a state that was unevaluable by `terragrunt plan`
+for **every** unit under `infra/terraform/live/site` (not only during a pause) whenever
+`paused = false` — the default, committed value.
+
+**Root cause:** the `paused` conditional in `ecs_services.services` merged `min_capacity` into
+each service's `autoscaling` object on the `true` branch, but telephony-edge's `autoscaling`
+block was authored as `{ enabled = false }` with no `min_capacity` key at all. Terraform
+type-checks *both* branches of a conditional expression regardless of which one is selected at
+runtime, so the `true`-branch object type (which includes `min_capacity` for telephony-edge) and
+the `false`-branch object type (which does not) were structurally different — producing
+`Inconsistent conditional result types`. Because this is a type-check, not a runtime evaluation,
+it broke the config with `paused = false` just as surely as with `paused = true`; a `terragrunt
+plan` on the `ecs-service` unit would have failed immediately on `main` from the moment this
+plan's commit landed.
+
+**Why the Self-Check missed it:** the Self-Check in this plan verified file existence and commit
+presence — it did not run `terragrunt plan` (or any tool that type-checks the HCL against the
+live module) against the committed result. The local `hclfmt`/`terragrunt hcl format --check`
+verification documented above (see "Verification tool note") checks *formatting*, not
+*type-consistency across conditional branches*; a syntactically well-formatted, well-formed HCL
+file can still fail to type-check. Per F-5 in `16-09-SUMMARY.md`: this phase ran as local commits
+on an unpushed branch, so `terragrunt-plan.yml` (which auto-triggers on PRs touching `infra/**`)
+never ran until PR #96 was opened — so the break survived eight subsequent plans undetected.
+
+**Fix:** commit `de1a573` (`fix(16-05): declare telephony-edge min_capacity so site.hcl
+evaluates`) declared `min_capacity = 1` on telephony-edge's `autoscaling` block. This is inert
+there — `aws_appautoscaling_target` is only created by the module when `enabled = true` (module
+`main.tf:316`), and telephony-edge's autoscaling stays disabled — but it makes both conditional
+branches structurally identical, matching the module default and the same pattern auth already
+used. This was verified live in `16-09-SUMMARY.md` Task 1: a real `terragrunt plan` on the
+`ecs-service` unit with `paused = true` (locally flipped, never committed) confirmed both
+`desired_count` and `min_capacity` overrides for voice and auth, with no destroy proposed.
+
+**Disposition:** the original Self-Check line above is left unmodified as the historical record
+of what this plan's own verification checked (file/commit existence) — it was accurate on its
+own narrow terms. This section documents that those checks were insufficient to catch a
+type-consistency defect, and that the defect was found and fixed before Stage B's live operator
+gate, not by this plan's own process.
