@@ -37,3 +37,10 @@ backups/
 temp/
 
 kv/bin/kv
+# Editor workspace settings (local only)
+.vscode/
+
+# Stray root-level kv binary from `go build ./cmd/kv` without -o.
+# Anchored with a leading slash: a bare `kv` line here once ignored the
+# entire kv/ source tree for three days (see quick 260806-cm9).
+/kv/kv
