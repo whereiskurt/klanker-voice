@@ -161,7 +161,7 @@ locals {
   # NAT and its EIP, ALB, WAF, CloudFront, Route53, ACM, DynamoDB, the S3
   # ledger, and ECR all stay put -- which is what keeps the VoIP.ms-
   # allowlisted NAT EIP alive and makes resume a pure scale-up.
-  paused = false
+  paused = true
 
   ecs_services = {
     # Phase 4 (04-02): voice service. Phase 5 deploy: auth service added.
