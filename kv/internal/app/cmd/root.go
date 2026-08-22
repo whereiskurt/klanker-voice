@@ -9,10 +9,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
 )
 
@@ -101,6 +105,61 @@ func (c *Config) DynamoClient(ctx context.Context) (*dynamodb.Client, error) {
 	}), nil
 }
 
+// S3Client builds an aws-sdk-go-v2 S3 client from the Config via the shared
+// loadAWS path, mirroring DynamoClient's construction (minus the
+// EndpointURL override — S3 has no dynamodb-local-style local dev
+// substitute, so only DynamoClient reads EndpointURL). Phase 16's backup
+// (16-02) and restore (16-03) commands use this to read/write the ledger
+// object tree, and destroy (16-05) uses it to empty the ledger bucket
+// before `terragrunt destroy` (the bucket has no force_destroy).
+func (c *Config) S3Client(ctx context.Context) (*s3.Client, error) {
+	cfg, err := c.loadAWS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s3.NewFromConfig(cfg), nil
+}
+
+// ECSClient builds an aws-sdk-go-v2 ECS client from the Config via the
+// shared loadAWS path, mirroring DynamoClient's construction (no
+// EndpointURL override). Phase 16's pause/resume (16-06..16-08) commands
+// use this to poll and correct desired/running task counts, and destroy
+// reuses the same drain path.
+func (c *Config) ECSClient(ctx context.Context) (*ecs.Client, error) {
+	cfg, err := c.loadAWS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ecs.NewFromConfig(cfg), nil
+}
+
+// ELBv2Client builds an aws-sdk-go-v2 Elastic Load Balancing v2 client from
+// the Config via the shared loadAWS path, mirroring DynamoClient's
+// construction (no EndpointURL override). Phase 16's `kv resume` uses this
+// to wait for the voice and auth ALB target groups to report healthy before
+// declaring resume successful (D-22).
+func (c *Config) ELBv2Client(ctx context.Context) (*elasticloadbalancingv2.Client, error) {
+	cfg, err := c.loadAWS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return elasticloadbalancingv2.NewFromConfig(cfg), nil
+}
+
+// KvVersion reads the main module's build version from
+// runtime/debug.ReadBuildInfo(), falling back to "dev" when build info is
+// unavailable or the version is the unresolved "(devel)" placeholder (the
+// common case for `go run`/local builds without a tagged module). The
+// backup manifest (D-05) records this result so an operator can tell which
+// kv build produced a given backup.
+func KvVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return "dev"
+	}
+	return info.Main.Version
+}
+
 func tableFromEnv() string {
 	if v := os.Getenv("AUTH_ELECTRO_DBNAME"); v != "" {
 		return v
@@ -151,6 +210,10 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(NewVoipmsCmd(cfg))
 	root.AddCommand(NewTelephonyCmd(cfg))
 	root.AddCommand(NewStudioCmd(cfg))
+	root.AddCommand(NewBackupCmd(cfg))
+	root.AddCommand(NewRestoreCmd(cfg))
+	root.AddCommand(NewPauseCmd(cfg))
+	root.AddCommand(NewResumeCmd(cfg))
 
 	return root
 }

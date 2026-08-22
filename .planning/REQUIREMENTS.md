@@ -69,6 +69,15 @@
 - [x] **LEDG-04**: The pre-connect screen shows a visible "sessions may be recorded" notice, establishing the no-expectation-of-privacy posture before the mic-start gesture
 - [x] **LEDG-05**: The transcript ledger writer touches only S3 — never DynamoDB — so transcripts never co-mingle with quota bookkeeping
 
+### Operator Lifecycle (pause / backup / teardown)
+
+- [x] **OPS-01**: `kv backup` writes one timestamped self-contained artifact holding everything that exists only in AWS — all three DynamoDB tables (Scan → JSONL), the full S3 transcript ledger, and the external inventory (VoIP.ms DIDs, NAT EIP, non-secret SSM params) — plus a `manifest.json` carrying git SHA, account/region, resolved table and bucket names, per-table row counts, ledger object/byte totals, and a SHA-256 per file
+- [x] **OPS-02**: Backup verification is on by default — the artifact is re-opened and every row count and checksum re-checked against the manifest before the command reports success; the zip is deliberately unencrypted (no key inside the account being destroyed) with a loud warning naming the personal data it holds, and `backups/` is gitignored
+- [x] **OPS-03**: `kv restore <zip>` repopulates a freshly-applied stack — targets resolved from live terraform outputs (never the manifest, whose bucket names carry a stale `random_id`), ephemeral rows (concurrency leases, OIDC session state, expired TTLs) filtered by default, batched writes idempotent and resumable, and `--dry-run` reporting counts without writing
+- [x] **OPS-04**: `kv pause` / `kv resume` round-trip the stack via a single git-tracked `paused` flag in `site.hcl` that flips both `desired_count = 0` and `autoscaling.min_capacity = 0` (either alone fails), committing and dispatching the CI apply, draining in-flight sessions visibly, and verifying all three services actually reach zero — deterministically correcting the Application Auto Scaling ordering hazard rather than trusting timing
+- [x] **OPS-05**: `kv resume` does not report success until the voice and auth ALB target groups report healthy; a mid-pause CI deploy leaves the stack paused (the config is the guard); the kill-switch is orthogonal and untouched by either command
+- [ ] **OPS-06**: `kv destroy --with-backup` (the default) refuses to proceed on failed backup verification, empties the ledger bucket explicitly (it has no `force_destroy`), destroys in dependency order, and reports what is now unrecoverable — new bucket names on recreate, a new NAT EIP to re-allowlist at VoIP.ms, and DIDs still billing until released manually
+
 ## v2 Requirements (Deferred)
 
 - **KV-06**: Live session inspection (`kv sessions`) — defer until a multi-user event is scheduled
@@ -90,7 +99,7 @@
 
 ## Traceability
 
-Coverage: 38/38 v1 requirements mapped (PIPE-10 promoted from v2-deferred in Phase 7).
+Coverage: 44/44 v1 requirements mapped (PIPE-10 promoted from v2-deferred in Phase 7; OPS-01..06 added for Phase 16 operator lifecycle).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -137,3 +146,9 @@ Coverage: 38/38 v1 requirements mapped (PIPE-10 promoted from v2-deferred in Pha
 | LEDG-03 | Phase 15 | Complete |
 | LEDG-04 | Phase 15 | Complete |
 | LEDG-05 | Phase 15 | Complete |
+| OPS-01 | Phase 16 | Complete |
+| OPS-02 | Phase 16 | Complete |
+| OPS-03 | Phase 16 | Complete |
+| OPS-04 | Phase 16 | Complete |
+| OPS-05 | Phase 16 | Complete |
+| OPS-06 | Phase 16 | Pending |

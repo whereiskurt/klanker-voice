@@ -28,6 +28,12 @@ apps/voice/knowledge/transcripts/incoming/
 # kv CLI: locally-built operator binary (see kv/Makefile `build`)
 kv/bin/
 
+# Phase 16: `kv backup`/`kv restore` artifacts (D-14) — these zips hold
+# unencrypted transcripts and user email addresses (D-08) and must never be
+# committed, no matter which --out directory an operator points at the
+# repo-root default.
+backups/
+
 temp/
 
 kv/bin/kv
