@@ -368,7 +368,7 @@ Plans:
   5. `kv destroy --with-backup` (default) refuses to proceed on a failed backup verification, empties the ledger bucket explicitly (it has no `force_destroy`), destroys in dependency order, and reports what is now unrecoverable — DID release stays manual and outside the tool
   6. Orchestration is testable without touching the cloud: AWS/`gh`/`git` behind narrow interfaces, table tests for the `site.hcl` rewrite (idempotence, comment preservation, already-paused, malformed), a backup/restore round-trip against local fakes, and preflight-refusal tests; `backups/` is gitignored
 
-**Plans:** 8/11 plans executed
+**Plans:** 9/11 plans executed
 
 **Build order (spec §3)** — each stage lands independently useful, and execution may stop after any stage:
 
@@ -393,7 +393,7 @@ Plans:
 - [x] 16-06-PLAN.md — git seam with the four preflight refusals, and `gh` workflow dispatch + run-id resolution + streaming (wave 6)
 - [x] 16-07-PLAN.md — ECS drain to zero with the deterministic Application-Auto-Scaling correction, in-flight session reporting, and the resume ALB health gate (wave 7)
 - [x] 16-08-PLAN.md — `kv pause` / `kv resume` / `kv pause status` commands, cost-posture completion report, ops runbook (wave 8)
-- [ ] 16-09-PLAN.md — **OPERATOR CHECKPOINT**: `terragrunt plan` confirming both overrides, then a live pause→resume round trip (wave 9, non-autonomous)
+- [x] 16-09-PLAN.md — **OPERATOR CHECKPOINT**: `terragrunt plan` confirming both overrides, then a live pause→resume round trip (wave 9, non-autonomous)
 
 **Stage C — destroy** (OPS-06)
 
