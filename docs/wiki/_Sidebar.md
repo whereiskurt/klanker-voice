@@ -14,6 +14,18 @@
 **The good stuff**
 - [Techniques](Techniques)
 
+**Running it**
+- [Operator Manual](Operator-Manual)
+- [`kv` CLI Reference](kv-CLI-Reference)
+- [Phone Numbers](Phone-Number-Inventory)
+- [Access Codes & Tiers](Access-Codes-and-Tiers)
+- [Phone Games](Phone-Games)
+- [PBX Lifecycle](PBX-Lifecycle)
+- [Infrastructure](Infrastructure)
+- [Incidents](Incident-Runbook)
+- [kv studio](kv-studio)
+- [VoIP.ms Provisioning](VoIPms-Provisioning)
+
 **Working on it**
 - [Development](Development)
 - [Testing](Testing)

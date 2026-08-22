@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1066" height="198" viewBox="0 0 1066 198" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,DejaVu Sans Mono,monospace" font-size="13.0">
+<rect width="1066" height="198" rx="8" fill="#12161c" stroke="#262d38"/>
+<path d="M0 8a8 8 0 0 1 8-8h1050a8 8 0 0 1 8 8v22H0z" fill="#1b2029"/>
+<line x1="0" y1="30.0" x2="1066" y2="30.0" stroke="#262d38"/>
+<circle cx="18" cy="15" r="5" fill="#e0704a"/>
+<circle cx="34" cy="15" r="5" fill="#e0a648"/>
+<circle cx="50" cy="15" r="5" fill="#7fd88f"/>
+<text x="533" y="19" fill="#6b7683" font-size="11.5" text-anchor="middle">kv smoke — proving the deployed pipeline actually carries audio</text>
+<text x="18.0" y="57.0" xml:space="preserve"><tspan fill="#7fd88f">$ </tspan><tspan fill="#e8edf3" font-weight="600">export KMV_SMOKE_SERVICE_TOKEN=$(aws ssm get-parameter --name /kmv/secrets/use1/voice/smoke_token --with-decryption --query Parameter.Value --output text)</tspan></text>
+<text x="18.0" y="77.0" xml:space="preserve"><tspan fill="#7fd88f">$ </tspan><tspan fill="#e8edf3" font-weight="600">kv smoke</tspan></text>
+<text x="18.0" y="97.0" fill="#e0a648" xml:space="preserve">STATUS       PASS</text>
+<text x="18.0" y="117.1" fill="#c8d1dc" xml:space="preserve">ENDPOINT     https://voice.klankermaker.ai</text>
+<text x="18.0" y="137.1" fill="#c8d1dc" xml:space="preserve">ICE-STATE    connected</text>
+<text x="18.0" y="157.1" fill="#c8d1dc" xml:space="preserve">CANDIDATES   host,srflx</text>
+<text x="18.0" y="177.1" fill="#c8d1dc" xml:space="preserve">RTP-PACKETS  243</text>
+</svg>

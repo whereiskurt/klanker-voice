@@ -62,6 +62,16 @@ cd client && npm install && npm run dev   # browser client, separate terminal
 
 The real setup (secrets, auth service, telephony edge) is in [Getting Started](https://github.com/whereiskurt/klanker-voice/wiki/Getting-Started). Deep-dive sources live in [`docs/`](docs/) — the wiki is generated from them via [`scripts/sync-wiki.py`](scripts/sync-wiki.py).
 
+## Running It
+
+Already deployed and need to *operate* it — list the phone numbers, see the access codes, add a CTF line, or pull the brake? That's the [**Operator Manual**](docs/operators/README.md): a full [`kv` CLI reference](docs/operators/kv-cli-reference.md) plus task runbooks for [phone numbers](docs/operators/phone-number-inventory.md), [access codes & tiers](docs/operators/access-codes-and-tiers.md), [phone games](docs/operators/phone-games-runbook.md), [the PBX](docs/operators/pbx-lifecycle.md), [the infrastructure](docs/operators/infrastructure.md), and [incidents](docs/operators/incident-runbook.md).
+
+```bash
+kv telephony list    # every phone number, where it routes, and what game it runs
+kv code list         # every access code and the tier it grants
+kv killswitch on     # the brake
+```
+
 ## License & Status
 
 A personal project of **Kurt Hundeck** — [MIT](LICENSE), no warranty, no employer affiliation ([NOTICE.md](NOTICE.md)). Contributions welcome under [CONTRIBUTING.md](.github/CONTRIBUTING.md); security reports per [SECURITY.md](.github/SECURITY.md).

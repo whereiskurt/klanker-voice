@@ -27,6 +27,9 @@ REPO_SLUG = "whereiskurt/klanker-voice"
 WIKI_URL = f"https://github.com/{REPO_SLUG}.wiki.git"
 BLOB = f"https://github.com/{REPO_SLUG}/blob/main"
 TREE = f"https://github.com/{REPO_SLUG}/tree/main"
+# Images must resolve to RAW bytes. A blob URL renders GitHub's HTML file
+# viewer, which an <img> cannot display — every capture would 404 on the wiki.
+RAW = f"https://raw.githubusercontent.com/{REPO_SLUG}/main"
 
 # repo path -> wiki page name
 PAGE_MAP = {
@@ -42,6 +45,16 @@ PAGE_MAP = {
     "docs/guides/testing.md": "Testing",
     "docs/guides/configuration.md": "Configuration",
     "docs/guides/deployment.md": "Deployment",
+    "docs/operators/README.md": "Operator-Manual",
+    "docs/operators/kv-cli-reference.md": "kv-CLI-Reference",
+    "docs/operators/phone-number-inventory.md": "Phone-Number-Inventory",
+    "docs/operators/access-codes-and-tiers.md": "Access-Codes-and-Tiers",
+    "docs/operators/phone-games-runbook.md": "Phone-Games",
+    "docs/operators/pbx-lifecycle.md": "PBX-Lifecycle",
+    "docs/operators/infrastructure.md": "Infrastructure",
+    "docs/operators/incident-runbook.md": "Incident-Runbook",
+    "docs/operators/kv-studio-operator-guide.md": "kv-studio",
+    "docs/operators/voipms-provisioning-runbook.md": "VoIPms-Provisioning",
 }
 
 VERBATIM = ["docs/wiki/Home.md", "docs/wiki/_Sidebar.md", "docs/wiki/_Footer.md"]
@@ -61,6 +74,10 @@ def rewrite_links(root: str, src_repo_path: str, text: str) -> str:
 
     def sub(m: "re.Match[str]") -> str:
         label, target = m.group(1), m.group(2)
+        # An image is the same [..](..) shape with a leading '!'. It must
+        # resolve to raw bytes, never a blob URL, or it renders as a broken
+        # image on the wiki.
+        is_image = m.start() > 0 and text[m.start() - 1] == "!"
         anchor = ""
         if "#" in target:
             target, anchor = target.split("#", 1)
@@ -68,6 +85,8 @@ def rewrite_links(root: str, src_repo_path: str, text: str) -> str:
         if not target or target.startswith(("http://", "https://", "mailto:")):
             return m.group(0)
         norm = os.path.normpath(os.path.join(base, target))
+        if is_image:
+            return f"[{label}]({RAW}/{norm})"
         if norm in PAGE_MAP:
             return f"[{label}]({PAGE_MAP[norm]}{anchor})"
         if os.path.isdir(os.path.join(root, norm)):

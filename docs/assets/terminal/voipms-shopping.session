@@ -1,0 +1,29 @@
+# title: kv voipms — balance, rate centers, and available stock
+# Captured live 2026-08-18. All three calls are read-only; none of them spends
+# money. Ordering is a separate, explicit command (`order-did`).
+$ kv voipms balance
+VoIP.ms balance: 8.194600
+# ---
+$ kv voipms search-dids --state NV
+RATECENTER  AVAILABLE
+AUSTIN      yes
+BAKER       yes
+BEATTY      yes
+CARSONCITY  yes
+CARSON PL   yes
+CRESCNTVLY  yes
+CRYSTALBAY  yes
+DCKWTRCRNT  yes
+ELKO        yes
+ELY         yes
+# ---
+$ kv voipms search-dids --state NV --ratecenter RENO
+DID         RATECENTER  PER-MIN/MO  PER-MIN  SMS  MMS
+7755021688  RENO        1.10        0.009    1    1
+7755021689  RENO        1.10        0.009    1    1
+7755021690  RENO        1.10        0.009    1    1
+7755021691  RENO        1.10        0.009    1    1
+7755028972  RENO        1.10        0.009    1    1
+# ---
+$ kv voipms search-dids --state NV --ratecenter LASVEGAS
+DID  RATECENTER  PER-MIN/MO  PER-MIN  SMS  MMS

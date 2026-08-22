@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="535" height="579" viewBox="0 0 535 579" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,DejaVu Sans Mono,monospace" font-size="13.0">
+<rect width="535" height="579" rx="8" fill="#12161c" stroke="#262d38"/>
+<path d="M0 8a8 8 0 0 1 8-8h519a8 8 0 0 1 8 8v22H0z" fill="#1b2029"/>
+<line x1="0" y1="30.0" x2="535" y2="30.0" stroke="#262d38"/>
+<circle cx="18" cy="15" r="5" fill="#e0704a"/>
+<circle cx="34" cy="15" r="5" fill="#e0a648"/>
+<circle cx="50" cy="15" r="5" fill="#7fd88f"/>
+<text x="268" y="19" fill="#6b7683" font-size="11.5" text-anchor="middle">kv voipms — balance, rate centers, and available stock</text>
+<text x="18.0" y="57.0" xml:space="preserve"><tspan fill="#7fd88f">$ </tspan><tspan fill="#e8edf3" font-weight="600">kv voipms balance</tspan></text>
+<text x="18.0" y="77.0" fill="#c8d1dc" xml:space="preserve">VoIP.ms balance: 8.194600</text>
+<line x1="18.0" y1="90.5" x2="517" y2="90.5" stroke="#262d38"/>
+<text x="18.0" y="117.1" xml:space="preserve"><tspan fill="#7fd88f">$ </tspan><tspan fill="#e8edf3" font-weight="600">kv voipms search-dids --state NV</tspan></text>
+<text x="18.0" y="137.1" fill="#e0a648" xml:space="preserve">RATECENTER  AVAILABLE</text>
+<text x="18.0" y="157.1" fill="#c8d1dc" xml:space="preserve">AUSTIN      yes</text>
+<text x="18.0" y="177.1" fill="#c8d1dc" xml:space="preserve">BAKER       yes</text>
+<text x="18.0" y="197.1" fill="#c8d1dc" xml:space="preserve">BEATTY      yes</text>
+<text x="18.0" y="217.2" fill="#c8d1dc" xml:space="preserve">CARSONCITY  yes</text>
+<text x="18.0" y="237.2" fill="#c8d1dc" xml:space="preserve">CARSON PL   yes</text>
+<text x="18.0" y="257.2" fill="#c8d1dc" xml:space="preserve">CRESCNTVLY  yes</text>
+<text x="18.0" y="277.2" fill="#c8d1dc" xml:space="preserve">CRYSTALBAY  yes</text>
+<text x="18.0" y="297.2" fill="#c8d1dc" xml:space="preserve">DCKWTRCRNT  yes</text>
+<text x="18.0" y="317.3" fill="#c8d1dc" xml:space="preserve">ELKO        yes</text>
+<text x="18.0" y="337.3" fill="#c8d1dc" xml:space="preserve">ELY         yes</text>
+<line x1="18.0" y1="350.8" x2="517" y2="350.8" stroke="#262d38"/>
+<text x="18.0" y="377.3" xml:space="preserve"><tspan fill="#7fd88f">$ </tspan><tspan fill="#e8edf3" font-weight="600">kv voipms search-dids --state NV --ratecenter RENO</tspan></text>
+<text x="18.0" y="397.3" fill="#e0a648" xml:space="preserve">DID         RATECENTER  PER-MIN/MO  PER-MIN  SMS  MMS</text>
+<text x="18.0" y="417.4" fill="#c8d1dc" xml:space="preserve">7755021688  RENO        1.10        0.009    1    1</text>
+<text x="18.0" y="437.4" fill="#c8d1dc" xml:space="preserve">7755021689  RENO        1.10        0.009    1    1</text>
+<text x="18.0" y="457.4" fill="#c8d1dc" xml:space="preserve">7755021690  RENO        1.10        0.009    1    1</text>
+<text x="18.0" y="477.4" fill="#c8d1dc" xml:space="preserve">7755021691  RENO        1.10        0.009    1    1</text>
+<text x="18.0" y="497.4" fill="#c8d1dc" xml:space="preserve">7755028972  RENO        1.10        0.009    1    1</text>
+<line x1="18.0" y1="511.0" x2="517" y2="511.0" stroke="#262d38"/>
+<text x="18.0" y="537.5" xml:space="preserve"><tspan fill="#7fd88f">$ </tspan><tspan fill="#e8edf3" font-weight="600">kv voipms search-dids --state NV --ratecenter LASVEGAS</tspan></text>
+<text x="18.0" y="557.5" fill="#e0a648" xml:space="preserve">DID  RATECENTER  PER-MIN/MO  PER-MIN  SMS  MMS</text>
+</svg>

@@ -1,0 +1,11 @@
+# title: kv smoke — proving the deployed pipeline actually carries audio
+# Captured live 2026-08-18 against production. This is a real WebRTC session:
+# it negotiates ICE and counts inbound RTP, so a PASS means media flowed, not
+# just that a port answered.
+$ export KMV_SMOKE_SERVICE_TOKEN=$(aws ssm get-parameter --name /kmv/secrets/use1/voice/smoke_token --with-decryption --query Parameter.Value --output text)
+$ kv smoke
+STATUS       PASS
+ENDPOINT     https://voice.klankermaker.ai
+ICE-STATE    connected
+CANDIDATES   host,srflx
+RTP-PACKETS  243
