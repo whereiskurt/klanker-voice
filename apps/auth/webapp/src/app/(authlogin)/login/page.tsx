@@ -221,7 +221,7 @@ function ClientOnlyForm() {
               <Input
                 id="inviteCode"
                 type="text"
-                placeholder="demo"
+                placeholder="demodemo2026"
                 size="lg"
                 variant="bordered"
                 classNames={{
