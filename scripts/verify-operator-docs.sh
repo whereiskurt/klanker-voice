@@ -42,12 +42,11 @@ section "Links and images resolve"
 for f in "${DOCS[@]}"; do
   d=$(dirname "$f")
   # Every relative markdown target (link or image) must exist on disk.
-  grep -o '](\([^)]*\))' "$f" | sed 's/^](//; s/)$//; s/#.*//' | sort -u |
-    while read -r t; do
-      [ -z "$t" ] && continue
-      case "$t" in http*|mailto*|\<*) continue ;; esac
-      [ -e "$d/$t" ] || printf '  FAIL: %s -> %s\n' "$f" "$t"
-    done
+  while read -r t; do
+    [ -z "$t" ] && continue
+    case "$t" in http*|mailto*|\<*) continue ;; esac
+    [ -e "$d/$t" ] || bad "$f -> $t"
+  done < <(grep -o '](\([^)]*\))' "$f" | sed 's/^](//; s/)$//; s/#.*//' | sort -u)
 done
 ok "checked $((${#DOCS[@]})) pages"
 
