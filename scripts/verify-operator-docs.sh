@@ -26,6 +26,8 @@ DOCS=(
   docs/operators/pbx-lifecycle.md
   docs/operators/infrastructure.md
   docs/operators/incident-runbook.md
+  docs/ops/pause-resume.md
+  docs/ops/backup-restore.md
 )
 TOML=apps/voice/configs/telephony.toml
 fails=0
