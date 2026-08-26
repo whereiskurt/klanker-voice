@@ -141,6 +141,8 @@ trying to remember *where a thing lives*, not how to change it.
 | `tier list` | DynamoDB `kmv-auth-electro` (GSI1 query) | AWS |
 | `usage today` / `history` | DynamoDB `kmv-voice-usage` (GetItem / Query) | AWS |
 | `killswitch status` / `on` / `off` | DynamoDB `kmv-voice-usage` control item | AWS |
+| `pause` / `pause status` / `resume` | git-tracked `site.hcl` (write) + dispatched `terragrunt-apply.yml` (GitHub Actions) + live ECS/ALB reads | AWS, repo, GitHub, `infra/.envrc` |
+| `backup` / `restore` | DynamoDB (all three tables) + S3 ledger + VoIP.ms + SSM, against a local zip | AWS, VoIP.ms, repo, `infra/.envrc` |
 | `telephony list` | *all four*: VoIP.ms API + DynamoDB + SSM + `configs/telephony.toml` | AWS, VoIP.ms, repo |
 | `telephony stats` / `calls` | CloudWatch Logs Insights over the telephony-edge log group | AWS, repo |
 | `voipms *` | VoIP.ms REST API | VoIP.ms (creds via AWS) |
@@ -382,6 +384,117 @@ automatic trip. Also idempotent.
 > If the switch auto-tripped on a cost ceiling, turning it off without changing
 > anything else means it will trip again. Read
 > [the incident runbook](incident-runbook.md) first.
+
+---
+
+# `kv pause` / `kv resume` — standing the whole stack down
+
+> **Source `infra/.envrc` first.** All three commands below resolve the live ECS
+> cluster, service names and target-group ARNs via `terragrunt output`, which
+> needs the backend env vars from `infra/.envrc` sourced into your shell:
+>
+> ```bash
+> set -a && . infra/.envrc && set +a
+> ```
+>
+> Without it, the failure is an opaque empty-bucket/backend error that does not
+> point at the cause. The same prerequisite applies to `kv backup`/`kv restore`
+> below.
+
+Full detail, including the preflight refusals and the Application Auto Scaling
+ordering hazard: [`docs/ops/pause-resume.md`](../ops/pause-resume.md) (repo path
+`docs/ops/pause-resume.md`).
+
+### `kv pause`
+
+Flips the git-tracked `paused` boolean in
+`infra/terraform/live/site/site.hcl`, commits and pushes it to `main`,
+dispatches `terragrunt-apply.yml`, then verifies every service reaches
+`desired=running=0`. Takes the AWS bill from roughly $190/mo running to
+roughly $60/mo paused.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--yes` | `false` | skip the diff-and-confirm prompt |
+| `--reason` | *(none)* | operator note recorded as a trailing line in the commit body |
+
+> **`kv pause` and `kv resume` run only from `main`, and refuse on ANY unclean
+> working tree — including untracked files.** A stray build artifact blocks
+> them entirely.
+
+> **A full pause-then-resume round trip needs TWO manual approvals.** Both
+> dispatch an apply gated by the `terraform-apply` environment's
+> required-reviewer rule. Never start a pause you cannot finish.
+
+### `kv pause status`
+
+**Read-only.** Prints the current `paused` flag value next to each service's
+live desired/running counts from `ecs describe-services`. Never commits,
+never pushes, never dispatches anything — the one entry in this group you can
+run without consequence.
+
+### `kv resume`
+
+The inverse of `kv pause` — flips the flag back to `false`, commits, pushes,
+and dispatches the apply — and additionally waits for the voice and auth ALB
+target groups to report **healthy** before printing success. A clean apply
+alone is not treated as success.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--yes` | `false` | skip the diff-and-confirm prompt |
+
+Neither `kv pause` nor `kv resume` ever touches the kill-switch — that is
+[`kv killswitch`](#kv-killswitch--the-brake), a separate application-layer
+mechanism.
+
+---
+
+# `kv backup` / `kv restore <zip>` — the data that only exists in AWS
+
+Same `infra/.envrc` prerequisite as the group above — both commands resolve
+their write destinations via `terragrunt output`. Full detail, including the
+artifact layout and the required rebuild ordering:
+[`docs/ops/backup-restore.md`](../ops/backup-restore.md) (repo path
+`docs/ops/backup-restore.md`).
+
+### `kv backup`
+
+Writes `kmv-backup-<ISO8601>.zip` holding all three DynamoDB tables as JSONL,
+the full S3 transcript ledger, and a secret-free external inventory (VoIP.ms
+DIDs, the NAT EIP, non-secret SSM parameters), plus a `manifest.json` carrying
+a per-file SHA-256 and a per-table row count.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--out` | `"./backups"` | output directory for the backup zip |
+| `--no-verify` | `false` | skip re-reading and verifying the written archive (verification is on by default) |
+
+> **The artifact is UNENCRYPTED by design and contains PII** — full
+> conversation transcripts and user email addresses. The default output
+> directory `backups/` is gitignored; treat the finished zip itself as
+> sensitive wherever it ends up.
+
+### `kv restore <zip>`
+
+Destinations are resolved from **live** terraform outputs, never from the
+archive's own `manifest.json` — the S3 ledger bucket carries a new
+`random_id` suffix after a rebuild, so trusting the manifest could silently
+write into the wrong bucket. Ephemeral rows (concurrency leases, OIDC
+session/interaction state, login intents, next-auth sessions, expired-TTL
+items) are filtered by default. Writes are batched and idempotent, so a
+partially-completed restore is safe to re-run.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--dry-run` | `false` | report per-table write/skip counts and the ledger object count without issuing a single write |
+| `--tables` | `false` | restore the DynamoDB tables |
+| `--ledger` | `false` | restore the S3 ledger |
+| `--skip-ephemeral` | `true` | filter ephemeral rows (concurrency leases, session state, expired TTL items) |
+
+`--tables` and `--ledger` select a partial restore; with neither given, a bare
+`kv restore <zip>` restores both. A corrupted archive is refused, naming the
+failing entry.
 
 ---
 
