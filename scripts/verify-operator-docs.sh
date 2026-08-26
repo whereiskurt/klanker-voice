@@ -178,17 +178,46 @@ done < <(grep -rhoE '\b[0-9]{10}\b' "${DOCS[@]}" docs/assets/terminal/*.session 
 [ "$leaked_numbers" -eq 0 ] && ok "every phone number in the manual is a public DID or a placeholder"
 
 # (b) Live. Access-code values are the credential a stranger would type, so
-# assert that no current code string appears anywhere in docs/.
+# assert that no CURRENT (non-expired) code string appears anywhere in
+# docs/. Soft-expired codes (kv code expire sets expiresAt rather than
+# deleting the row) are excluded; never-expiring codes (no expiresAt field
+# at all) are still checked.
 if command -v "$KV" >/dev/null 2>&1 || [ -x "$KV" ]; then
-  codes=$("$KV" code list --json 2>/dev/null |
-          sed -n 's/.*"code": *"\([^"]*\)".*/\1/p' | sort -u)
-  if [ -z "$codes" ]; then
+  codes=$("$KV" code list --json 2>/dev/null | node -e '
+    let s = "";
+    process.stdin.on("data", (d) => { s += d; });
+    process.stdin.on("end", () => {
+      let arr;
+      try {
+        arr = JSON.parse(s);
+        if (!Array.isArray(arr)) throw new Error("not an array");
+      } catch (e) {
+        process.exit(1);
+      }
+      const now = Date.now();
+      for (const r of arr) {
+        if (r.expiresAt === undefined || r.expiresAt === null || r.expiresAt > now) {
+          console.log(r.code);
+        }
+      }
+    });
+  ')
+  node_exit=$?
+  if [ "$node_exit" -ne 0 ]; then
     printf '  SKIP: could not read live access codes (no AWS session?)\n'
+  elif [ -z "$codes" ]; then
+    ok "no active access codes to check (all retired or none exist)"
   else
     leaked_codes=0
     while read -r c; do
       [ -z "$c" ] && continue
-      if grep -rqiw -- "$c" "${DOCS[@]}" docs/assets/terminal/*.session 2>/dev/null; then
+      # Escape ERE metacharacters so a punctuation-bearing code can't alter
+      # the pattern, then require the code to sit on a hyphen/underscore/
+      # alnum boundary — a plain -w treats "-" as a word char boundary and
+      # would false-positive on e.g. "demo" inside "demo-tier".
+      esc=$(printf '%s' "$c" | sed 's/[][\.^$*+?(){}|]/\\&/g')
+      if grep -rEqi -e "(^|[^[:alnum:]_-])${esc}([^[:alnum:]_-]|\$)" -- \
+           "${DOCS[@]}" docs/assets/terminal/*.session 2>/dev/null; then
         bad "a live access-code value appears in the manual (redact it)"
         leaked_codes=1
       fi
