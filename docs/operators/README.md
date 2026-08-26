@@ -22,6 +22,9 @@ kv telephony list
 kv code list && kv tier list
 ```
 
+**"How do I take it all down for a few months, and bring it back?"** →
+[Pause & resume runbook](../ops/pause-resume.md)
+
 **"Something is broken and people are watching."** →
 [Incident runbook](incident-runbook.md)
 
@@ -38,6 +41,8 @@ kv code list && kv tier list
 | [PBX lifecycle](pbx-lifecycle.md) | standing the phone side up from nothing, and taking it down |
 | [Infrastructure](infrastructure.md) | what runs in AWS right now, and how to check it's healthy |
 | [Incident runbook](incident-runbook.md) | the brake, the ceilings, and a diagnostic tree per symptom |
+| [Pause & resume](../ops/pause-resume.md) | how to take the whole stack down for weeks and bring it back, in `docs/ops/pause-resume.md` |
+| [Backup & restore](../ops/backup-restore.md) | how to snapshot and restore what only exists in AWS, in `docs/ops/backup-restore.md` |
 
 ### Also in this directory
 
@@ -76,7 +81,8 @@ kv code list && kv tier list
 
 1. [Kill-switch](incident-runbook.md#the-brake) — refuses new sessions, changes nothing else
 2. [Scale the phone side to zero](pbx-lifecycle.md#taking-the-whole-phone-side-down) — stops calls arriving
-3. [Full decommission](pbx-lifecycle.md#deprovisioning) — including what *not* to delete
+3. [Pause the whole stack](../ops/pause-resume.md) — scales every ECS service to zero, ~$190/mo down to ~$60/mo, reversible with `kv resume`
+4. [Full decommission](pbx-lifecycle.md#deprovisioning) — including what *not* to delete
 
 ---
 
