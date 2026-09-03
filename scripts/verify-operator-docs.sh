@@ -26,6 +26,7 @@ DOCS=(
   docs/operators/pbx-lifecycle.md
   docs/operators/infrastructure.md
   docs/operators/incident-runbook.md
+  docs/operators/ses-active-rule-set-fix.md
   docs/ops/pause-resume.md
   docs/ops/backup-restore.md
 )
@@ -143,6 +144,7 @@ for p in \
   apps/voice/configs/studio/dids.yaml \
   apps/voice/scripts/refresh_knowledge.py \
   apps/voice/asterisk/Dockerfile \
+  infra/terraform/modules/email/v1.0.0/ses.tf \
   scripts/render-terminal-svg.py scripts/sync-wiki.py infra/.envrc; do
   [ -e "$p" ] || bad "referenced path is gone: $p"
 done

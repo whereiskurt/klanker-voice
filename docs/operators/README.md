@@ -51,6 +51,7 @@ kv code list && kv tier list
 | [kv studio operator guide](kv-studio-operator-guide.md) | the local web console, its SOP snapshots and deploy flow |
 | [VoIP.ms provisioning runbook](voipms-provisioning-runbook.md) | the portal-only carrier security steps, in §25.F order |
 | [Phase 12 seed data](phase12-seed-data.md) | the original telephony seed values |
+| [SES active rule set fix](ses-active-rule-set-fix.md) | a one-time infra fix: stop this project's `email` unit from stealing the account's active SES receipt rule set and silently dropping a sibling system's inbound mail |
 
 ---
 
