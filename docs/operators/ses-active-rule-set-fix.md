@@ -6,6 +6,37 @@
 
 ---
 
+## ✅ RESOLVED 2026-09-11 — §8 was applied, not §5
+
+**What landed:** §8, the *assert* variant — `aws_ses_active_receipt_rule_set.main` now declares
+the literal `"sandbox-email-shared"` (PR #99, commit `d9de59c`).
+
+**Why §8 over this doc's own §5 recommendation:** §5 makes Terraform *forget* the resource, which
+stops it fighting but does nothing if the pointer is flipped again by hand or by another tool.
+§8 **self-heals** — every future apply re-asserts the correct value. The operator chose it for
+that reason. Its stated trade-off stands: it hard-codes a name owned by another system.
+
+**No apply was needed.** The live pointer was already `sandbox-email-shared` (hand-restored
+2026-09-03), so landing the code merely made Terraform's desired state match reality. Before the
+fix, every plan showed the account-wide slot queued to be re-stolen:
+
+```
+~ rule_set_name = "sandbox-email-shared" -> "kmv-email"
+```
+
+After it, the `email` unit plans **No changes** — verified on the PR and again on `main`
+(runs 34598166153 and 34599033335). That clean second plan is the proof it sticks rather than
+merely surviving one apply.
+
+**Still open — §9 is NOT fixed.** Our own receipt rules remain attached to the now-inert
+`kmv-email` set, so a new receive/forward rule added here would apply cleanly and receive
+nothing. That follow-up is untouched.
+
+> **Note on an earlier mislabel:** `d9de59c`'s commit message and PR #99's description both say
+> "this lands §5". That is wrong — the change is §8. The code is correct; only the citation was.
+
+---
+
 ## 1. What is wrong
 
 AWS SES allows **exactly one active receipt rule set per account per region**. Only that one
