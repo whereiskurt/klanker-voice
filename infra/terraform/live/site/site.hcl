@@ -170,7 +170,7 @@ locals {
   # allowlist stays valid. VPC, Route53, ACM, DynamoDB, the S3 ledger, the
   # cf-assets bucket and ECR all stay put, so wake needs no restore.
   # See docs/superpowers/specs/2026-09-10-hibernate-wake-design.md.
-  hibernated = false
+  hibernated = true
 
   ecs_services = {
     # NOTE: this stays true under hibernation. Setting it false would make
