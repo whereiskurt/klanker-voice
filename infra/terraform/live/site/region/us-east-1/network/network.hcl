@@ -35,7 +35,9 @@ locals {
     }
 
     nat_gateway = {
-      enabled = true
+      enabled = !local.site_vars.locals.hibernated
+      # Keep the VoIP.ms-allowlisted egress IP across a hibernation.
+      retain_eip = true
     }
 
     vpc_flow_logs = {
@@ -53,7 +55,7 @@ locals {
     # (checked during the Phase 2 clone). The WebRTC control-channel
     # idle-timeout bump (>= 2400s) is deferred to Phase 4.
     alb = {
-      enabled                    = true
+      enabled                    = !local.site_vars.locals.hibernated
       enable_deletion_protection = false
       ssl_policy                 = "ELBSecurityPolicy-TLS13-1-2-2021-06"
       logs_force_destroy         = true

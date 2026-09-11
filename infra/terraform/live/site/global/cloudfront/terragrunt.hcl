@@ -128,8 +128,12 @@ inputs = merge(
     regional_origins_by_domain = {
       for domain in local.site_vars.locals.cloudfront.domains : domain => {
         use1 = {
-          alb_dns_name                   = try(dependency.use1_network.outputs.alb_dns_name, "")
-          alb_zone_id                    = try(dependency.use1_network.outputs.alb_zone_id, "")
+          # coalesce() to "" is required, not just try(): the dependency
+          # output is null (not an error) while hibernated, and try() only
+          # intercepts errors -- a bare null would travel into the module,
+          # which types this attribute as a plain string.
+          alb_dns_name                   = try(coalesce(dependency.use1_network.outputs.alb_dns_name, ""), "")
+          alb_zone_id                    = try(coalesce(dependency.use1_network.outputs.alb_zone_id, ""), "")
           s3_bucket_id                   = dependency.use1_cloudfront.outputs.bucket_ids[domain]
           s3_bucket_arn                  = dependency.use1_cloudfront.outputs.bucket_arns[domain]
           s3_bucket_regional_domain_name = dependency.use1_cloudfront.outputs.bucket_regional_domain_names[domain]
@@ -145,6 +149,11 @@ inputs = merge(
 
     # WAF disabled for this site
     waf_web_acl_arns = {}
+
+    # Drop the ALB origin and its /api/*,/health behaviors while hibernated --
+    # the ALB is destroyed, so its dns_name output is null and a null
+    # domain_name would fail this apply.
+    alb_origin_enabled = !local.site_vars.locals.hibernated
 
     tags = {
       Environment = local.site_vars.locals.site.label

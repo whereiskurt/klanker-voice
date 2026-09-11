@@ -163,11 +163,27 @@ locals {
   # allowlisted NAT EIP alive and makes resume a pure scale-up.
   paused = false
 
+  # Operator hibernate switch (kv hibernate / kv wake -- avoid editing by hand).
+  # true => everything `paused` does, PLUS: the ECS services, their target
+  # groups and listener rules are destroyed outright, and the NAT Gateway and
+  # ALB are torn down. The NAT *EIP* is retained (unattached) so the VoIP.ms
+  # allowlist stays valid. VPC, Route53, ACM, DynamoDB, the S3 ledger, the
+  # cf-assets bucket and ECR all stay put, so wake needs no restore.
+  # See docs/superpowers/specs/2026-09-10-hibernate-wake-design.md.
+  hibernated = false
+
   ecs_services = {
-    # Phase 4 (04-02): voice service. Phase 5 deploy: auth service added.
-    # Phase 12 (12-07): telephony-edge service added.
+    # NOTE: this stays true under hibernation. Setting it false would make
+    # ecs-service/terragrunt.hcl's `exclude { actions = ["all"] }` skip the
+    # unit INCLUDING its destroy, orphaning the services -- still running,
+    # still billing, and still holding the listener rules that block the ALB
+    # delete. Emptying the list below is what actually removes them.
     enabled = true
-    services = [
+
+    # Under hibernation the list goes empty: the module's for_each maps
+    # collapse and terraform destroys the services, target groups and
+    # listener rules in-graph.
+    services = local.hibernated ? [] : [
       for s in [local.service_conf.voice.locals.service, local.service_conf.auth.locals.service, local.service_conf.telephony_edge.locals.service] :
       # Both overrides are required (D-16): Application Auto Scaling
       # enforces min_capacity (main.tf:313/323), so desired_count = 0 alone
