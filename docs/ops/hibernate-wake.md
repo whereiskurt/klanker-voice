@@ -24,14 +24,32 @@ possible round trip. Pick `kv destroy` only when the project is actually done �
 [docs/ops/pause-resume.md](./pause-resume.md) and the pause/backup/teardown design spec for
 that tier.
 
-## ⚠️ Before the first real `kv hibernate`: the deferred plan gate
+## ✅ The plan gate — RUN AND PASSED 2026-09-10, against the live stack
 
-The live `terragrunt plan` verification for this feature could not be run during
-development — AWS credentials were expired at implementation time (see the design spec §12).
-**This gate must be run once, by a human, before `kv hibernate` is ever used in earnest.**
-It is not a formality; it is the only proof anyone has that the refactor described in the
-design spec's §5 module changes doesn't alter infrastructure that is currently serving
-traffic.
+**Status: satisfied.** This gate was originally deferred (AWS credentials were expired at
+implementation time), but it was then run via CI's `terragrunt-plan` workflow, which uses the
+GitHub OIDC role rather than an operator's local session. Evidence, on PR #97:
+
+| Check | Unit | Result |
+|---|---|---|
+| `hibernated = false` is a no-op | `network`, `cloudfront`, `ecs-service` | **No changes** on all three |
+| `hibernated = true` destroys the right things | `network` | 0 add, 0 change, **9 destroy** — ALB, listener, NAT Gateway, private route, ALB log bucket |
+| **The NAT EIP survives** | `network` | `aws_eip.nat[0]` (`eipalloc-0a098e4128849c46f`) refreshed, **absent from the destroy list** |
+| Services are destroyed, not orphaned | `ecs-service` | 0 add, 0 change, **9 destroy** — all three services, both listener rules, both target groups, autoscaling. The unit **planned**; it was not `exclude`d |
+| CloudFront is not recreated | `global/cloudfront` | `will be **updated in-place**` — 0 add, 1 change, 0 destroy |
+
+It also earned its keep immediately: the first run **failed**, catching an
+`Inconsistent conditional result types` error in `site.hcl` that broke evaluation of *every*
+terragrunt unit, at both flag values. `terragrunt hcl format --check` had passed it — formatting
+is not evaluation. Fixed in `2402962`.
+
+**Re-run this gate after any change to the `hibernated` plumbing or the network/cloudfront
+modules.** The cheap way is to push the change to a PR touching `infra/**`: the
+`terragrunt-plan` workflow triggers automatically. For the `hibernated = true` half, push a
+throwaway branch with the flag flipped and `gh workflow run terragrunt-plan.yml --ref <branch>`
+— a plan mutates nothing — then delete the branch.
+
+The original manual procedure, for when you want to run it locally instead:
 
 From `infra/terraform/live/site`, after `aws sso login --profile klanker-terraform` and
 sourcing `infra/.envrc` (see [Prerequisite](#prerequisite-source-infraenvrc-before-running-either-command)
