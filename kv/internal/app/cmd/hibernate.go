@@ -341,7 +341,14 @@ func printHibernateDryRun(w io.Writer, action string, phases []ApplyPhase, deps 
 	}
 	for i, p := range phases {
 		fmt.Fprintf(w, "  phase %d: dispatch %s with modules=%q (%s)\n", i+1, TerragruntApplyWorkflow, p.Modules, p.Name)
-		fmt.Fprintf(w, "           then WATCH it to terminal success before phase %d\n", i+2)
+		// Only advertise a successor when there is one -- an operator reading
+		// this mid-teardown should not be left waiting on a phase that does
+		// not exist.
+		if i+1 < len(phases) {
+			fmt.Fprintf(w, "           then WATCH it to terminal success before phase %d\n", i+2)
+		} else {
+			fmt.Fprintln(w, "           then WATCH it to terminal success (last phase)")
+		}
 		if opts.Want && i == 0 {
 			fmt.Fprintf(w, "           then: copy s3://%s/%s -> %s and put the maintenance page\n", deps.AssetBucket, IndexKey, SPABackupKey)
 		}
@@ -442,7 +449,7 @@ func NewHibernateCmd(cfg *Config) *cobra.Command {
 		Long: "kv hibernate flips the git-tracked `hibernated` boolean in\n" +
 			"infra/terraform/live/site/site.hcl, commits and pushes it to main, then\n" +
 			"dispatches TWO STRICTLY SEQUENTIAL terragrunt-apply runs: first\n" +
-			"ecs-service,cloudfront (removing everything that references the ALB), then\n" +
+			"ecs-service,global/cloudfront (removing everything that references the ALB), then\n" +
 			"network (deleting the ALB and NAT Gateway). The second is never dispatched\n" +
 			"until the first has completed successfully -- they share the workflow's\n" +
 			"cancel-in-progress concurrency group, so an eager dispatch would cancel a\n" +
@@ -477,7 +484,7 @@ func NewWakeCmd(cfg *Config) *cobra.Command {
 		Use:   "wake",
 		Short: "Rebuild the NAT Gateway, ALB and ECS services from a hibernated stack",
 		Long: "kv wake mirrors kv hibernate, running the same two units in the reverse\n" +
-			"order (network first, then ecs-service,cloudfront) -- which is terragrunt's\n" +
+			"order (network first, then ecs-service,global/cloudfront) -- which is terragrunt's\n" +
 			"natural dependency order, so wake carries no ordering hazard. It restores\n" +
 			"the real SPA shell over the maintenance page and does not report success\n" +
 			"until the voice and auth ALB target groups report healthy.",
