@@ -214,6 +214,8 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(NewRestoreCmd(cfg))
 	root.AddCommand(NewPauseCmd(cfg))
 	root.AddCommand(NewResumeCmd(cfg))
+	root.AddCommand(NewHibernateCmd(cfg))
+	root.AddCommand(NewWakeCmd(cfg))
 
 	return root
 }

@@ -14,9 +14,15 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // Object keys and headers for the swap. IndexCacheControl mirrors what
@@ -88,4 +94,85 @@ func RestoreSPA(ctx context.Context, api PageStoreAPI, bucket string, w io.Write
 	}
 	fmt.Fprintf(w, "  restored %s from %s\n", IndexKey, SPABackupKey)
 	return nil
+}
+
+// s3PageStoreAPI is the production PageStoreAPI, backed by *s3.Client.
+type s3PageStoreAPI struct {
+	api *s3.Client
+}
+
+// NewPageStoreAPI builds a PageStoreAPI backed by api.
+func NewPageStoreAPI(api *s3.Client) PageStoreAPI {
+	return &s3PageStoreAPI{api: api}
+}
+
+// CopyObject copies srcKey to dstKey within bucket, preserving the
+// source object's metadata (notably Cache-Control) via
+// MetadataDirectiveCopy -- index.html is uploaded no-cache by
+// build-voice.yml, and the restored SPA must keep that or a stale
+// maintenance page keeps being served from the CloudFront edge after wake.
+func (s *s3PageStoreAPI) CopyObject(ctx context.Context, bucket, srcKey, dstKey string) error {
+	_, err := s.api.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:            aws.String(bucket),
+		Key:               aws.String(dstKey),
+		CopySource:        aws.String(bucket + "/" + srcKey),
+		MetadataDirective: types.MetadataDirectiveCopy,
+	})
+	if err != nil {
+		return fmt.Errorf("copy s3://%s/%s -> %s: %w", bucket, srcKey, dstKey, err)
+	}
+	return nil
+}
+
+// PutObject writes body to bucket/key with the given Cache-Control and
+// Content-Type.
+func (s *s3PageStoreAPI) PutObject(ctx context.Context, bucket, key string, body []byte, cacheControl, contentType string) error {
+	_, err := s.api.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:       aws.String(bucket),
+		Key:          aws.String(key),
+		Body:         bytes.NewReader(body),
+		CacheControl: aws.String(cacheControl),
+		ContentType:  aws.String(contentType),
+	})
+	if err != nil {
+		return fmt.Errorf("put s3://%s/%s: %w", bucket, key, err)
+	}
+	return nil
+}
+
+// DeleteObject deletes bucket/key.
+func (s *s3PageStoreAPI) DeleteObject(ctx context.Context, bucket, key string) error {
+	_, err := s.api.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("delete s3://%s/%s: %w", bucket, key, err)
+	}
+	return nil
+}
+
+// HeadObject reports whether bucket/key exists. A NotFound or NoSuchKey API
+// error (S3's HeadObject has no body to carry NoSuchKey in, so the SDK
+// synthesizes a *types.NotFound for a 404 there; a GetObject-shaped 404
+// would come back as *types.NoSuchKey -- both are checked) is reported as
+// (false, nil), not an error: a missing object is an expected outcome
+// SwapToMaintenance and RestoreSPA branch on, not a failure.
+func (s *s3PageStoreAPI) HeadObject(ctx context.Context, bucket, key string) (bool, error) {
+	_, err := s.api.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		var notFound *types.NotFound
+		if errors.As(err, &notFound) {
+			return false, nil
+		}
+		var noSuchKey *types.NoSuchKey
+		if errors.As(err, &noSuchKey) {
+			return false, nil
+		}
+		return false, fmt.Errorf("head s3://%s/%s: %w", bucket, key, err)
+	}
+	return true, nil
 }
