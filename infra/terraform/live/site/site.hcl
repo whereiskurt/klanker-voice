@@ -183,7 +183,15 @@ locals {
     # Under hibernation the list goes empty: the module's for_each maps
     # collapse and terraform destroys the services, target groups and
     # listener rules in-graph.
-    services = local.hibernated ? [] : [
+    #
+    # The emptying is an `if` filter on the comprehension, NOT a
+    # `local.hibernated ? [] : [...]` conditional. That conditional is what
+    # HCL rejects with "Inconsistent conditional result types": `[]` is an
+    # empty tuple and the comprehension is a tuple of service objects, and
+    # HCL will not unify the two. It fails at PARSE time, in every unit, at
+    # BOTH flag values -- and `terragrunt hcl format --check` passes it
+    # happily, because formatting is not evaluation. Keep the filter form.
+    services = [
       for s in [local.service_conf.voice.locals.service, local.service_conf.auth.locals.service, local.service_conf.telephony_edge.locals.service] :
       # Both overrides are required (D-16): Application Auto Scaling
       # enforces min_capacity (main.tf:313/323), so desired_count = 0 alone
@@ -194,6 +202,7 @@ locals {
         desired_count = 0
         autoscaling   = merge(s.autoscaling, { min_capacity = 0 })
       }) : s
+      if !local.hibernated
     ]
   }
 
