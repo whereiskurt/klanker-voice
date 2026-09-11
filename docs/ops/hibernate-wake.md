@@ -210,6 +210,18 @@ phase 1 is a no-op apply against a stack that already matches — and does not r
 until the verification confirms the ALB and NAT Gateway are actually gone and the EIP is
 still allocated.
 
+> **What a re-run does NOT re-check: orphaned ECS services.** The verification looks for
+> orphans by name, and it takes those names from the `ecs-service` unit's terraform outputs,
+> which are resolved *before* the applies. On a first run the stack is still up, so it has all
+> three names and the check is real. On a **re-run**, phase 1 has already emptied that unit, so
+> the name list comes back empty and the orphan check passes trivially — it has nothing to look
+> for. The ALB, NAT Gateway and EIP checks are unaffected and stay real in both cases.
+>
+> In practice this only bites if phase 1 failed *partway*, leaving some services behind. Confirm
+> that yourself with `kv pause status`, which reads the live cluster rather than terraform's
+> view, before trusting a re-run's clean verification. A fix that resolves the cluster's services
+> directly is a tracked follow-up.
+
 ## What breaks while hibernated
 
 - **`voice.klankermaker.ai`** serves a committed maintenance page in place of the real SPA
