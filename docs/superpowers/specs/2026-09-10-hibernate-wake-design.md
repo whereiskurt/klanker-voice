@@ -450,6 +450,22 @@ expressed later — `hibernated` gates a list, not a hardcoded set — without r
 
 ## 12. Open items
 
+- **§7's CloudFront invalidation is deliberately NOT implemented** (ruling R14 at
+  implementation time; recorded here so the spec stops requiring something nothing does).
+  `index.html` is written `no-cache, no-store, must-revalidate` by both `build-voice.yml`
+  and `kv`'s own `PutObject`, and CloudFront honours an origin's `Cache-Control` — so it
+  revalidates on the next request rather than serving the stale shell, and the swap is
+  effectively immediate in both directions. An invalidation would buy nothing except a new
+  `aws-sdk-go-v2/service/cloudfront` dependency, which the same implementation declined for
+  `service/ec2` on exactly those grounds. Reconsider only if `index.html`'s cache headers
+  ever change. (The invalidation `build-voice.yml` *does* issue is unrelated and stays — it
+  is the CI publish path, and it is skipped while hibernated along with the `index.html`
+  upload, per §7.1.)
+- **§7 and §8 disagreed on when the page swap happens** (ruling R15); §7 ("after phase 1 succeeds") was
+  adopted and §8's step list is superseded. The invariant is *the maintenance page is up
+  whenever the stack is not serving*: hibernate swaps between the phases, because phase 1
+  drops CloudFront's `/api/*` behaviour and a failed phase 2 would otherwise leave a
+  live-looking mic button up; wake restores the SPA only after the target-group health gate.
 - **The ~$10/mo misc floor is unverified.** AWS credentials were expired at spec time, so the
   breakdown (Route53 hosted zone, ~4 customer-managed KMS CMKs at $1/mo each from
   `infra/.envrc`, ECR storage, S3, CloudWatch Logs) is inferred from resource inventory rather

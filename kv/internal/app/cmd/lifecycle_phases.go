@@ -69,6 +69,17 @@ var ErrForbiddenModule = errors.New("phase names a forbidden module")
 // and silently kills klanker-maker's inbound mail. See
 // docs/operators/ses-active-rule-set-fix.md; the underlying defect is
 // unfixed, so this guard is load-bearing.
+//
+// NOTE ON MATCHING: keys are BARE unit names, and ValidatePhases compares
+// them against the comma-separated `modules` string verbatim. That is
+// sufficient today because every phase list in this package is a package
+// constant naming bare units (HibernatePhases, WakePhases). It is NOT
+// sufficient in general: terragrunt-apply.yml also accepts
+// slash-qualified paths (e.g. "global/email", "region/us-east-1/email"),
+// and "global/email" would sail straight past this map. So if a
+// user-facing `--modules` flag is ever added, it must normalise each
+// entry to its last path segment before this check -- otherwise the guard
+// silently stops protecting another project's inbound mail.
 var forbiddenModules = map[string]bool{"email": true}
 
 // ValidatePhases checks every phase before any dispatch happens, so a bad
@@ -94,7 +105,17 @@ func ValidatePhases(phases []ApplyPhase) error {
 // terminal state before dispatching the next, returning the run id of every
 // completed phase. It returns on the first failing phase without
 // dispatching any later one (D-07).
-func RunApplyPhases(ctx context.Context, gh GHAPI, ref string, phases []ApplyPhase, now func() time.Time, w io.Writer) ([]string, error) {
+//
+// afterPhase, when non-nil, runs after each phase reaches terminal success
+// and before the next phase is dispatched, receiving that phase's zero-based
+// index. It is the hook `kv hibernate` swaps the maintenance page in through
+// (R15): the page must be up from the moment phase 1 drops CloudFront's
+// /api/* behaviour, not only once phase 2 has also succeeded. An error from
+// afterPhase aborts the whole run and no later phase is dispatched -- the
+// same bar a failed phase clears, for the same reason: it is safer to leave
+// the ALB standing and re-run than to tear it down behind a page swap that
+// did not happen.
+func RunApplyPhases(ctx context.Context, gh GHAPI, ref string, phases []ApplyPhase, now func() time.Time, w io.Writer, afterPhase func(context.Context, int) error) ([]string, error) {
 	if err := ValidatePhases(phases); err != nil {
 		return nil, err
 	}
@@ -122,6 +143,13 @@ func RunApplyPhases(ctx context.Context, gh GHAPI, ref string, phases []ApplyPha
 				"`kv pause status` will show what actually applied", i+1, p.Modules, runID, err)
 		}
 		runIDs = append(runIDs, runID)
+
+		if afterPhase != nil {
+			if err := afterPhase(ctx, i); err != nil {
+				return runIDs, fmt.Errorf("after phase %d (%s): %w -- "+
+					"later phases were NOT dispatched", i+1, p.Modules, err)
+			}
+		}
 	}
 	return runIDs, nil
 }

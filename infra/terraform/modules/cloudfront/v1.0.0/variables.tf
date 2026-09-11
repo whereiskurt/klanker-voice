@@ -83,9 +83,12 @@ variable "tags" {
 # retained distribution during hibernation (2026-09-10 spec §5.1).
 #
 # It cannot be inferred from alb_dns_name being empty: the network module's
-# output is null (not "") when the ALB is disabled, and the consuming unit's
-# try() does not intercept null -- a null would reach domain_name and fail
-# the apply before any conditional could run.
+# output is null (not "") when the ALB is disabled. The consuming unit
+# (live/site/global/cloudfront/terragrunt.hcl) turns that null into "" with
+# a try(coalesce(x, ""), "") pair -- see the comment there for why both
+# functions are needed -- but that only gives this module an empty string,
+# which is indistinguishable from "not looked up yet". The caller has to
+# say which it meant, and this flag is how.
 #
 # Defaults true so every existing call site is unaffected.
 variable "alb_origin_enabled" {

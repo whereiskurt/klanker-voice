@@ -50,7 +50,7 @@ func fixedNow() func() time.Time {
 func TestRunApplyPhases_DispatchesStrictlySequentially(t *testing.T) {
 	gh := &recordingGH{runIDSeq: []string{"run-1", "run-2"}}
 
-	ids, err := RunApplyPhases(context.Background(), gh, "main", HibernatePhases, fixedNow(), io.Discard)
+	ids, err := RunApplyPhases(context.Background(), gh, "main", HibernatePhases, fixedNow(), io.Discard, nil)
 	if err != nil {
 		t.Fatalf("RunApplyPhases error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRunApplyPhases_FailedPhaseAbortsBeforeNextDispatch(t *testing.T) {
 		watchErr: map[string]error{"run-1": errors.New("run failed")},
 	}
 
-	_, err := RunApplyPhases(context.Background(), gh, "main", HibernatePhases, fixedNow(), io.Discard)
+	_, err := RunApplyPhases(context.Background(), gh, "main", HibernatePhases, fixedNow(), io.Discard, nil)
 	if err == nil {
 		t.Fatal("RunApplyPhases error = nil, want a phase-1 failure")
 	}
@@ -143,7 +143,7 @@ func TestRunApplyPhases_ValidatesBeforeFirstDispatch(t *testing.T) {
 	gh := &recordingGH{runIDSeq: []string{"run-1"}}
 
 	_, err := RunApplyPhases(context.Background(), gh, "main",
-		[]ApplyPhase{{Name: "bad", Modules: ""}}, fixedNow(), io.Discard)
+		[]ApplyPhase{{Name: "bad", Modules: ""}}, fixedNow(), io.Discard, nil)
 	if !errors.Is(err, ErrEmptyModuleList) {
 		t.Fatalf("error = %v, want ErrEmptyModuleList", err)
 	}

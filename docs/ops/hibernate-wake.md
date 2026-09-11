@@ -71,15 +71,29 @@ kv pause status          # grows a "hibernated flag" row
 - **`kv hibernate`** — flips the git-tracked `hibernated` boolean in
   `infra/terraform/live/site/site.hcl` to `true`, commits and pushes to `main`, drains any
   in-flight voice sessions to zero, dispatches two strictly sequential
-  `terragrunt-apply.yml` runs, swaps in the maintenance page, verifies the ALB and NAT
-  Gateway are gone and the EIP is still allocated, and reports the resulting cost posture.
-  `--yes` skips the diff-and-confirm prompt. `--reason` records an operator note as a
-  trailing line in the commit body, same as `kv pause`.
+  `terragrunt-apply.yml` runs — **swapping in the maintenance page between them, as soon as
+  phase 1 succeeds** — then verifies the ALB and NAT Gateway are gone and the EIP is still
+  allocated, and reports the resulting cost posture. `--yes` skips the diff-and-confirm
+  prompt. `--reason` records an operator note as a trailing line in the commit body, same as
+  `kv pause`.
 - **`kv wake`** — mirrors `kv hibernate` in reverse: flips the flag back to `false`, runs the
-  same two apply phases in reverse order, restores the real SPA shell over the maintenance
-  page, and does not report success until the voice and auth ALB target groups report
-  **healthy** — the same bar `kv resume` already sets. It also reports what happened to the
-  NAT EIP (see [The NAT EIP outcome](#the-nat-eip-outcome-why-kv-wake-reports-it)).
+  same two apply phases in reverse order, waits for every service to come up and for the
+  voice and auth ALB target groups to report **healthy** — the same bar `kv resume` already
+  sets — and only **then** restores the real SPA shell over the maintenance page. It also
+  reports what happened to the NAT EIP (see
+  [The NAT EIP outcome](#the-nat-eip-outcome-why-kv-wake-reports-it)).
+
+  The page swap sits where it does, at both ends, to hold one invariant: **the maintenance
+  page is up whenever the stack is not serving.** Phase 1 of a hibernate drops CloudFront's
+  `/api/*` and `/health` behaviours, so from that moment the real SPA would be a mic button
+  against a stack that cannot answer — and if phase 2 then failed, it would stay that way.
+  At the other end, restoring the SPA before the health gate would put a working-looking
+  page in front of services that may never come up.
+
+  Neither direction issues a CloudFront invalidation, and neither needs one: `index.html` is
+  written `no-cache, no-store, must-revalidate`, and CloudFront honours an origin's
+  `Cache-Control`, so it revalidates on the next request rather than serving the stale
+  shell.
 - **`kv pause status`** — unchanged command, one new row: it now also prints the
   `hibernated` flag next to `paused`, and a one-line note when hibernated is true
   (`hibernated implies paused: the service list is empty, and the NAT Gateway and ALB are
@@ -114,9 +128,16 @@ passes:
 | local branch is out of sync with origin | Your local `main` doesn't match `origin/main` (behind, ahead, or diverged) | `git fetch origin && git status` to see which, then reconcile |
 | `gh` is not authenticated | The GitHub CLI has no valid session | `gh auth login` |
 
-An already-hibernated `kv hibernate` (or already-awake `kv wake`) is **not** a refusal — it's
-an idempotent no-op: the command prints `kv hibernate: no-op, already hibernated=true` (or
-the `wake` equivalent) and exits 0 without touching git, CI, or AWS at all.
+An already-hibernated `kv hibernate` (or already-awake `kv wake`) is **not** a refusal — and
+it is **not a no-op either**. The flag is committed *before* the applies run, so finding it
+already set proves only that some earlier invocation got as far as the commit, not that the
+applies, the page swap or the verification ever happened. The command says so —
+`flag already hibernated=true (committed by an earlier run) -- re-running the remaining
+steps` — skips only the flag rewrite, confirm, commit and push, and then re-runs everything
+after them. That is what makes [Recovery from a failed phase 1](#recovery-from-a-failed-phase-1)
+below actually recover something. The repeated steps are all safe to repeat: terragrunt
+applies are idempotent, the page swap refuses to re-copy over an existing `index.spa.html`,
+and the verification is read-only.
 
 ## The diff-and-confirm step
 
@@ -173,11 +194,21 @@ kv pause status
 
 This shows the live `hibernated`/`paused` flags next to each service's real desired/running
 counts, so you can tell whether phase 1 partially landed (some services gone, some not) or
-never started. Re-running `kv hibernate` is safe: the `hibernated` flag is already
-committed to `true` from the first attempt, so the command's idempotent-read step recognizes
-that and — once you resolve whatever caused phase 1 to fail — a fresh `kv hibernate`
-invocation will re-attempt the same two phases. There is no special "resume" mode and none
-is needed; the command's own idempotence covers this case.
+never started. While hibernated there are no services at all, and it says so
+(`no ECS services defined (hibernated)`) rather than printing an empty table.
+
+Re-running `kv hibernate` is safe, and it is the recovery: the `hibernated` flag is already
+committed to `true` from the first attempt, so the command skips the rewrite/commit/push and
+— once you resolve whatever caused phase 1 to fail — re-attempts the drain, both phases, the
+page swap and the verification. There is no special "resume" mode and none is needed; the
+command's own idempotence covers this case.
+
+The same applies to a failed **phase 2**: the services are already gone and the maintenance
+page is already up (it goes up between the phases), but the ALB and NAT Gateway are still
+running and still billing ~$48/mo. Re-running `kv hibernate` re-dispatches both phases —
+phase 1 is a no-op apply against a stack that already matches — and does not report success
+until the verification confirms the ALB and NAT Gateway are actually gone and the EIP is
+still allocated.
 
 ## What breaks while hibernated
 

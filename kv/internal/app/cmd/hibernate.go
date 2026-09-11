@@ -41,21 +41,38 @@ const cfAssetsBucketParam = "/kmv/cloudfront-assets/use1/voice/bucket_name"
 // orchestration never constructs an AWS/git/gh client itself -- every
 // dependency is a narrow interface a test can fake.
 type HibernateDeps struct {
-	RepoRoot     string
-	Git          GitAPI
-	GH           GHAPI
-	ECS          ECSAPI
-	Health       TargetHealthAPI
-	Net          NetworkStateAPI
-	Pages        PageStoreAPI
+	RepoRoot string
+	Git      GitAPI
+	GH       GHAPI
+	ECS      ECSAPI
+	Health   TargetHealthAPI
+	Net      NetworkStateAPI
+	Pages    PageStoreAPI
+
+	// Cluster, Services and TargetGroups are the ECS posture as resolved
+	// BEFORE the applies run. Going into a hibernate that is the live
+	// posture and exactly what drain and verify need. Going into a wake it
+	// is the HIBERNATED posture -- the ecs-service unit derives both its
+	// `services` and `target_groups` outputs as comprehensions over
+	// resources that do not exist yet, so both come back empty. Wake must
+	// therefore re-resolve through ResolvePosture after its applies rather
+	// than gate on these.
 	Cluster      string
 	Services     []string
 	TargetGroups map[string]string
-	AssetBucket  string
-	NATEIP       string
-	Now          func() time.Time
-	In           io.Reader
-	Out          io.Writer
+
+	// ResolvePosture re-reads the ECS cluster, service names and
+	// target-group ARNs from terragrunt outputs. It exists as a seam
+	// (rather than orchestration constructing a TerraformOutputReader
+	// itself) so the wake health gate is provable against a fake, like
+	// every other dependency here. Required for wake; unused by hibernate.
+	ResolvePosture func(ctx context.Context) (cluster string, services []string, targetGroups map[string]string, err error)
+
+	AssetBucket string
+	NATEIP      string
+	Now         func() time.Time
+	In          io.Reader
+	Out         io.Writer
 }
 
 // HibernateOptions parameterizes RunHibernateFlip for both hibernate
@@ -85,7 +102,8 @@ func phasesFor(want bool) []ApplyPhase {
 
 // RunHibernateFlip implements the spec §8 command flow in order: preflight,
 // idempotent read, rewrite-and-confirm, commit and push, drain, the two
-// sequential apply phases, the page swap, verify, and report.
+// sequential apply phases with the page swap between them (R15), verify,
+// and report.
 //
 // Every dependency below is assumed resolved by buildHibernateDeps, which
 // fails loudly (returns an error) rather than leave any of Net, Pages, or
@@ -94,6 +112,16 @@ func phasesFor(want bool) []ApplyPhase {
 // operator a `kv hibernate` that reports success while never swapping the
 // maintenance page in, or never checking the ALB/NAT/EIP actually went
 // away -- exactly the silent-failure class this command exists to close.
+//
+// THE FLAG IS NOT THE OPERATION. The flag is committed at step 4, before
+// any apply runs, so finding it already in the wanted state means only that
+// some earlier invocation got that far -- NOT that the applies, the page
+// swap, or the verification ever happened. So an already-flipped flag skips
+// exactly the rewrite/confirm/commit/push block and nothing else: the
+// remaining steps re-run. They are all safe to repeat -- terragrunt applies
+// are idempotent, SwapToMaintenance refuses to re-copy over an existing
+// backup, and verification is read-only. This is what makes the runbook's
+// "re-running kv hibernate is safe" recovery actually recover something.
 func RunHibernateFlip(ctx context.Context, deps HibernateDeps, opts HibernateOptions) error {
 	now := deps.Now
 	if now == nil {
@@ -119,57 +147,62 @@ func RunHibernateFlip(ctx context.Context, deps HibernateDeps, opts HibernateOpt
 	if opts.Want {
 		action = "hibernate"
 	}
-	if current == opts.Want {
-		fmt.Fprintf(deps.Out, "kv %s: no-op, already hibernated=%t\n", action, current)
-		return nil
-	}
+	alreadySet := current == opts.Want
 
+	// D-12: --dry-run mutates nothing, and it is checked before the flag
+	// rewrite below so there is no path on which it can write a byte.
 	if opts.DryRun {
-		return printHibernateDryRun(deps.Out, action, phases, deps, opts)
+		return printHibernateDryRun(deps.Out, action, phases, deps, opts, alreadySet)
 	}
 
-	path := filepath.Join(deps.RepoRoot, SiteHCLRelPath)
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", SiteHCLRelPath, err)
-	}
-	original, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", SiteHCLRelPath, err)
-	}
-	if _, err := SetHibernatedFlagFile(deps.RepoRoot, opts.Want); err != nil {
-		return err
-	}
-	restoreOriginal := func() error { return os.WriteFile(path, original, info.Mode()) }
-
-	if !opts.Yes {
-		diff, derr := deps.Git.Diff(ctx, SiteHCLRelPath)
-		if derr != nil {
-			_ = restoreOriginal()
-			return derr
+	if alreadySet {
+		fmt.Fprintf(deps.Out,
+			"kv %s: flag already hibernated=%t (committed by an earlier run) -- "+
+				"re-running the remaining steps.\n", action, current)
+	} else {
+		path := filepath.Join(deps.RepoRoot, SiteHCLRelPath)
+		info, serr := os.Stat(path)
+		if serr != nil {
+			return fmt.Errorf("stat %s: %w", SiteHCLRelPath, serr)
 		}
-		fmt.Fprintln(deps.Out, diff)
-		fmt.Fprint(deps.Out, "Proceed? [y/N] ")
-		if !confirmAffirmative(deps.In) {
-			if rerr := restoreOriginal(); rerr != nil {
-				return fmt.Errorf("restore %s after cancellation: %w", SiteHCLRelPath, rerr)
+		original, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return fmt.Errorf("read %s: %w", SiteHCLRelPath, rerr)
+		}
+		if _, werr := SetHibernatedFlagFile(deps.RepoRoot, opts.Want); werr != nil {
+			return werr
+		}
+		restoreOriginal := func() error { return os.WriteFile(path, original, info.Mode()) }
+
+		if !opts.Yes {
+			diff, derr := deps.Git.Diff(ctx, SiteHCLRelPath)
+			if derr != nil {
+				_ = restoreOriginal()
+				return derr
 			}
-			return ErrLifecycleCancelled
+			fmt.Fprintln(deps.Out, diff)
+			fmt.Fprint(deps.Out, "Proceed? [y/N] ")
+			if !confirmAffirmative(deps.In) {
+				if rerr := restoreOriginal(); rerr != nil {
+					return fmt.Errorf("restore %s after cancellation: %w", SiteHCLRelPath, rerr)
+				}
+				return ErrLifecycleCancelled
+			}
 		}
-	}
 
-	message := WakeCommitMessage
-	if opts.Want {
-		message = HibernateCommitMessage
-	}
-	if opts.Reason != "" {
-		message = message + "\n\n" + opts.Reason
-	}
-	if err := deps.Git.CommitPaths(ctx, message, SiteHCLRelPath); err != nil {
-		return err
-	}
-	if err := deps.Git.Push(ctx, LifecycleBranch); err != nil {
-		return err
+		message := WakeCommitMessage
+		if opts.Want {
+			message = HibernateCommitMessage
+		}
+		if opts.Reason != "" {
+			message = message + "\n\n" + opts.Reason
+		}
+		if cerr := deps.Git.CommitPaths(ctx, message, SiteHCLRelPath); cerr != nil {
+			return cerr
+		}
+		if perr := deps.Git.Push(ctx, LifecycleBranch); perr != nil {
+			return perr
+		}
 	}
 
 	// Phase 1 of a hibernate destroys services outright rather than scaling
@@ -181,22 +214,31 @@ func RunHibernateFlip(ctx context.Context, deps HibernateDeps, opts HibernateOpt
 		}
 	}
 
-	runIDs, err := RunApplyPhases(ctx, deps.GH, LifecycleBranch, phases, now, deps.Out)
-	if err != nil {
-		return err
+	// R15: the maintenance page goes up BETWEEN the phases, not after both.
+	// Phase 1 drops CloudFront's /api/* and /health behaviours, so from the
+	// moment it succeeds voice.klankermaker.ai would otherwise serve a
+	// live-looking mic button against a stack that cannot answer it. The
+	// invariant is: the maintenance page is up whenever the stack is not
+	// serving. (Wake holds the same invariant from the other side -- it
+	// restores the SPA only after the health gate below.)
+	var afterPhase func(context.Context, int) error
+	if opts.Want {
+		afterPhase = func(ctx context.Context, idx int) error {
+			if idx != 0 {
+				return nil
+			}
+			fmt.Fprintln(deps.Out, "\nmaintenance page:")
+			page, rerr := os.ReadFile(filepath.Join(deps.RepoRoot, MaintenancePageRelPath))
+			if rerr != nil {
+				return fmt.Errorf("read maintenance page: %w", rerr)
+			}
+			return SwapToMaintenance(ctx, deps.Pages, deps.AssetBucket, page, deps.Out)
+		}
 	}
 
-	fmt.Fprintln(deps.Out, "\nmaintenance page:")
-	if opts.Want {
-		page, rerr := os.ReadFile(filepath.Join(deps.RepoRoot, MaintenancePageRelPath))
-		if rerr != nil {
-			return fmt.Errorf("read maintenance page: %w", rerr)
-		}
-		if serr := SwapToMaintenance(ctx, deps.Pages, deps.AssetBucket, page, deps.Out); serr != nil {
-			return serr
-		}
-	} else if rerr := RestoreSPA(ctx, deps.Pages, deps.AssetBucket, deps.Out); rerr != nil {
-		return rerr
+	runIDs, err := RunApplyPhases(ctx, deps.GH, LifecycleBranch, phases, now, deps.Out, afterPhase)
+	if err != nil {
+		return err
 	}
 
 	if opts.Want {
@@ -211,17 +253,49 @@ func RunHibernateFlip(ctx context.Context, deps HibernateDeps, opts HibernateOpt
 		return nil
 	}
 
-	if _, werr := WaitForServicesRunning(ctx, deps.ECS, deps.Cluster, deps.Services, deps.Out,
+	// Wake's health gate must run against the posture the applies just
+	// CREATED. deps.Cluster/Services/TargetGroups were resolved while the
+	// stack was still hibernated, where the ecs-service unit's `services`
+	// and `target_groups` outputs are comprehensions over resources that do
+	// not exist -- both empty. Gating on those would make WaitForServicesRunning
+	// pass vacuously (or fail on an empty DescribeServices) and leave
+	// VoiceAndAuthTargetGroups with nothing to select, so the spec §8
+	// requirement that wake not report success until voice and auth report
+	// healthy would not be delivered at all.
+	if deps.ResolvePosture == nil {
+		return fmt.Errorf("kv wake: no posture resolver wired -- the post-apply health gate " +
+			"cannot run, and reporting success without it would be exactly the silent " +
+			"success this command exists to prevent")
+	}
+	cluster, services, allTargetGroups, perr := deps.ResolvePosture(ctx)
+	if perr != nil {
+		return fmt.Errorf("re-resolve ecs posture after wake: %w", perr)
+	}
+	if len(services) == 0 {
+		return fmt.Errorf("re-resolve ecs posture after wake: the ecs-service unit reports no " +
+			"services -- the apply did not actually recreate them, so there is nothing to " +
+			"health-check and this wake has NOT succeeded")
+	}
+
+	if _, werr := WaitForServicesRunning(ctx, deps.ECS, cluster, services, deps.Out,
 		opts.Drain.Timeout, opts.Drain.PollInterval); werr != nil {
 		return werr
 	}
-	targetGroups, terr := VoiceAndAuthTargetGroups(deps.TargetGroups)
+	targetGroups, terr := VoiceAndAuthTargetGroups(allTargetGroups)
 	if terr != nil {
 		return terr
 	}
 	if herr := WaitForTargetsHealthy(ctx, deps.Health, targetGroups, deps.Out,
 		opts.Drain.Timeout, opts.Drain.PollInterval); herr != nil {
 		return herr
+	}
+
+	// R15, the wake half: the real SPA goes back only once the targets
+	// report healthy. Restoring it before the gate puts a working-looking
+	// mic button in front of services that may never come up.
+	fmt.Fprintln(deps.Out, "\nmaintenance page:")
+	if rerr := RestoreSPA(ctx, deps.Pages, deps.AssetBucket, deps.Out); rerr != nil {
+		return rerr
 	}
 
 	// The NAT EIP's post-apply value is re-read here purely for the report
@@ -247,19 +321,37 @@ const MaintenancePageRelPath = "apps/voice/client/public/maintenance.html"
 
 // printHibernateDryRun reports exactly what would happen and mutates
 // nothing (D-12).
-func printHibernateDryRun(w io.Writer, action string, phases []ApplyPhase, deps HibernateDeps, opts HibernateOptions) error {
-	fmt.Fprintf(w, "kv %s --dry-run: no dispatch, no S3 write, no invalidation.\n\n", action)
-	fmt.Fprintf(w, "Would flip `hibernated` to %t in %s, commit to %s, then:\n", opts.Want, SiteHCLRelPath, LifecycleBranch)
+//
+// It deliberately does NOT promise a CloudFront invalidation: neither
+// direction issues one (R14). index.html is written no-cache/no-store by
+// both build-voice.yml and our own PutObject, CloudFront honours an
+// origin's Cache-Control and revalidates rather than serving the stale
+// shell, so the swap takes effect on the next request and an invalidation
+// would buy nothing but a new AWS SDK dependency.
+//
+// alreadySet means the flag is already in the wanted state, so a real run
+// would skip the rewrite/commit/push and go straight to the applies.
+func printHibernateDryRun(w io.Writer, action string, phases []ApplyPhase, deps HibernateDeps, opts HibernateOptions, alreadySet bool) error {
+	fmt.Fprintf(w, "kv %s --dry-run: no dispatch, no S3 write, no git write.\n\n", action)
+	if alreadySet {
+		fmt.Fprintf(w, "`hibernated` is ALREADY %t in %s, so nothing would be committed -- "+
+			"the remaining steps would simply re-run:\n", opts.Want, SiteHCLRelPath)
+	} else {
+		fmt.Fprintf(w, "Would flip `hibernated` to %t in %s, commit to %s, then:\n", opts.Want, SiteHCLRelPath, LifecycleBranch)
+	}
 	for i, p := range phases {
 		fmt.Fprintf(w, "  phase %d: dispatch %s with modules=%q (%s)\n", i+1, TerragruntApplyWorkflow, p.Modules, p.Name)
 		fmt.Fprintf(w, "           then WATCH it to terminal success before phase %d\n", i+2)
+		if opts.Want && i == 0 {
+			fmt.Fprintf(w, "           then: copy s3://%s/%s -> %s and put the maintenance page\n", deps.AssetBucket, IndexKey, SPABackupKey)
+		}
 	}
 	if opts.Want {
-		fmt.Fprintf(w, "  then: copy s3://%s/%s -> %s and put the maintenance page\n", deps.AssetBucket, IndexKey, SPABackupKey)
 		fmt.Fprintf(w, "  then: verify the ALB and NAT Gateway are gone and the EIP (%s) is retained\n", deps.NATEIP)
 	} else {
-		fmt.Fprintf(w, "  then: restore s3://%s/%s from %s\n", deps.AssetBucket, IndexKey, SPABackupKey)
+		fmt.Fprintln(w, "  then: re-resolve the ECS posture the applies created")
 		fmt.Fprintln(w, "  then: wait for voice and auth target groups to report healthy")
+		fmt.Fprintf(w, "  then: restore s3://%s/%s from %s\n", deps.AssetBucket, IndexKey, SPABackupKey)
 	}
 	return nil
 }
@@ -293,7 +385,7 @@ func printHibernateReport(w io.Writer, runIDs []string, eip string) {
 }
 
 // printWakeReport reports the wake completion, then names exactly one of
-// four NAT EIP outcomes so a changed or lost address -- which nothing else
+// five NAT EIP outcomes so a changed or lost address -- which nothing else
 // about a successful wake would surface -- is visible right here, at the
 // moment the operator is looking at the output. preEIP is the address
 // buildHibernateDeps resolved before the applies ran (the retained address,
@@ -319,7 +411,18 @@ func printWakeReport(w io.Writer, runIDs []string, preEIP, postEIP, netWarning s
 		fmt.Fprintf(w, "A new NAT EIP was allocated (%s) -- none was retained going into this wake.\n", postEIP)
 		fmt.Fprintln(w, "Update the VoIP.ms API allowlist now, or the SMS relay and the CTF OTP")
 		fmt.Fprintln(w, "endpoint will fail SILENTLY, not with an error.")
-	default: // preEIP != "" && postEIP != "" && postEIP != preEIP
+	case preEIP != "" && postEIP == "":
+		// The retained address was there going in and is not there coming
+		// out -- the EIP was released during the wake. Without this case it
+		// falls to default and prints "NAT EIP CHANGED: 1.2.3.4 -> " with
+		// nothing after the arrow, which reads as a formatting bug rather
+		// than as the loss of the address the VoIP.ms allowlist names.
+		fmt.Fprintf(w, "The retained NAT EIP %s is GONE after this wake -- no EIP is allocated now.\n", preEIP)
+		fmt.Fprintln(w, "The VoIP.ms API allowlist still names an address this account no longer holds,")
+		fmt.Fprintln(w, "so the SMS relay and the CTF OTP endpoint will fail SILENTLY, not with an error.")
+	default: // preEIP != "" && postEIP != "" && postEIP != preEIP -- a
+		// different address, both sides present. The empty-postEIP variant
+		// is handled by the case above, so both %s here are non-empty.
 		fmt.Fprintf(w, "NAT EIP CHANGED: %s -> %s. Update the VoIP.ms API allowlist now, or the\n", preEIP, postEIP)
 		fmt.Fprintln(w, "SMS relay and the CTF OTP endpoint will fail SILENTLY, not with an error.")
 	}
@@ -434,12 +537,20 @@ func buildHibernateDeps(ctx context.Context, cfg *Config, c *cobra.Command, want
 		return HibernateDeps{}, err
 	}
 
-	cluster, services, targetGroups, err := ResolveECSPosture(ctx, NewTerragruntOutputReader(root))
+	reader := NewTerragruntOutputReader(root)
+	resolvePosture := func(ctx context.Context) (string, []string, map[string]string, error) {
+		return ResolveECSPosture(ctx, reader)
+	}
+
+	// Resolved here for hibernate's drain and verify, which both need the
+	// pre-apply (live) posture. Wake re-resolves through ResolvePosture
+	// after its applies instead -- see HibernateDeps.Cluster's doc comment.
+	cluster, services, targetGroups, err := resolvePosture(ctx)
 	if err != nil {
 		return HibernateDeps{}, fmt.Errorf("resolve ecs posture: %w", err)
 	}
 
-	net := NewNetworkStateAPI(NewTerragruntOutputReader(root))
+	net := NewNetworkStateAPI(reader)
 	state, err := net.NetworkState(ctx)
 	if err != nil {
 		return HibernateDeps{}, fmt.Errorf("resolve network state: %w", err)
@@ -456,21 +567,22 @@ func buildHibernateDeps(ctx context.Context, cfg *Config, c *cobra.Command, want
 	}
 
 	return HibernateDeps{
-		RepoRoot:     root,
-		Git:          NewExecGit(root),
-		GH:           NewExecGH(root),
-		ECS:          NewECSAPI(ecsClient),
-		Health:       NewTargetHealthAPI(elbClient),
-		Net:          net,
-		Pages:        NewPageStoreAPI(s3Client),
-		Cluster:      cluster,
-		Services:     services,
-		TargetGroups: targetGroups,
-		AssetBucket:  assetBucket,
-		NATEIP:       state.NATEIPPublicIP,
-		Now:          time.Now,
-		In:           c.InOrStdin(),
-		Out:          c.OutOrStdout(),
+		RepoRoot:       root,
+		Git:            NewExecGit(root),
+		GH:             NewExecGH(root),
+		ECS:            NewECSAPI(ecsClient),
+		Health:         NewTargetHealthAPI(elbClient),
+		Net:            net,
+		Pages:          NewPageStoreAPI(s3Client),
+		Cluster:        cluster,
+		Services:       services,
+		TargetGroups:   targetGroups,
+		ResolvePosture: resolvePosture,
+		AssetBucket:    assetBucket,
+		NATEIP:         state.NATEIPPublicIP,
+		Now:            time.Now,
+		In:             c.InOrStdin(),
+		Out:            c.OutOrStdout(),
 	}, nil
 }
 

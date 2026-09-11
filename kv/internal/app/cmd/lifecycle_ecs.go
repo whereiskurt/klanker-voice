@@ -62,7 +62,19 @@ func NewECSAPI(api *ecs.Client) ECSAPI {
 	return &ecsClientAPI{api: api}
 }
 
+// DescribeServices short-circuits an empty service list rather than
+// calling AWS with one. While hibernated the ecs-service unit's `services`
+// output is a comprehension over resources that do not exist, so every
+// caller that resolves its list from terraform gets `[]` -- and ECS's
+// DescribeServices requires 1-10 names, so the call would fail with a
+// validation error. "No services" is a real, expected state here (it is
+// precisely what a successful hibernate produces), and `kv pause status`
+// is the command the hibernate runbook sends operators to for recovery, so
+// it has to work in exactly that state.
 func (e *ecsClientAPI) DescribeServices(ctx context.Context, cluster string, services []string) ([]ServicePosture, error) {
+	if len(services) == 0 {
+		return []ServicePosture{}, nil
+	}
 	out, err := e.api.DescribeServices(ctx, &ecs.DescribeServicesInput{
 		Cluster:  aws.String(cluster),
 		Services: services,

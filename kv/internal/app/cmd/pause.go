@@ -407,6 +407,18 @@ func printPauseStatus(w io.Writer, paused, hibernated bool, postures []ServicePo
 		fmt.Fprintln(w, "  (hibernated implies paused: the service list is empty, and the NAT Gateway and ALB are destroyed)")
 	}
 	fmt.Fprintln(w)
+	// A hibernated stack legitimately has no services at all -- the
+	// ecs-service unit's `services` output is empty, so there is nothing to
+	// describe. Say that, rather than printing a bare header row an
+	// operator would read as "the lookup broke".
+	if len(postures) == 0 {
+		if hibernated {
+			fmt.Fprintln(w, "no ECS services defined (hibernated)")
+		} else {
+			fmt.Fprintln(w, "no ECS services defined")
+		}
+		return nil
+	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "SERVICE\tDESIRED\tRUNNING")
 	for _, p := range postures {
