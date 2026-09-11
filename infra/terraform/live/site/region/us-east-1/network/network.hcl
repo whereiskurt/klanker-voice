@@ -59,6 +59,13 @@ locals {
       enable_deletion_protection = false
       ssl_policy                 = "ELBSecurityPolicy-TLS13-1-2-2021-06"
       logs_force_destroy         = true
+
+      # Keep the access-log bucket across a hibernation. Without this the ALB
+      # teardown takes the historical access and connection logs with it --
+      # five resources, and the data is not recoverable afterwards. Pennies a
+      # month to keep, and hibernation's whole premise is that nothing durable
+      # is destroyed.
+      retain_logs = true
     }
 
     # No MQTT / NLB workloads for this site

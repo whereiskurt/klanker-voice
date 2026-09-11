@@ -95,6 +95,18 @@ variable "alb" {
     enable_deletion_protection = optional(bool, false)
     ssl_policy                 = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
     logs_force_destroy         = optional(bool, true)
+
+    # When true the access-log bucket and its companion resources survive
+    # `enabled = false`, so tearing the ALB down does not take the historical
+    # access and connection logs with it. Same shape as
+    # nat_gateway.retain_eip: the bucket's count is deliberately NOT the same
+    # expression as aws_lb's, and aws_lb references alb_log_bucket[0], which
+    # stays index-safe because enabled = true forces the bucket count to 1.
+    #
+    # Note this is orthogonal to logs_force_destroy, which governs whether a
+    # NON-empty bucket may be destroyed at all -- it does not decide whether
+    # the destroy is attempted.
+    retain_logs = optional(bool, false)
   })
   description = "Application Load Balancer configuration. Certificate is automatically looked up from cert_map using dns.zonename."
   default = {

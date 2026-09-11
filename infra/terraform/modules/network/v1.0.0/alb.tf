@@ -60,7 +60,7 @@ resource "aws_lb_listener" "https" {
 
 # S3 bucket for ALB logs
 resource "aws_s3_bucket" "alb_log_bucket" {
-  count         = var.alb.enabled ? 1 : 0
+  count         = var.alb.enabled || var.alb.retain_logs ? 1 : 0
   bucket        = "logs-alb-${var.region.label}-${var.site.label}-${var.site.random_suffix}"
   force_destroy = var.alb.logs_force_destroy
 
@@ -73,7 +73,7 @@ resource "aws_s3_bucket" "alb_log_bucket" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "alb_log_bucket_encryption" {
-  count  = var.alb.enabled ? 1 : 0
+  count  = var.alb.enabled || var.alb.retain_logs ? 1 : 0
   bucket = aws_s3_bucket.alb_log_bucket[0].id
 
   rule {
@@ -85,7 +85,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "alb_log_bucket_en
 
 # Block public access to ALB log bucket
 resource "aws_s3_bucket_public_access_block" "alb_log_bucket" {
-  count  = var.alb.enabled ? 1 : 0
+  count  = var.alb.enabled || var.alb.retain_logs ? 1 : 0
   bucket = aws_s3_bucket.alb_log_bucket[0].id
 
   block_public_acls       = true
@@ -96,7 +96,7 @@ resource "aws_s3_bucket_public_access_block" "alb_log_bucket" {
 
 # Lifecycle configuration for ALB log bucket
 resource "aws_s3_bucket_lifecycle_configuration" "alb_log_bucket" {
-  count  = var.alb.enabled ? 1 : 0
+  count  = var.alb.enabled || var.alb.retain_logs ? 1 : 0
   bucket = aws_s3_bucket.alb_log_bucket[0].id
 
   rule {
@@ -121,7 +121,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_log_bucket" {
 # Use the recommended service principal for ALB access logging
 # https://docs.aws.amazon.com/elasticloadbalancing/latest/application/enable-access-logging.html
 resource "aws_s3_bucket_policy" "alb_log_bucket_policy" {
-  count  = var.alb.enabled ? 1 : 0
+  count  = var.alb.enabled || var.alb.retain_logs ? 1 : 0
   bucket = aws_s3_bucket.alb_log_bucket[0].id
 
   policy = jsonencode({
