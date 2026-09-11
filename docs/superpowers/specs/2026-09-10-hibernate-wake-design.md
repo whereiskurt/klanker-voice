@@ -61,7 +61,7 @@ nothing to restore.
 | NAT Gateway | running (~$32) | **destroyed** | Pure waste at zero tasks |
 | NAT Elastic IP | attached | **retained, unattached (~$3.60)** | Preserves the VoIP.ms allowlist (§6, D-04) |
 | ALB + listeners | running (~$16) | **destroyed** | Pure waste at zero tasks |
-| ALB access-log bucket | kept | kept | Pennies; `logs_force_destroy = true` already set |
+| ALB access-log bucket | kept | **kept** (via `alb.retain_logs`) | The live plan showed it destroyed with the ALB — 5 resources, unrecoverable. Retained deliberately; `logs_force_destroy` governs whether a non-empty bucket *may* be destroyed, not whether the destroy is attempted |
 | CloudFront distribution | kept | **kept, ALB origin dropped** | Serves the maintenance page (§7) |
 | Route53 sub-zone + records | kept | **kept** | The whole point of not destroying — URL keeps resolving |
 | ACM certs | kept | **kept** | Avoids re-validation on wake |
