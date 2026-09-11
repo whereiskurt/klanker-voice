@@ -380,11 +380,15 @@ func NewPauseCmd(cfg *Config) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			hibernated, err := ReadHibernatedFlagFile(deps.RepoRoot)
+			if err != nil {
+				return err
+			}
 			postures, err := deps.ECS.DescribeServices(ctx, deps.Cluster, deps.Services)
 			if err != nil {
 				return err
 			}
-			return printPauseStatus(c.OutOrStdout(), paused, postures)
+			return printPauseStatus(c.OutOrStdout(), paused, hibernated, postures)
 		},
 	}
 	pauseCmd.AddCommand(status)
@@ -392,11 +396,29 @@ func NewPauseCmd(cfg *Config) *cobra.Command {
 	return pauseCmd
 }
 
-// printPauseStatus prints the paused flag value and each service's live
+// printPauseStatus prints both lifecycle flags and each service's live
 // desired/running counts side by side, so a flag-versus-reality divergence
-// (e.g. a half-applied pause) is directly observable.
-func printPauseStatus(w io.Writer, paused bool, postures []ServicePosture) error {
-	fmt.Fprintf(w, "paused flag (site.hcl): %t\n\n", paused)
+// (a half-applied pause, or an orphaned service after a hibernate) is
+// directly observable.
+func printPauseStatus(w io.Writer, paused, hibernated bool, postures []ServicePosture) error {
+	fmt.Fprintf(w, "paused flag     (site.hcl): %t\n", paused)
+	fmt.Fprintf(w, "hibernated flag (site.hcl): %t\n", hibernated)
+	if hibernated {
+		fmt.Fprintln(w, "  (hibernated implies paused: the service list is empty, and the NAT Gateway and ALB are destroyed)")
+	}
+	fmt.Fprintln(w)
+	// A hibernated stack legitimately has no services at all -- the
+	// ecs-service unit's `services` output is empty, so there is nothing to
+	// describe. Say that, rather than printing a bare header row an
+	// operator would read as "the lookup broke".
+	if len(postures) == 0 {
+		if hibernated {
+			fmt.Fprintln(w, "no ECS services defined (hibernated)")
+		} else {
+			fmt.Fprintln(w, "no ECS services defined")
+		}
+		return nil
+	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "SERVICE\tDESIRED\tRUNNING")
 	for _, p := range postures {

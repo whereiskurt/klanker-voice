@@ -25,11 +25,24 @@ var ErrPausedFlagNotFound = errors.New("paused flag not found")
 // never a silent guess.
 var ErrPausedFlagAmbiguous = errors.New("paused flag ambiguous: multiple assignments found")
 
-// pausedAssignmentRe matches a line's code portion (i.e. with any trailing
-// comment already stripped by codePortion) that is, but for surrounding
-// whitespace, exactly a `paused = true` or `paused = false` assignment.
+// PausedFlagName and HibernatedFlagName are the two top-level booleans in
+// site.hcl that the lifecycle commands own. `paused` scales services to
+// zero (2026-08-12 spec §5); `hibernated` additionally empties the service
+// list and drops the NAT Gateway and ALB (2026-09-10 spec §3).
+const (
+	PausedFlagName     = "paused"
+	HibernatedFlagName = "hibernated"
+)
+
+// assignmentRe builds the matcher for one named top-level boolean
+// assignment. It is compiled per call rather than kept in a package-level
+// var because the flag name is now a parameter; these files are small and
+// the commands run once per invocation, so the cost is irrelevant next to
+// the clarity of not caching a regexp keyed by a string.
 // Capture group 1 is the boolean literal.
-var pausedAssignmentRe = regexp.MustCompile(`^\s*paused\s*=\s*(true|false)\s*$`)
+func assignmentRe(name string) *regexp.Regexp {
+	return regexp.MustCompile(`^\s*` + regexp.QuoteMeta(name) + `\s*=\s*(true|false)\s*$`)
+}
 
 // codePortion returns the byte offset within line where a trailing `#` or
 // `//` comment begins (or len(line) if the line carries no comment). It
@@ -67,71 +80,66 @@ func codePortion(line []byte) int {
 	return len(line)
 }
 
-// locatePausedFlag scans lines (each a line of the source, split on "\n")
-// for exactly one top-level `paused = true|false` assignment and returns
-// its index into lines. It returns ErrPausedFlagNotFound if none match, or
-// ErrPausedFlagAmbiguous if more than one does -- never picking one.
-func locatePausedFlag(lines [][]byte) (int, error) {
+// locateLifecycleFlag scans lines for exactly one top-level `name = true|false`
+// assignment and returns its index. It returns ErrPausedFlagNotFound if none
+// match, or ErrPausedFlagAmbiguous if more than one does -- never picking one.
+func locateLifecycleFlag(lines [][]byte, name string) (int, error) {
+	re := assignmentRe(name)
 	found := -1
 	for i, line := range lines {
 		code := line[:codePortion(line)]
-		if !pausedAssignmentRe.Match(code) {
+		if !re.Match(code) {
 			continue
 		}
 		if found != -1 {
-			return -1, fmt.Errorf("%w: lines %d and %d", ErrPausedFlagAmbiguous, found+1, i+1)
+			return -1, fmt.Errorf("%w: %s on lines %d and %d", ErrPausedFlagAmbiguous, name, found+1, i+1)
 		}
 		found = i
 	}
 	if found == -1 {
-		return -1, ErrPausedFlagNotFound
+		return -1, fmt.Errorf("%w: %s", ErrPausedFlagNotFound, name)
 	}
 	return found, nil
 }
 
-// parsePausedValue extracts the boolean literal from a line already known
-// (via locatePausedFlag) to hold a top-level `paused` assignment.
-func parsePausedValue(line []byte) bool {
+// parseLifecycleValue extracts the boolean literal from a line already known
+// (via locateLifecycleFlag) to hold a top-level `name` assignment.
+func parseLifecycleValue(line []byte, name string) bool {
 	code := line[:codePortion(line)]
-	m := pausedAssignmentRe.FindSubmatchIndex(code)
+	m := assignmentRe(name).FindSubmatchIndex(code)
 	return string(code[m[2]:m[3]]) == "true"
 }
 
-// ReadPausedFlag reports the current value of the single top-level `paused`
+// ReadLifecycleFlag reports the current value of the single top-level `name`
 // assignment in src.
-func ReadPausedFlag(src []byte) (bool, error) {
+func ReadLifecycleFlag(src []byte, name string) (bool, error) {
 	lines := bytes.Split(src, []byte("\n"))
-	idx, err := locatePausedFlag(lines)
+	idx, err := locateLifecycleFlag(lines, name)
 	if err != nil {
 		return false, err
 	}
-	return parsePausedValue(lines[idx]), nil
+	return parseLifecycleValue(lines[idx], name), nil
 }
 
-// SetPausedFlag flips the single top-level `paused` assignment in src to
-// want, returning the rewritten bytes. It is implemented as a line-oriented
-// scan over the raw bytes, not an HCL parse-and-render round trip: a
-// whole-file HCL formatter/writer would normalize formatting across the
-// whole file, which would turn the intended one-line diff into a
-// whole-file diff and defeat `kv pause`'s show-the-diff-and-confirm step
-// (spec §5.3 step 3). Only the boolean literal's bytes are replaced; every
-// other byte -- leading whitespace, `=` spacing, trailing comments, every
-// other line -- is copied through unchanged. When src already holds want,
-// the input slice is returned unmodified with changed=false (D-18: an
-// already-in-state flip is a reported no-op, never a spurious diff).
-func SetPausedFlag(src []byte, want bool) (out []byte, changed bool, err error) {
+// SetLifecycleFlag flips the single top-level `name` assignment in src to
+// want, returning the rewritten bytes. It is a line-oriented scan over raw
+// bytes, not an HCL parse-and-render round trip: a whole-file formatter
+// would normalize the whole file and turn the intended one-line diff into a
+// whole-file diff, defeating the show-the-diff-and-confirm step. Only the
+// boolean literal's bytes are replaced.
+func SetLifecycleFlag(src []byte, name string, want bool) (out []byte, changed bool, err error) {
 	lines := bytes.Split(src, []byte("\n"))
-	idx, err := locatePausedFlag(lines)
+	idx, err := locateLifecycleFlag(lines, name)
 	if err != nil {
 		return nil, false, err
 	}
 	line := lines[idx]
-	if parsePausedValue(line) == want {
+	if parseLifecycleValue(line, name) == want {
 		return src, false, nil
 	}
 
 	code := line[:codePortion(line)]
-	m := pausedAssignmentRe.FindSubmatchIndex(code)
+	m := assignmentRe(name).FindSubmatchIndex(code)
 	newLiteral := "false"
 	if want {
 		newLiteral = "true"
@@ -145,27 +153,38 @@ func SetPausedFlag(src []byte, want bool) (out []byte, changed bool, err error) 
 	return bytes.Join(lines, []byte("\n")), true, nil
 }
 
-// ReadPausedFlagFile joins repoRoot with SiteHCLRelPath, reads it, and
-// delegates to ReadPausedFlag, wrapping any error with the relative path so
-// the operator sees which file failed.
-func ReadPausedFlagFile(repoRoot string) (bool, error) {
+// ReadPausedFlag reports the current value of the top-level `paused`
+// assignment in src. Retained as the name every shipped call site uses.
+func ReadPausedFlag(src []byte) (bool, error) {
+	return ReadLifecycleFlag(src, PausedFlagName)
+}
+
+// SetPausedFlag flips the top-level `paused` assignment in src to want.
+// Retained as the name every shipped call site uses.
+func SetPausedFlag(src []byte, want bool) (out []byte, changed bool, err error) {
+	return SetLifecycleFlag(src, PausedFlagName, want)
+}
+
+// ReadLifecycleFlagFile joins repoRoot with SiteHCLRelPath, reads it, and
+// delegates to ReadLifecycleFlag, wrapping any error with the relative path
+// so the operator sees which file failed.
+func ReadLifecycleFlagFile(repoRoot, name string) (bool, error) {
 	path := filepath.Join(repoRoot, SiteHCLRelPath)
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", SiteHCLRelPath, err)
 	}
-	value, err := ReadPausedFlag(src)
+	value, err := ReadLifecycleFlag(src, name)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", SiteHCLRelPath, err)
 	}
 	return value, nil
 }
 
-// SetPausedFlagFile joins repoRoot with SiteHCLRelPath, reads it, delegates
-// to SetPausedFlag, and (only if changed) writes the result back preserving
-// the file's existing mode. Any error is wrapped with the relative path so
-// the operator sees which file failed.
-func SetPausedFlagFile(repoRoot string, want bool) (changed bool, err error) {
+// SetLifecycleFlagFile joins repoRoot with SiteHCLRelPath, reads it,
+// delegates to SetLifecycleFlag, and (only if changed) writes the result
+// back preserving the file's existing mode.
+func SetLifecycleFlagFile(repoRoot, name string, want bool) (changed bool, err error) {
 	path := filepath.Join(repoRoot, SiteHCLRelPath)
 	info, err := os.Stat(path)
 	if err != nil {
@@ -175,7 +194,7 @@ func SetPausedFlagFile(repoRoot string, want bool) (changed bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", SiteHCLRelPath, err)
 	}
-	out, changed, err := SetPausedFlag(src, want)
+	out, changed, err := SetLifecycleFlag(src, name, want)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", SiteHCLRelPath, err)
 	}
@@ -186,4 +205,14 @@ func SetPausedFlagFile(repoRoot string, want bool) (changed bool, err error) {
 		return false, fmt.Errorf("write %s: %w", SiteHCLRelPath, err)
 	}
 	return true, nil
+}
+
+// ReadPausedFlagFile reports the `paused` flag's value in site.hcl.
+func ReadPausedFlagFile(repoRoot string) (bool, error) {
+	return ReadLifecycleFlagFile(repoRoot, PausedFlagName)
+}
+
+// SetPausedFlagFile flips the `paused` flag in site.hcl to want.
+func SetPausedFlagFile(repoRoot string, want bool) (changed bool, err error) {
+	return SetLifecycleFlagFile(repoRoot, PausedFlagName, want)
 }

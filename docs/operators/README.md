@@ -25,6 +25,9 @@ kv code list && kv tier list
 **"How do I take it all down for a few months, and bring it back?"** →
 [Pause & resume runbook](../ops/pause-resume.md)
 
+**"How do I take it down to almost nothing for months, and still come back with no
+restore?"** → [Hibernate & wake runbook](../ops/hibernate-wake.md)
+
 **"Something is broken and people are watching."** →
 [Incident runbook](incident-runbook.md)
 
@@ -42,6 +45,7 @@ kv code list && kv tier list
 | [Infrastructure](infrastructure.md) | what runs in AWS right now, and how to check it's healthy |
 | [Incident runbook](incident-runbook.md) | the brake, the ceilings, and a diagnostic tree per symptom |
 | [Pause & resume](../ops/pause-resume.md) | how to take the whole stack down for weeks and bring it back, in `docs/ops/pause-resume.md` |
+| [Hibernate & wake](../ops/hibernate-wake.md) | how to take the whole stack down to almost nothing for months, with no restore needed to come back, in `docs/ops/hibernate-wake.md` |
 | [Backup & restore](../ops/backup-restore.md) | how to snapshot and restore what only exists in AWS, in `docs/ops/backup-restore.md` |
 
 ### Also in this directory
@@ -83,7 +87,8 @@ kv code list && kv tier list
 1. [Kill-switch](incident-runbook.md#the-brake) — refuses new sessions, changes nothing else
 2. [Scale the phone side to zero](pbx-lifecycle.md#taking-the-whole-phone-side-down) — stops calls arriving
 3. [Pause the whole stack](../ops/pause-resume.md) — scales every ECS service to zero, ~$190/mo down to ~$60/mo, reversible with `kv resume`
-4. [Full decommission](pbx-lifecycle.md#deprovisioning) — including what *not* to delete
+4. [Hibernate the whole stack](../ops/hibernate-wake.md) — destroys the NAT Gateway, ALB and ECS services too, ~$60/mo down to ~$14/mo, no restore needed to bring back with `kv wake`
+5. [Full decommission](pbx-lifecycle.md#deprovisioning) — including what *not* to delete
 
 ---
 

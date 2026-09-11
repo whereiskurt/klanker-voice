@@ -29,6 +29,7 @@ DOCS=(
   docs/operators/ses-active-rule-set-fix.md
   docs/ops/pause-resume.md
   docs/ops/backup-restore.md
+  docs/ops/hibernate-wake.md
 )
 TOML=apps/voice/configs/telephony.toml
 fails=0
