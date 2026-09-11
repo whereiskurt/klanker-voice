@@ -49,8 +49,8 @@ output "nat_gateway_id" {
 }
 
 output "nat_eip_public_ip" {
-  description = "Public IP of the NAT Gateway EIP (if enabled)"
-  value       = var.nat_gateway.enabled ? aws_eip.nat[0].public_ip : null
+  description = "Public IP of the NAT EIP (whenever the EIP exists, attached or retained)"
+  value       = length(aws_eip.nat) > 0 ? aws_eip.nat[0].public_ip : null
 }
 
 # WebRTC UDP media security group (D-12/T-04-06): standalone output so

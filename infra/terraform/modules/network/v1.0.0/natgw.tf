@@ -1,6 +1,8 @@
-# NAT Gateway needs an EIP
+# NAT Gateway needs an EIP -- and hibernation keeps the EIP after the
+# gateway is gone (see nat_gateway.retain_eip), so this count is
+# deliberately NOT the same expression as the gateway's below.
 resource "aws_eip" "nat" {
-  count  = var.nat_gateway.enabled ? 1 : 0
+  count  = var.nat_gateway.enabled || var.nat_gateway.retain_eip ? 1 : 0
   domain = "vpc"
 
   tags = merge(

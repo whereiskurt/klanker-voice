@@ -50,6 +50,12 @@ variable "vpc" {
 variable "nat_gateway" {
   type = object({
     enabled = optional(bool, false)
+    # When true the Elastic IP is allocated even with enabled = false, so a
+    # NAT teardown does not release the address. klanker-voice allowlists
+    # this IP at VoIP.ms for the API relay and the CTF OTP endpoint; a fresh
+    # IP does not fail at wake, it fails later and silently on the first SMS
+    # or OTP call. ~$3.60/mo for an unattached allocation.
+    retain_eip = optional(bool, false)
   })
   description = "NAT Gateway configuration"
   default = {
