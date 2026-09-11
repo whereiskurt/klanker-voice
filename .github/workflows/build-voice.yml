@@ -90,6 +90,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The SPA is published here, not by terraform, so the "config is
+          # the guard" property that protects the site.hcl lifecycle flags
+          # does NOT extend to S3 object content. While hibernated,
+          # index.html holds a maintenance page put there by `kv hibernate`
+          # -- syncing the real shell back over it would silently restore a
+          # mic button that cannot work, with no failure anywhere.
+          # Hashed assets are harmless to sync either way.
+          HIBERNATED=$(grep -E '^\s*hibernated\s*=\s*(true|false)\s*$' \
+            infra/terraform/live/site/site.hcl | head -1 | grep -oE '(true|false)' || echo "false")
+          echo "hibernated=$HIBERNATED"
+
           BUCKET=$(aws ssm get-parameter \
             --name "/${SITE_LABEL}/cloudfront-assets/use1/voice/bucket_name" \
             --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || true)
@@ -123,9 +134,16 @@ jobs:
           aws s3 sync "$TMP/dist/greetings" "s3://$BUCKET/greetings" \
             --cache-control 'public,max-age=300' --no-progress
           # The SPA shell is not hashed — upload no-cache so a deploy is picked
-          # up immediately.
-          aws s3 cp "$TMP/dist/index.html" "s3://$BUCKET/index.html" \
-            --cache-control 'no-cache, no-store, must-revalidate'
+          # up immediately. Skipped while hibernated (see the guard above).
+          if [ "$HIBERNATED" = "true" ]; then
+            echo "## Client shell: skipped (hibernated)" >> "$GITHUB_STEP_SUMMARY"
+            echo "site.hcl has hibernated = true, so index.html was NOT overwritten —" \
+                 "the maintenance page stays in place. Run \`kv wake\` to restore the SPA." \
+                 >> "$GITHUB_STEP_SUMMARY"
+          else
+            aws s3 cp "$TMP/dist/index.html" "s3://$BUCKET/index.html" \
+              --cache-control 'no-cache, no-store, must-revalidate'
+          fi
 
           echo "## Client Assets Published" >> "$GITHUB_STEP_SUMMARY"
           echo "Synced to \`s3://$BUCKET\`" >> "$GITHUB_STEP_SUMMARY"
@@ -134,7 +152,7 @@ jobs:
           DIST_ID=$(aws ssm get-parameter \
             --name "/${SITE_LABEL}/cloudfront/voice/distribution_id" \
             --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || true)
-          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ] && [ "$HIBERNATED" != "true" ]; then
             INV=$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" \
               --paths '/' '/index.html' '/greetings/*' --query 'Invalidation.Id' --output text)
             echo "CloudFront invalidation \`$INV\` on distribution \`$DIST_ID\`" >> "$GITHUB_STEP_SUMMARY"
