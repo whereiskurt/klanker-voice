@@ -41,9 +41,11 @@ nothing to restore.
 
 ### Non-goals
 
-- Cancelling the ElevenLabs Pro subscription (manual, vendor console — but at $99/mo it is
-  the largest single line item in every state, including this one, and `kv hibernate` must
-  say so on completion).
+- Changing the ElevenLabs subscription (manual, vendor console). **Resolved 2026-09-10
+  (operator action):** downgraded from Pro ($99/mo) to Creator ($22/mo) to retain the
+  cloned voice. It is no longer the dominant line item, but it still survives hibernate,
+  pause and destroy alike, so `kv hibernate` names it on completion rather than letting it
+  become an invisible recurring charge against a stack that is doing nothing.
 - Releasing DIDs (manual, VoIP.ms-side, irreversible — unchanged from the pause/destroy spec §6.4).
 - Replacing `kv pause` or `kv destroy`. All three tiers coexist.
 - A partial "phones-only" wake — see §11.
@@ -373,8 +375,10 @@ Issues no mutating call: no dispatch, no S3 write, no invalidation.
 
 ### 8.3 Stays manual, and the completion output says so
 
-- **Cancel or downgrade ElevenLabs Pro.** At $99/mo it is larger than the entire hibernated
-  AWS bill, and it survives hibernate, pause and destroy alike.
+- **The ElevenLabs subscription.** Downgraded to Creator ($22/mo) on 2026-09-10 to keep the
+  cloned voice. It survives hibernate, pause and destroy alike — still roughly 1.5× the
+  hibernated AWS bill — so the completion output names it rather than letting it run on
+  unnoticed against an idle stack.
 - **The DIDs stay provisioned and billing** at VoIP.ms. Unchanged and deliberate.
 - **The kill-switch is untouched.** Orthogonal to hibernation, exactly as with pause
   (pause spec §5.7). Coupling them would produce a surprise at wake.
@@ -392,7 +396,7 @@ Issues no mutating call: no dispatch, no S3 write, no invalidation.
 | WAF | $0 | $0 | $0 | $0 |
 | Misc floor (Route53, 4× KMS CMK, ECR, S3, CloudWatch Logs) | ~$10 | ~$10 | ~$10 | ~$1 |
 | **AWS total** | **~$190** | **~$60** | **~$14** | **~$1** |
-| ElevenLabs Pro (manual, all states) | $99 | $99 | $99 | $99 |
+| ElevenLabs Creator (manual, all states) | $22 | $22 | $22 | $22 |
 | Round trip | — | ~5 min | ~20–25 min | hours + restore |
 | Data restore needed to return? | no | no | **no** | **yes** |
 | DIDs | live | provisioned, fast busy | provisioned, fast busy | released manually, gone |
@@ -479,4 +483,4 @@ expressed later — `hibernated` gates a list, not a hardcoded set — without r
 | D-10 | Backup | Recommended, not required | Nothing durable is destroyed; unlike `kv destroy` this is not a precondition |
 | D-11 | Kill-switch | Untouched | Orthogonal; coupling produces a surprise at wake (pause spec §5.7) |
 | D-12 | Partial wake | Rejected | Phones need auth, auth needs NAT; saves only the ALB (§11) |
-| D-13 | ElevenLabs | Manual, but named in completion output | Largest line item in every state, and outside AWS entirely |
+| D-13 | ElevenLabs | Manual, but named in completion output | Survives every state and is outside AWS entirely. Downgraded Pro → Creator ($99 → $22/mo) on 2026-09-10 to keep the cloned voice; still ~1.5× the hibernated AWS bill |
