@@ -55,19 +55,45 @@ func NewNetworkStateAPI(r TerraformOutputReader) NetworkStateAPI {
 
 // NetworkState reads alb_arn, nat_gateway_id, and nat_eip_public_ip from
 // the network unit (tfUnitNetwork).
+
+// absentAsEmpty reads a string output, treating an ABSENT key as the empty
+// string rather than an error.
+//
+// This is the difference between "terraform has no such output" and "the
+// resource does not exist", and for this unit they are the same thing:
+// Terraform OMITS a null-valued output from `output -json` entirely rather
+// than emitting it as null. So once the ALB and NAT Gateway are destroyed,
+// `alb_arn` and `nat_gateway_id` simply stop appearing -- which is precisely
+// the state this verification exists to confirm. Treating that as an error
+// made VerifyHibernated fail on every SUCCESSFUL hibernation; it did exactly
+// that on 2026-09-11, after both applies had done the right thing.
+//
+// The meaningful failure is still caught, one level up: if the unit cannot be
+// read at all -- never applied, bad credentials, malformed state --
+// readUnitOutputs errors and NetworkState propagates it. Only the
+// key-is-absent case is reinterpreted here, and only for outputs whose
+// absence IS the signal.
+func absentAsEmpty(outputs map[string]tfOutputEnvelope, unitDir, key string, dst *string) error {
+	if _, ok := outputs[key]; !ok {
+		*dst = ""
+		return nil
+	}
+	return outputValue(outputs, unitDir, key, dst)
+}
+
 func (n *terragruntNetworkState) NetworkState(ctx context.Context) (NetworkState, error) {
 	outputs, err := readUnitOutputs(ctx, n.reader, tfUnitNetwork)
 	if err != nil {
 		return NetworkState{}, err
 	}
 	var state NetworkState
-	if err := outputValue(outputs, tfUnitNetwork, "alb_arn", &state.ALBArn); err != nil {
+	if err := absentAsEmpty(outputs, tfUnitNetwork, "alb_arn", &state.ALBArn); err != nil {
 		return NetworkState{}, err
 	}
-	if err := outputValue(outputs, tfUnitNetwork, "nat_gateway_id", &state.NATGatewayID); err != nil {
+	if err := absentAsEmpty(outputs, tfUnitNetwork, "nat_gateway_id", &state.NATGatewayID); err != nil {
 		return NetworkState{}, err
 	}
-	if err := outputValue(outputs, tfUnitNetwork, "nat_eip_public_ip", &state.NATEIPPublicIP); err != nil {
+	if err := absentAsEmpty(outputs, tfUnitNetwork, "nat_eip_public_ip", &state.NATEIPPublicIP); err != nil {
 		return NetworkState{}, err
 	}
 	return state, nil

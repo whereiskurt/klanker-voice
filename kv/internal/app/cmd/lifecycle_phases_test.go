@@ -56,7 +56,7 @@ func TestRunApplyPhases_DispatchesStrictlySequentially(t *testing.T) {
 	}
 
 	want := []string{
-		"dispatch:ecs-service,cloudfront",
+		"dispatch:ecs-service,global/cloudfront",
 		"watch:run-1",
 		"dispatch:network",
 		"watch:run-2",
@@ -87,7 +87,7 @@ func TestRunApplyPhases_FailedPhaseAbortsBeforeNextDispatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("RunApplyPhases error = nil, want a phase-1 failure")
 	}
-	if !strings.Contains(err.Error(), "ecs-service,cloudfront") {
+	if !strings.Contains(err.Error(), "ecs-service,global/cloudfront") {
 		t.Errorf("error %q does not name the failing phase's modules", err)
 	}
 
@@ -106,8 +106,8 @@ func TestWakePhases_ReverseHibernateOrder(t *testing.T) {
 	if WakePhases[0].Modules != "network" {
 		t.Errorf("wake phase 1 modules = %q, want \"network\"", WakePhases[0].Modules)
 	}
-	if WakePhases[1].Modules != "ecs-service,cloudfront" {
-		t.Errorf("wake phase 2 modules = %q, want \"ecs-service,cloudfront\"", WakePhases[1].Modules)
+	if WakePhases[1].Modules != "ecs-service,global/cloudfront" {
+		t.Errorf("wake phase 2 modules = %q, want \"ecs-service,global/cloudfront\"", WakePhases[1].Modules)
 	}
 }
 

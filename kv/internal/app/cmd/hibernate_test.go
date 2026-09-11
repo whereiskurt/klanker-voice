@@ -69,7 +69,7 @@ func TestRunHibernateFlip_AlreadyHibernatedRerunsRemainingSteps(t *testing.T) {
 // SPA is a mic button against a stack that cannot answer.
 var wantHibernateOrder = []string{
 	"ecs.describe",                    // drain
-	"dispatch:ecs-service,cloudfront", // phase 1
+	"dispatch:ecs-service,global/cloudfront", // phase 1
 	"watch:run-1",
 	"page.copy:index.html->index.spa.html", // page swap, between the phases
 	"page.put:index.html",
@@ -350,7 +350,7 @@ func TestRunHibernateFlip_RefusesDirtyTree(t *testing.T) {
 
 // The hibernate phase order must be the removal order, not terragrunt's.
 func TestHibernateOptions_UsesHibernatePhasesForWantTrue(t *testing.T) {
-	if phasesFor(true)[0].Modules != "ecs-service,cloudfront" {
+	if phasesFor(true)[0].Modules != "ecs-service,global/cloudfront" {
 		t.Error("hibernate must remove services and the CloudFront origin first")
 	}
 	if phasesFor(false)[0].Modules != "network" {

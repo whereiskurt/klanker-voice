@@ -36,12 +36,21 @@ type ApplyPhase struct {
 	Modules string
 }
 
+// NOTE ON THE UNIT NAME: it is `global/cloudfront`, NOT `cloudfront`.
+// terragrunt-apply.yml resolves a BARE name to region/us-east-1/<name>, and
+// `region/us-east-1/cloudfront` is the cf-ASSETS bucket unit
+// (modules/cloudfront-assets). The DISTRIBUTION -- the unit that carries
+// alb_origin_enabled -- lives at global/cloudfront and must be named by
+// subpath. Getting this wrong is silent: the apply succeeds, reports "0
+// changed" against the wrong unit, and the distribution keeps an ALB origin
+// pointing at an ALB that phase 2 then destroys. It bit a real hibernation
+// on 2026-09-11.
 // HibernatePhases is the removal order. Phase 1 removes everything that
 // references the ALB (the services with their target groups and listener
 // rules, and CloudFront's ALB origin); only then can phase 2 delete the
 // ALB and the NAT Gateway.
 var HibernatePhases = []ApplyPhase{
-	{Name: "services and CloudFront origin", Modules: "ecs-service,cloudfront"},
+	{Name: "services and CloudFront origin", Modules: "ecs-service,global/cloudfront"},
 	{Name: "ALB and NAT Gateway", Modules: "network"},
 }
 
@@ -50,7 +59,7 @@ var HibernatePhases = []ApplyPhase{
 // ordering hazard.
 var WakePhases = []ApplyPhase{
 	{Name: "ALB and NAT Gateway", Modules: "network"},
-	{Name: "services and CloudFront origin", Modules: "ecs-service,cloudfront"},
+	{Name: "services and CloudFront origin", Modules: "ecs-service,global/cloudfront"},
 }
 
 // ErrEmptyModuleList is returned when a phase carries no modules.
