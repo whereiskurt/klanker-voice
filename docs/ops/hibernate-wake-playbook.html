@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>klanker-voice — the teardown playbook</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --color-paper:       #f5f5f5;
+      --color-paper-2:     #ececec;
+      --color-ink:         #2d3142;
+      --color-muted:       #4f5d75;
+      --color-soft:        #7a8399;
+      --color-rule:        rgba(45,49,66,0.12);
+      --color-accent:      #eb6c36;
+      --color-accent-tint: rgba(235,108,54,0.08);
+      --color-link:        #2e5aa8;
+      --font-sans:   'Geist', system-ui, sans-serif;
+      --font-serif:  'Instrument Serif', 'Times New Roman', serif;
+      --font-mono:   'Geist Mono', ui-monospace, Menlo, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      min-height: 100vh;
+      padding: 3rem 2rem;
+      color: var(--color-ink);
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    .header { margin-bottom: 2.5rem; }
+    .header-eyebrow {
+      font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--color-muted); margin-bottom: 0.75rem;
+    }
+    h1 {
+      font-family: var(--font-serif); font-size: clamp(1.75rem, 3vw + 1rem, 2.5rem);
+      font-weight: 400; letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 0.5rem;
+    }
+    .subtitle {
+      font-size: 1rem; line-height: 1.55; color: var(--color-muted); max-width: 62ch;
+    }
+
+    .diagram { margin: 2rem 0 2.5rem; overflow-x: auto; }
+    .diagram svg { display: block; min-width: 880px; width: 100%; height: auto; }
+
+    /* ── Tier ladder ─────────────────────────────────────────────── */
+    .ladder { margin: 0 0 2.5rem; border-top: 1px solid var(--color-rule); }
+    .tier {
+      display: grid; grid-template-columns: 1.4fr 0.8fr 0.8fr 2.2fr;
+      gap: 1rem; padding: 0.9rem 0.25rem;
+      border-bottom: 1px solid var(--color-rule); align-items: baseline;
+    }
+    .tier-name { font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 0.5rem; }
+    .tier-cost { font-family: var(--font-mono); font-size: 0.9rem; }
+    .tier-time { font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-soft); }
+    .tier-note { font-size: 0.84rem; color: var(--color-muted); line-height: 1.5; }
+    .tier.is-target { background: var(--color-accent-tint); }
+    .tier.is-target .tier-cost { color: var(--color-accent); font-weight: 600; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+    .dot.ink { background: var(--color-ink); }
+    .dot.muted { background: var(--color-muted); }
+    .dot.coral { background: var(--color-accent); }
+    .dot.soft { background: var(--color-soft); }
+    .tier-head {
+      font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--color-soft);
+      padding: 0.5rem 0.25rem; border-bottom: 1px solid var(--color-rule);
+      display: grid; grid-template-columns: 1.4fr 0.8fr 0.8fr 2.2fr; gap: 1rem;
+    }
+
+    /* ── Cards ───────────────────────────────────────────────────── */
+    .cards { display: grid; grid-template-columns: 1.15fr 1fr 0.95fr; gap: 1.25rem; margin-bottom: 2.5rem; }
+    .card {
+      background: #ffffff; border: 1px solid var(--color-rule);
+      border-radius: 6px; padding: 1.25rem;
+    }
+    .card .eyebrow {
+      font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--color-soft); margin-bottom: 0.6rem;
+    }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card h3 { font-size: 0.95rem; font-weight: 600; }
+    .card ul { list-style: none; }
+    .card li {
+      font-size: 0.82rem; line-height: 1.55; color: var(--color-muted);
+      padding-left: 0.9rem; position: relative; margin-bottom: 0.5rem;
+    }
+    .card li::before {
+      content: "—"; position: absolute; left: 0; color: var(--color-soft);
+    }
+    .card code {
+      font-family: var(--font-mono); font-size: 0.76rem;
+      background: var(--color-paper-2); padding: 0.05rem 0.25rem; border-radius: 3px;
+    }
+    .aside {
+      font-family: var(--font-serif); font-style: italic; font-size: 1.05rem;
+      line-height: 1.5; color: var(--color-ink); border-left: 2px solid var(--color-accent);
+      padding-left: 1rem; margin: 0 0 2.5rem; max-width: 64ch;
+    }
+
+    .footer {
+      border-top: 1px solid var(--color-rule); padding-top: 1rem;
+      font-family: var(--font-mono); font-size: 0.66rem;
+      letter-spacing: 0.1em; color: var(--color-soft);
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+    }
+
+    @media (max-width: 900px) {
+      body { padding: 2rem 1rem; }
+      .cards { grid-template-columns: 1fr; }
+      .tier, .tier-head { grid-template-columns: 1fr 1fr; }
+      .tier-note { grid-column: 1 / -1; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <p class="header-eyebrow">klanker-voice · operations</p>
+    <h1>The teardown playbook</h1>
+    <p class="subtitle">
+      Four lifecycle tiers, and the ordered procedure for reaching the one worth stopping at.
+      Three gates can halt you; the first is the verification that never ran during development,
+      and it is not optional.
+    </p>
+  </div>
+
+  <!-- ── Tier ladder ──────────────────────────────────────────── -->
+  <div class="tier-head">
+    <span>State</span><span>AWS</span><span>Round trip</span><span>What it costs you</span>
+  </div>
+  <div class="ladder">
+    <div class="tier">
+      <span class="tier-name"><span class="dot ink"></span>Running</span>
+      <span class="tier-cost">~$190/mo</span>
+      <span class="tier-time">—</span>
+      <span class="tier-note">Full stack, 3.5 vCPU / 7 GB across voice, auth and telephony-edge.</span>
+    </div>
+    <div class="tier">
+      <span class="tier-name"><span class="dot muted"></span><code>kv pause</code></span>
+      <span class="tier-cost">~$60/mo</span>
+      <span class="tier-time">~5 min · 1 approval</span>
+      <span class="tier-note">Tasks at zero, but NAT Gateway and ALB keep burning ~$48/mo against traffic that isn't coming.</span>
+    </div>
+    <div class="tier is-target">
+      <span class="tier-name"><span class="dot coral"></span><code>kv hibernate</code></span>
+      <span class="tier-cost">~$14/mo</span>
+      <span class="tier-time">~20–25 min · 2 approvals</span>
+      <span class="tier-note"><strong>The one to stop at.</strong> NAT, ALB and services destroyed; EIP, DNS, certs, DynamoDB, ledger, ECR all kept. No restore needed to return.</span>
+    </div>
+    <div class="tier">
+      <span class="tier-name"><span class="dot soft"></span><code>kv destroy</code></span>
+      <span class="tier-cost">~$1/mo</span>
+      <span class="tier-time">hours + restore</span>
+      <span class="tier-note">Saves only ~$13/mo more and costs DNS, certs, regenerated bucket names, the NAT EIP, and a full restore. Not built yet.</span>
+    </div>
+  </div>
+
+  <p class="aside">
+    The gap that matters is paused&nbsp;→&nbsp;hibernated: $46/mo, and you still come back in
+    twenty-five minutes with nothing to restore.
+  </p>
+
+  <!-- ── Diagram ──────────────────────────────────────────────── -->
+  <div class="diagram">
+    <svg viewBox="0 0 1200 840" role="img" aria-labelledby="hibernate-playbook-title hibernate-playbook-desc"
+         xmlns="http://www.w3.org/2000/svg">
+      <title id="hibernate-playbook-title">The kv hibernate procedure and its three gates</title>
+      <desc id="hibernate-playbook-desc">Ordered procedure for hibernating the klanker-voice stack: preparation and login, a mandatory terragrunt plan gate, an optional backup, then the hibernate command which dispatches two separately-approved apply phases with a maintenance page swapped in between them, followed by a verification gate before the stack is confirmed hibernated at roughly fourteen dollars a month.</desc>
+
+      <defs>
+        <marker id="hp-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/>
+        </marker>
+        <marker id="hp-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/>
+        </marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <!-- ── Column eyebrows ── -->
+      <text x="120" y="64" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace"
+            letter-spacing="0.14em">BEFORE YOU DISPATCH</text>
+      <text x="700" y="64" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace"
+            letter-spacing="0.14em">THE RUN ITSELF · 2 APPROVALS</text>
+
+      <!-- ══ ARROWS FIRST (z-order: behind boxes) ══ -->
+
+      <!-- 1 → gate 1 -->
+      <line x1="260" y1="168" x2="260" y2="216" stroke="#4f5d75" stroke-width="1" marker-end="url(#hp-arrow)"/>
+
+      <!-- gate 1 → backup  (labelled PASS) -->
+      <line x1="260" y1="352" x2="260" y2="392" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#hp-arrow-accent)"/>
+      <rect x="276" y="360" width="44" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="298" y="369" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.06em">PASS</text>
+
+      <!-- backup → hibernate -->
+      <line x1="260" y1="464" x2="260" y2="528" stroke="#4f5d75" stroke-width="1" marker-end="url(#hp-arrow)"/>
+
+      <!-- hibernate → phase 1 (elbow, r=8) -->
+      <path d="M 400 572 H 524 Q 532 572 532 564 V 140 Q 532 132 540 132 H 692"
+            fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#hp-arrow)"/>
+      <rect x="480" y="316" width="104" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="532" y="325" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.06em">DRAIN, DISPATCH</text>
+
+      <!-- phase 1 → page swap -->
+      <line x1="840" y1="168" x2="840" y2="224" stroke="#4f5d75" stroke-width="1" marker-end="url(#hp-arrow)"/>
+
+      <!-- page swap → phase 2 -->
+      <line x1="840" y1="296" x2="840" y2="360" stroke="#4f5d75" stroke-width="1" marker-end="url(#hp-arrow)"/>
+
+      <!-- phase 2 → gate 2 -->
+      <line x1="840" y1="440" x2="840" y2="488" stroke="#4f5d75" stroke-width="1" marker-end="url(#hp-arrow)"/>
+
+      <!-- gate 2 → hibernated (labelled CLEAN) -->
+      <line x1="840" y1="624" x2="840" y2="656" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#hp-arrow-accent)"/>
+      <rect x="856" y="628" width="48" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="880" y="637" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.06em">CLEAN</text>
+
+      <!-- ══ NODES ══ -->
+
+      <!-- 1 · prep -->
+      <rect x="120" y="96" width="280" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="120" y="96" width="280" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="128" y="104" width="36" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="146" y="113" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.08em">PREP</text>
+      <text x="260" y="136" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">Merge PR, then authenticate</text>
+      <text x="260" y="154" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">aws sso login · . infra/.envrc</text>
+
+      <!-- 2 · GATE 1 (diamond, coral) -->
+      <polygon points="260,216 380,284 260,352 140,284" fill="#f5f5f5"/>
+      <polygon points="260,216 380,284 260,352 140,284"
+               fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="260" y="264" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.1em">GATE 1</text>
+      <text x="260" y="284" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">terragrunt plan</text>
+      <text x="260" y="302" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">false → &quot;No changes&quot;</text>
+      <text x="260" y="316" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">true → EIP survives</text>
+
+      <!-- 3 · backup (optional, dashed) -->
+      <rect x="120" y="392" width="280" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="120" y="392" width="280" height="72" rx="6" fill="rgba(45,49,66,0.02)"
+            stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <rect x="128" y="400" width="60" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+      <text x="158" y="409" fill="rgba(45,49,66,0.7)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.08em">OPTIONAL</text>
+      <text x="260" y="432" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">kv backup</text>
+      <text x="260" y="450" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">not required · first live run</text>
+
+      <!-- 4 · kv hibernate -->
+      <rect x="120" y="528" width="280" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="120" y="528" width="280" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="128" y="536" width="32" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="144" y="545" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.08em">CMD</text>
+      <text x="260" y="568" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">kv hibernate</text>
+      <text x="260" y="586" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">--dry-run first, then --reason</text>
+
+      <!-- 5 · phase 1 -->
+      <rect x="700" y="96" width="280" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="700" y="96" width="280" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="708" y="104" width="64" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="740" y="113" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.08em">APPROVE 1</text>
+      <text x="840" y="136" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">Phase 1 — services + CF origin</text>
+      <text x="840" y="154" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">ecs-service,cloudfront</text>
+
+      <!-- 6 · page swap -->
+      <rect x="700" y="224" width="280" height="72" rx="6" fill="#f5f5f5"/>
+      <rect x="700" y="224" width="280" height="72" rx="6" fill="rgba(45,49,66,0.05)"
+            stroke="#4f5d75" stroke-width="1"/>
+      <rect x="708" y="232" width="36" height="12" rx="2" fill="transparent" stroke="rgba(79,93,117,0.40)" stroke-width="0.8"/>
+      <text x="726" y="241" fill="rgba(79,93,117,0.9)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.08em">S3</text>
+      <text x="840" y="264" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">Maintenance page swaps in</text>
+      <text x="840" y="282" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">index.html → index.spa.html</text>
+
+      <!-- 7 · phase 2 -->
+      <rect x="700" y="360" width="280" height="80" rx="6" fill="#f5f5f5"/>
+      <rect x="700" y="360" width="280" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="708" y="368" width="64" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="740" y="377" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.08em">APPROVE 2</text>
+      <text x="840" y="400" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">Phase 2 — ALB + NAT Gateway</text>
+      <text x="840" y="418" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">network · EIP retained</text>
+
+      <!-- 8 · GATE 2 (diamond, coral) -->
+      <polygon points="840,488 960,556 840,624 720,556" fill="#f5f5f5"/>
+      <polygon points="840,488 960,556 840,624 720,556"
+               fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="840" y="536" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.1em">GATE 2</text>
+      <text x="840" y="556" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">Verification</text>
+      <text x="840" y="574" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">ALB gone · NAT gone</text>
+      <text x="840" y="588" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">EIP still allocated</text>
+
+      <!-- 9 · hibernated -->
+      <rect x="700" y="656" width="280" height="72" rx="20" fill="#f5f5f5"/>
+      <rect x="700" y="656" width="280" height="72" rx="20" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/>
+      <text x="840" y="692" fill="#2d3142" font-size="12" font-weight="600"
+            font-family="'Geist', sans-serif" text-anchor="middle">Hibernated</text>
+      <text x="840" y="712" fill="#4f5d75" font-size="9"
+            font-family="'Geist Mono', monospace" text-anchor="middle">~$14/mo · wake in ~25 min</text>
+
+      <!-- ══ LEGEND ══ -->
+      <line x1="120" y1="772" x2="1080" y2="772" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="120" y="792" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace"
+            letter-spacing="0.14em">LEGEND</text>
+
+      <polygon points="228,786 244,794 228,802 212,794" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="252" y="797" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Gate — can halt you</text>
+
+      <rect x="412" y="787" width="24" height="14" rx="4" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="444" y="797" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Step you run</text>
+
+      <rect x="572" y="787" width="24" height="14" rx="4" fill="rgba(45,49,66,0.02)"
+            stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="604" y="797" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Optional</text>
+
+      <rect x="708" y="787" width="24" height="14" rx="4" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <text x="740" y="797" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">Automatic, no approval</text>
+
+      <rect x="908" y="787" width="24" height="14" rx="7" fill="#ffffff" stroke="#2d3142" stroke-width="1.2"/>
+      <text x="940" y="797" fill="#4f5d75" font-size="9" font-family="'Geist', sans-serif">End state</text>
+    </svg>
+  </div>
+
+  <!-- ── Cards ────────────────────────────────────────────────── -->
+  <div class="cards">
+    <div class="card">
+      <p class="eyebrow">If a gate fails</p>
+      <div class="card-header"><span class="dot coral"></span><h3>What each stop means</h3></div>
+      <ul>
+        <li><strong>Gate 1, not "No changes"</strong> — the refactor touched your running stack. Stop and investigate; do not proceed.</li>
+        <li><strong>Gate 1, EIP in the destroy list</strong> — <code>retain_eip</code> isn't taking effect. Hibernating would release the VoIP.ms-allowlisted address.</li>
+        <li><strong>Gate 2 fails</strong> — services, ALB or NAT survived, or the EIP is gone. Fix the cause and re-run <code>kv hibernate</code>; the flag is already committed, so it re-attempts the remaining steps.</li>
+        <li><strong>Phase 1 fails</strong> — later phases were never dispatched. <code>kv pause status</code> shows what actually applied.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow">While hibernated</p>
+      <div class="card-header"><span class="dot muted"></span><h3>What your users see</h3></div>
+      <ul>
+        <li><code>voice.klankermaker.ai</code> serves a maintenance page and still unfurls correctly when the link is shared.</li>
+        <li><code>auth.klankermaker.ai</code> is ALB-only — it does not resolve to a healthy origin at all.</li>
+        <li>All six DIDs stay provisioned and <strong>still billed</strong>; callers get a fast busy. A VoIP.ms-side failover recording would be kinder and costs nothing.</li>
+        <li>A CI build landing mid-hibernation will <em>not</em> clobber the maintenance page.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow">Don't forget</p>
+      <div class="card-header"><span class="dot ink"></span><h3>Outside AWS</h3></div>
+      <ul>
+        <li><strong>ElevenLabs $22/mo</strong> survives every tier — and is now ~60% of your remaining bill. Kept deliberately for the cloned voice.</li>
+        <li>Check whether cancelling Creator <em>preserves</em> that cloned voice before treating it as safe to drop.</li>
+        <li>The <strong>DIDs</strong> are a separate line item in VoIP.ms billing, unchanged by any tier.</li>
+        <li>Measure the real floor in Cost Explorer after the first hibernation — the ~$10 residual is inferred, never measured.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>klanker-voice · docs/ops/hibernate-wake.md is the authoritative runbook</span>
+    <span>2026-09-10 · PR #97</span>
+  </div>
+
+</div>
+</body>
+</html>
