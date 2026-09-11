@@ -3,9 +3,28 @@ resource "aws_ses_receipt_rule_set" "main" {
   rule_set_name = "${var.site.label}-email"
 }
 
-# Activate the receipt rule set
+# Activate the receipt rule set.
+#
+# SES allows exactly ONE active receipt rule set per account per region, and
+# only that set is evaluated for inbound mail. This account is shared with
+# klanker-maker, whose inbound rules live in "sandbox-email-shared".
+#
+# Pointing this at our own set (kmv-email) therefore stole the account-wide
+# slot and silently dropped every message to sandboxes.klankermaker.ai —
+# sending was unaffected, so it looked like a broken mail reader on the other
+# system for days. See docs/operators/ses-active-rule-set-fix.md.
+#
+# So this deliberately asserts the SHARED set as a literal rather than
+# following aws_ses_receipt_rule_set.main. klanker-maker does not manage the
+# activation pointer, so there is no contention in either direction, and
+# re-asserting on every apply means a manual flip self-heals.
+#
+# CAVEAT: our own receipt rules still attach to kmv-email (see the four
+# module.ses_* blocks below, plus receive.tf and forwarding.tf), which is
+# consequently inert — a new receive/forward rule added here would apply
+# cleanly and receive nothing. §9 of that doc has the follow-up that fixes it.
 resource "aws_ses_active_receipt_rule_set" "main" {
-  rule_set_name = aws_ses_receipt_rule_set.main.rule_set_name
+  rule_set_name = "sandbox-email-shared"
 }
 
 # Note: Receipt rule ordering removed to avoid Terraform for_each circular dependencies
