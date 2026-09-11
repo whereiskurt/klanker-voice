@@ -223,7 +223,21 @@ func RunHibernateFlip(ctx context.Context, deps HibernateDeps, opts HibernateOpt
 		opts.Drain.Timeout, opts.Drain.PollInterval); herr != nil {
 		return herr
 	}
-	printWakeReport(deps.Out, runIDs)
+
+	// The NAT EIP's post-apply value is re-read here purely for the report
+	// below -- a stale VoIP.ms allowlist is exactly the failure that "does
+	// not fail at wake, it fails weeks later on the first SMS relay or CTF
+	// OTP call" (lifecycle_verify.go's package doc), so wake is the one
+	// place left to make it visible. A read failure is a warning, never a
+	// reason to fail an otherwise-successful wake.
+	postEIP, netWarning := "", ""
+	if state, nerr := deps.Net.NetworkState(ctx); nerr != nil {
+		netWarning = fmt.Sprintf("warning: could not re-read the NAT EIP after wake to confirm the VoIP.ms allowlist is still valid: %v", nerr)
+	} else {
+		postEIP = state.NATEIPPublicIP
+	}
+
+	printWakeReport(deps.Out, runIDs, deps.NATEIP, postEIP, netWarning)
 	return nil
 }
 
@@ -278,12 +292,37 @@ func printHibernateReport(w io.Writer, runIDs []string, eip string) {
 	}
 }
 
-func printWakeReport(w io.Writer, runIDs []string) {
+// printWakeReport reports the wake completion, then names exactly one of
+// four NAT EIP outcomes so a changed or lost address -- which nothing else
+// about a successful wake would surface -- is visible right here, at the
+// moment the operator is looking at the output. preEIP is the address
+// buildHibernateDeps resolved before the applies ran (the retained address,
+// while hibernated); postEIP is re-read after. netWarning, when non-empty,
+// means the post-apply re-read itself failed -- reported as a warning, not
+// a reason to treat the wake as unsuccessful.
+func printWakeReport(w io.Writer, runIDs []string, preEIP, postEIP, netWarning string) {
 	fmt.Fprintln(w, "\nkv wake: complete.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Cost posture restored: hibernated ~$14/mo -> running ~$190/mo.")
 	fmt.Fprintln(w, "Every ECS service is running and the voice and auth ALB target groups report healthy.")
 	fmt.Fprintln(w, "The real SPA shell is back at index.html.")
+	fmt.Fprintln(w)
+	switch {
+	case netWarning != "":
+		fmt.Fprintln(w, netWarning)
+	case preEIP == "" && postEIP == "":
+		fmt.Fprintln(w, "warning: no NAT EIP is allocated after this wake -- the VoIP.ms API allowlist")
+		fmt.Fprintln(w, "will not resolve; the SMS relay and the CTF OTP endpoint will fail.")
+	case preEIP != "" && postEIP == preEIP:
+		fmt.Fprintf(w, "NAT EIP %s is unchanged -- the VoIP.ms API allowlist is still valid.\n", postEIP)
+	case preEIP == "" && postEIP != "":
+		fmt.Fprintf(w, "A new NAT EIP was allocated (%s) -- none was retained going into this wake.\n", postEIP)
+		fmt.Fprintln(w, "Update the VoIP.ms API allowlist now, or the SMS relay and the CTF OTP")
+		fmt.Fprintln(w, "endpoint will fail SILENTLY, not with an error.")
+	default: // preEIP != "" && postEIP != "" && postEIP != preEIP
+		fmt.Fprintf(w, "NAT EIP CHANGED: %s -> %s. Update the VoIP.ms API allowlist now, or the\n", preEIP, postEIP)
+		fmt.Fprintln(w, "SMS relay and the CTF OTP endpoint will fail SILENTLY, not with an error.")
+	}
 	if len(runIDs) > 0 {
 		fmt.Fprintf(w, "\nApply runs: %v\n", runIDs)
 	}

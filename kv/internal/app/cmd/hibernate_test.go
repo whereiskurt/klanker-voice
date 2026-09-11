@@ -119,6 +119,69 @@ func TestHibernateOptions_UsesHibernatePhasesForWantTrue(t *testing.T) {
 	}
 }
 
+// The wake path is the one place a lost or changed NAT EIP is surfaced
+// (fix round 1, MEDIUM): it never fails the wake, but it must be visible in
+// the report right where the operator is looking. Reuses fakeVerifyECS
+// (lifecycle_verify_test.go), fakeTargetHealthAPI (lifecycle_alb_test.go),
+// fakeNetworkState (lifecycle_verify_test.go), and fakePageStore
+// (lifecycle_page_test.go) so this test drives the full wake branch --
+// drain-free, ECS/Net/Pages/Health all wired -- rather than only the
+// no-op/dry-run/preflight paths the other three tests reach.
+func TestRunHibernateFlip_WakeReportsNATEIPOutcome(t *testing.T) {
+	newDeps := func(t *testing.T, preEIP, postEIP string) (HibernateDeps, *bytes.Buffer) {
+		t.Helper()
+		root := writeSiteHCL(t, false, true) // hibernated=true, so Want:false is a real flip
+		gh := &recordingGH{runIDSeq: []string{"run-1", "run-2"}}
+		ecs := &fakeVerifyECS{postures: []ServicePosture{
+			{Name: "voice", Desired: 1, Running: 1},
+			{Name: "auth", Desired: 1, Running: 1},
+		}}
+		health := newFakeTargetHealthAPI()
+		health.sequences["arn-voice"] = [][]TargetState{{{ID: "i-1", State: "healthy"}}}
+		health.sequences["arn-auth"] = [][]TargetState{{{ID: "i-2", State: "healthy"}}}
+		var out bytes.Buffer
+		return HibernateDeps{
+			RepoRoot:     root,
+			Git:          &noopGit{clean: true, branch: "main", synced: true},
+			GH:           gh,
+			ECS:          ecs,
+			Health:       health,
+			Net:          &fakeNetworkState{state: NetworkState{NATEIPPublicIP: postEIP}},
+			Pages:        newFakePageStore(),
+			Cluster:      "cluster",
+			Services:     []string{"voice", "auth"},
+			TargetGroups: map[string]string{"voice": "arn-voice", "auth": "arn-auth"},
+			AssetBucket:  "bucket",
+			NATEIP:       preEIP,
+			Out:          &out,
+			Now:          fixedNow(),
+		}, &out
+	}
+
+	t.Run("UnchangedAddressReportsValid", func(t *testing.T) {
+		deps, out := newDeps(t, "1.2.3.4", "1.2.3.4")
+		if err := RunHibernateFlip(context.Background(), deps, HibernateOptions{Want: false, Yes: true}); err != nil {
+			t.Fatalf("RunHibernateFlip error: %v", err)
+		}
+		if !strings.Contains(out.String(), "NAT EIP 1.2.3.4 is unchanged") {
+			t.Errorf("output %q missing the unchanged-EIP line", out.String())
+		}
+	})
+
+	t.Run("ChangedAddressWarnsLoudly", func(t *testing.T) {
+		deps, out := newDeps(t, "1.2.3.4", "5.6.7.8")
+		if err := RunHibernateFlip(context.Background(), deps, HibernateOptions{Want: false, Yes: true}); err != nil {
+			t.Fatalf("RunHibernateFlip error: %v", err)
+		}
+		if !strings.Contains(out.String(), "NAT EIP CHANGED: 1.2.3.4 -> 5.6.7.8") {
+			t.Errorf("output %q missing the changed-EIP warning", out.String())
+		}
+		if !strings.Contains(out.String(), "VoIP.ms API allowlist") {
+			t.Errorf("output %q missing the VoIP.ms allowlist warning", out.String())
+		}
+	})
+}
+
 // noopGit is a minimal GitAPI whose preflight answers are configurable.
 type noopGit struct {
 	clean  bool
