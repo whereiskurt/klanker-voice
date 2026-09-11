@@ -142,6 +142,7 @@ trying to remember *where a thing lives*, not how to change it.
 | `usage today` / `history` | DynamoDB `kmv-voice-usage` (GetItem / Query) | AWS |
 | `killswitch status` / `on` / `off` | DynamoDB `kmv-voice-usage` control item | AWS |
 | `pause` / `pause status` / `resume` | git-tracked `site.hcl` (write) + dispatched `terragrunt-apply.yml` (GitHub Actions) + live ECS/ALB reads | AWS, repo, GitHub, `infra/.envrc` |
+| `hibernate` / `wake` | git-tracked `site.hcl` (write) + TWO dispatched `terragrunt-apply.yml` runs, sequential + live ECS/ALB/NAT reads + cf-assets S3 (maintenance page swap) | AWS, repo, GitHub, `infra/.envrc` |
 | `backup` / `restore` | DynamoDB (all three tables) + S3 ledger + VoIP.ms + SSM, against a local zip | AWS, VoIP.ms, repo, `infra/.envrc` |
 | `telephony list` | *all four*: VoIP.ms API + DynamoDB + SSM + `configs/telephony.toml` | AWS, VoIP.ms, repo |
 | `telephony stats` / `calls` | CloudWatch Logs Insights over the telephony-edge log group | AWS, repo |
@@ -447,6 +448,63 @@ alone is not treated as success.
 Neither `kv pause` nor `kv resume` ever touches the kill-switch — that is
 [`kv killswitch`](#kv-killswitch--the-brake), a separate application-layer
 mechanism.
+
+---
+
+# `kv hibernate` / `kv wake` — the third lifecycle tier
+
+Below `kv pause`. Where `kv pause` scales services to zero and leaves ~$60/mo of NAT
+Gateway and ALB running against no traffic, `kv hibernate` destroys that plumbing outright
+and lands at ~$14/mo — and unlike `kv destroy`, nothing durable is removed, so `kv wake`
+needs no backup or restore. Full detail, including the deferred `terragrunt plan` gate that
+must be run once before the first real use, the two-phase apply and its two required-reviewer
+approvals, and the NAT EIP outcome reporting:
+[`docs/ops/hibernate-wake.md`](../ops/hibernate-wake.md) (repo path
+`docs/ops/hibernate-wake.md`).
+
+Same `infra/.envrc` prerequisite as the `kv pause` group above.
+
+### `kv hibernate`
+
+Flips the git-tracked `hibernated` boolean in
+`infra/terraform/live/site/site.hcl`, commits and pushes it to `main`, drains any
+in-flight voice sessions, then dispatches **two strictly sequential** `terragrunt-apply.yml`
+runs (`ecs-service,cloudfront` first, then `network`), swaps in a maintenance page for
+`voice.klankermaker.ai`, and verifies the ALB and NAT Gateway are gone while the NAT EIP is
+retained. Takes the AWS bill from roughly $60/mo paused to roughly $14/mo hibernated.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--yes` | `false` | skip the diff-and-confirm prompt |
+| `--dry-run` | `false` | report the plan and mutate nothing |
+| `--reason` | *(none)* | operator note recorded as a trailing line in the commit body |
+
+> **A full `kv hibernate` needs TWO separate manual approvals**, not one — it dispatches two
+> applies back to back and refuses to dispatch the second until the first reaches terminal
+> success (they share `terragrunt-apply.yml`'s cancel-in-progress concurrency group, so an
+> eager second dispatch would cancel a half-completed destroy). The command sits visibly
+> waiting between the two; this is not a hang. Never start a hibernate you cannot finish.
+
+> **`kv hibernate` and `kv wake` run only from `main`, and refuse on ANY unclean working
+> tree** — same preflight as `kv pause`/`kv resume`.
+
+### `kv wake`
+
+The inverse of `kv hibernate` — flips the flag back to `false`, runs the same two apply
+phases in reverse order (`network` first, then `ecs-service,cloudfront`), restores the real
+SPA shell over the maintenance page, and does not report success until the voice and auth
+ALB target groups report **healthy**. It also names exactly one of four NAT EIP outcomes
+(unchanged / changed / newly allocated / lost) in its completion report — a changed or new
+address does not fail the command but breaks the VoIP.ms SMS relay and CTF OTP endpoint
+silently unless the allowlist is updated.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--yes` | `false` | skip the diff-and-confirm prompt |
+| `--dry-run` | `false` | report the plan and mutate nothing |
+
+Neither `kv hibernate` nor `kv wake` ever touches the kill-switch, and neither releases a
+DID — releasing a DID stays a manual, irreversible, VoIP.ms-side action outside this tool.
 
 ---
 
