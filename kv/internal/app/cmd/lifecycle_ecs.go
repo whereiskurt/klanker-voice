@@ -37,12 +37,17 @@ type ECSAPI interface {
 	GetTaskProtection(ctx context.Context, cluster string, taskARNs []string) (protectedCount int, err error)
 }
 
-// ServicePosture is one ECS service's observed task counts.
+// ServicePosture is one ECS service's observed task counts and status.
+// Status is populated by ecsClientAPI.DescribeServices from AWS's own
+// ACTIVE/DRAINING/INACTIVE service status; kv pause does not read it, but
+// lifecycle_verify.go's orphan check does -- AWS keeps a recently-deleted
+// service visible as INACTIVE for a window, and that is not an orphan.
 type ServicePosture struct {
 	Name    string
 	Desired int32
 	Running int32
 	Pending int32
+	Status  string
 }
 
 // ecsClientAPI adapts an *ecs.Client onto ECSAPI -- the only production
@@ -72,6 +77,7 @@ func (e *ecsClientAPI) DescribeServices(ctx context.Context, cluster string, ser
 			Desired: s.DesiredCount,
 			Running: s.RunningCount,
 			Pending: s.PendingCount,
+			Status:  aws.ToString(s.Status),
 		})
 	}
 	return postures, nil

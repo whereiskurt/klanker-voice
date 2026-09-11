@@ -112,6 +112,15 @@ func VerifyHibernated(
 		return v, fmt.Errorf("describe services: %w", err)
 	}
 	for _, p := range postures {
+		// AWS keeps a just-deleted service visible in DescribeServices as
+		// INACTIVE for a window after deletion -- counting it here would
+		// report a false orphan on every successful hibernation. A
+		// zero-value Status is treated as still-present (conservative):
+		// failing loud on a false orphan is safe, silently missing a real
+		// one is not.
+		if strings.EqualFold(p.Status, "INACTIVE") {
+			continue
+		}
 		v.RemainingServices = append(v.RemainingServices, p.Name)
 	}
 

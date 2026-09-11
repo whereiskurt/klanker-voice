@@ -48,11 +48,15 @@ func TestVerifyHibernated_CleanState(t *testing.T) {
 	}
 }
 
-// The D-03 orphan failure: a service still exists. This must be an error,
-// never a warning -- an orphaned service keeps billing silently.
+// The D-03 orphan failure: a service still exists with an ACTIVE status.
+// This must be an error, never a warning -- an orphaned service keeps
+// billing silently and still holds ALB listener rules. Given an explicit
+// ACTIVE status (rather than relying on the zero-value fallback), this
+// test would still fail if the INACTIVE filter below were implemented
+// backwards.
 func TestVerifyHibernated_OrphanedServiceIsAnError(t *testing.T) {
 	v, err := VerifyHibernated(context.Background(),
-		&fakeVerifyECS{postures: []ServicePosture{{Name: "voice", Desired: 1, Running: 1}}},
+		&fakeVerifyECS{postures: []ServicePosture{{Name: "voice", Desired: 1, Running: 1, Status: "ACTIVE"}}},
 		&fakeNetworkState{state: NetworkState{NATEIPPublicIP: "1.2.3.4"}},
 		"cluster", []string{"voice"}, "1.2.3.4")
 	if err != nil {
@@ -64,6 +68,25 @@ func TestVerifyHibernated_OrphanedServiceIsAnError(t *testing.T) {
 	}
 	if !strings.Contains(verr.Error(), "voice") {
 		t.Errorf("error %q does not name the orphaned service", verr)
+	}
+}
+
+// AWS keeps a just-deleted service visible in DescribeServices as INACTIVE
+// for a window after deletion. That is not an orphan -- a successful
+// hibernation must not be reported as a failure because of it.
+func TestVerifyHibernated_InactiveServiceIsNotAnOrphan(t *testing.T) {
+	v, err := VerifyHibernated(context.Background(),
+		&fakeVerifyECS{postures: []ServicePosture{{Name: "voice", Desired: 0, Running: 0, Status: "INACTIVE"}}},
+		&fakeNetworkState{state: NetworkState{NATEIPPublicIP: "1.2.3.4"}},
+		"cluster", []string{"voice"}, "1.2.3.4")
+	if err != nil {
+		t.Fatalf("VerifyHibernated error: %v", err)
+	}
+	if len(v.RemainingServices) != 0 {
+		t.Errorf("RemainingServices = %v, want empty for an INACTIVE service", v.RemainingServices)
+	}
+	if verr := v.Err(); verr != nil {
+		t.Fatalf("Err() = %v, want nil for an INACTIVE (not orphaned) service", verr)
 	}
 }
 
