@@ -76,3 +76,20 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# When false, the distribution is built with NO ALB origin and none of the
+# ALB-targeted cache behaviors -- only the S3 origin and its default
+# behavior survive. This is what lets the ALB be destroyed underneath a
+# retained distribution during hibernation (2026-09-10 spec §5.1).
+#
+# It cannot be inferred from alb_dns_name being empty: the network module's
+# output is null (not "") when the ALB is disabled, and the consuming unit's
+# try() does not intercept null -- a null would reach domain_name and fail
+# the apply before any conditional could run.
+#
+# Defaults true so every existing call site is unaffected.
+variable "alb_origin_enabled" {
+  description = "Include the ALB origin and its /api/*,/health cache behaviors"
+  type        = bool
+  default     = true
+}

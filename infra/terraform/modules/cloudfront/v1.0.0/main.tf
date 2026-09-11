@@ -108,15 +108,20 @@ resource "aws_cloudfront_distribution" "main" {
   }
 
   # ALB origin - the dynamic app surface (/api/offer SDP signaling, /health).
-  origin {
-    domain_name = var.regional_origins_by_domain[each.key][local.primary].alb_dns_name
-    origin_id   = "alb-${local.primary}"
+  # Omitted entirely while hibernated: the ALB is destroyed, its dns_name
+  # output is null, and a null domain_name fails the apply.
+  dynamic "origin" {
+    for_each = var.alb_origin_enabled ? [1] : []
+    content {
+      domain_name = var.regional_origins_by_domain[each.key][local.primary].alb_dns_name
+      origin_id   = "alb-${local.primary}"
 
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "https-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
+      custom_origin_config {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "https-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+      }
     }
   }
 
@@ -135,30 +140,36 @@ resource "aws_cloudfront_distribution" "main" {
   # /api/* -> ALB. Managed-AllViewer forwards the viewer Host header (so the
   # ALB's host-header listener rule for ${each.key}.${var.dns.zonename} still
   # matches) AND the Authorization bearer token used by /api/offer. Never
-  # cached (SDP signaling).
-  ordered_cache_behavior {
-    path_pattern           = "/api/*"
-    target_origin_id       = "alb-${local.primary}"
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = false
+  # cached (SDP signaling). Dropped while hibernated.
+  dynamic "ordered_cache_behavior" {
+    for_each = var.alb_origin_enabled ? [1] : []
+    content {
+      path_pattern           = "/api/*"
+      target_origin_id       = "alb-${local.primary}"
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+      cached_methods         = ["GET", "HEAD"]
+      compress               = false
 
-    cache_policy_id          = local.cache_disabled_id
-    origin_request_policy_id = local.origin_all_viewer_id
+      cache_policy_id          = local.cache_disabled_id
+      origin_request_policy_id = local.origin_all_viewer_id
+    }
   }
 
-  # /health -> ALB (real app liveness), never cached.
-  ordered_cache_behavior {
-    path_pattern           = "/health"
-    target_origin_id       = "alb-${local.primary}"
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = false
+  # /health -> ALB (real app liveness), never cached. Dropped while hibernated.
+  dynamic "ordered_cache_behavior" {
+    for_each = var.alb_origin_enabled ? [1] : []
+    content {
+      path_pattern           = "/health"
+      target_origin_id       = "alb-${local.primary}"
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+      cached_methods         = ["GET", "HEAD"]
+      compress               = false
 
-    cache_policy_id          = local.cache_disabled_id
-    origin_request_policy_id = local.origin_all_viewer_id
+      cache_policy_id          = local.cache_disabled_id
+      origin_request_policy_id = local.origin_all_viewer_id
+    }
   }
 
   # SPA deep-link routing: a private OAC bucket returns 403 for a missing key
