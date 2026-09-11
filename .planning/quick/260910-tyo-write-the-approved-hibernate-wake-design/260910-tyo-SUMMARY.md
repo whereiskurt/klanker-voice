@@ -76,13 +76,39 @@ All verified against the tree, not assumed:
 - **Public face:** keep CloudFront and swap in a static maintenance page, so the URL keeps
   resolving and unfurling rather than showing a mic button that cannot work.
 
+## Implementation plan
+
+`docs/superpowers/plans/2026-09-10-hibernate-wake.md` — ten tasks, each ending in an
+independently testable deliverable and a commit:
+
+1. Generalize the lifecycle flag engine by flag name (`ReadPausedFlag`/`SetPausedFlag` become
+   wrappers, so every shipped call site and test is untouched)
+2. Conditional CloudFront ALB origin
+3. NAT EIP retention (`retain_eip`)
+4. The `hibernated` flag plumbing — includes a plan gate proving `hibernated = false` is a
+   no-op against the live stack and that `aws_eip.nat` is absent from the destroy list
+5. The two-phase sequential dispatch engine
+6. The maintenance page and its S3 shadow swap
+7. Post-apply verification (orphan guard, EIP guard)
+8. The `kv hibernate` / `kv wake` commands
+9. The `build-voice.yml` guard
+10. The operator runbook
+
+Plus a non-task operator gate: `--dry-run` first, take a backup anyway, and be ready to
+approve **two** separate `terraform-apply` runs.
+
 ## Cost picture
 
 | | Running | `kv pause` | `kv hibernate` | `kv destroy` |
 |---|---|---|---|---|
 | AWS | ~$190 | ~$60 | **~$14** | ~$1 |
-| ElevenLabs Pro (manual) | $99 | $99 | $99 | $99 |
+| ElevenLabs (manual) | $22 | $22 | $22 | $22 |
 | Restore needed to return? | no | no | no | **yes** |
+
+**ElevenLabs Pro → Creator, 2026-09-10:** the operator downgraded $99/mo → $22/mo mid-session
+to keep the cloned voice. Spec and plan both updated. It is no longer the dominant line item,
+but it still survives every tier at ~1.5× the hibernated AWS bill, so the completion output
+still names it — reframed from "cancel this" to "this is kept deliberately".
 
 ## Open items
 
@@ -90,6 +116,10 @@ All verified against the tree, not assumed:
   resource inventory, not measured** — AWS credentials were expired throughout the session
   (`ExpiredToken`). Confirm with Cost Explorer.
 - Implementation not started. No `kv hibernate`/`kv wake` code, no module changes.
+- Task 8's `buildHibernateDeps` leaves `ALBArn`/`NATID`/`NATEIP`/`AssetBucket` resolution
+  described rather than coded — the exact terragrunt output names must be read off the live
+  units. `RunHibernateFlip` degrades safely when any is empty, so the implementer must confirm
+  verification actually runs rather than being silently skipped.
 - `kv destroy` (16-10, 16-11) remains planned and unexecuted; hibernate does not replace it.
 - The ~20–25 min wake estimate assumes a CloudFront config update, not a create. Measure on
   the first real wake.
